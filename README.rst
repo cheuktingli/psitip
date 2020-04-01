@@ -6,10 +6,10 @@ Python Symbolic Information Theoretic Inequality Prover
 The ITIP software was developed by Raymond W. Yeung and Ying-On Yan
 ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). There are several pieces of software based on the linear programming approach in ITIP, for example, `Xitip <http://xitip.epfl.ch/>`_, `FME-IT <http://www.ee.bgu.ac.il/~fmeit/index.html>`_, `Minitip <https://github.com/lcsirmaz/minitip>`_, and `Citip <https://github.com/coldfix/Citip>`_. Psitip also uses the linear programming approach (see References section), but is otherwise unrelated to the aforementioned projects.
 
-Psitip is unique in the sense that it is a Python module tightly integrated with the Python syntax, benefitting from its operator overloading support. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it supports a versatile deduction system for automated theorem proving. For example
+Psitip is unique in the sense that it is a Python module tightly integrated with the Python syntax, benefitting from its operator overloading support. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it supports a versatile deduction system for automated theorem proving. For example:
 
-.. code:: python
-  
+.. code-block:: python
+
     from psitip import *
     PsiOpts.set_setting(solver = "pulp.glpk")
     
@@ -103,7 +103,7 @@ As in most automated deduction programs, false rejects (i.e., failure to prove a
 Installation
 ~~~~~~~~~~~~
 
-Download psitip.py and place it in the same directory as your code, or open an IPython shell in the same directory as psitip.py. The file test.py contains examples of usages of Psitip. Use :code:`from psitip import *` in your code to import all functions in psitip.
+Download `psitip.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/psitip.py>`_ and place it in the same directory as your code, or open an IPython shell in the same directory as psitip.py. The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ contains examples of usages of Psitip. Use :code:`from psitip import *` in your code to import all functions in psitip.
 
 Python 3 and numpy are required to run psitip. It also requires at least one of the following for sparse linear programming:
 
@@ -119,14 +119,18 @@ See the Solver section for details.
 Solver
 ~~~~~~
 
-The default solver is Scipy, though it is highly recommended to switch to another solver, e.g.::
+The default solver is Scipy, though it is highly recommended to switch to another solver, e.g.:
+
+.. code-block:: python
 
     from psitip import *
     PsiOpts.set_setting(solver = "pulp.glpk")
     PsiOpts.set_setting(solver = "pyomo.glpk")
     PsiOpts.set_setting(solver = "pulp.cbc") # Not recommended
 
-PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following lines to set the solver to any supported solver::
+PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following lines to set the solver to any supported solver:
+
+.. code-block:: python
 
     PsiOpts.set_setting(solver = "pulp.other")
     IUtil.pulp_solver = pulp.solvers.GLPK(msg = 0) # Or another solver
@@ -194,7 +198,9 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 Advanced
 ~~~~~~~~
 
-- **Existential quantification** is represented by the :code:`exists` method of :code:`Region` (which returns a :code:`Region`). For example, the condition "there exists auxiliary random variable U such that R <= I(U;Y) - I(U;S) and U-(X,S)-Y forms a Markov chain" (as in Gelfand-Pinsker theorem) is represented by::
+- **Existential quantification** is represented by the :code:`exists` method of :code:`Region` (which returns a :code:`Region`). For example, the condition "there exists auxiliary random variable U such that R <= I(U;Y) - I(U;S) and U-(X,S)-Y forms a Markov chain" (as in Gelfand-Pinsker theorem) is represented by:
+
+.. code-block:: python
 
     ((R <= I(U & Y) - I(U & S)) & markov(U, X+S, Y)).exists(U) 
 
@@ -202,7 +208,9 @@ Advanced
 
  - Calling :code:`exists` on random variables will cause the variable to be marked as auxiliary (dummy).
 
- - Calling :code:`exists` on random variables with the option :code:`toreal = True` will cause all information quantities about the random variables to be treated as real variables, and eliminated using Fourier-Motzkin elimination. Those random variables will be absent in the resultant region (not even as auxiliary random variables). E.g.::
+ - Calling :code:`exists` on random variables with the option :code:`toreal = True` will cause all information quantities about the random variables to be treated as real variables, and eliminated using Fourier-Motzkin elimination. Those random variables will be absent in the resultant region (not even as auxiliary random variables). E.g.:
+
+  .. code-block:: python
 
     (indep(X+Z, Y) & markov(X, Y, Z)).exists(Y, toreal = True)
 
@@ -210,11 +218,15 @@ Advanced
 
 - **Material implication** between :code:`Region` is denoted by the operator :code:`>>`, which returns a :code:`Region` object. The region :code:`r1 >> r2` represents the condition that :code:`r2` is true whenever :code:`r1` is true. Note that :code:`r1.implies(r2)` is equivalent to :code:`bool(r1 >> r2)`.
 
-- **Universal quantification** is represented by the :code:`forall` method of :code:`Region` (which returns a :code:`Region`). This is usually called after the implication operator :code:`>>`. For example, the condition "for all U such that U-X-(Y1,Y2) forms a Markov chain, we have I(U;Y1) >= I(U;Y2)" (less noisy broadcast channel [Korner-Marton 1975]) is represented by::
+- **Universal quantification** is represented by the :code:`forall` method of :code:`Region` (which returns a :code:`Region`). This is usually called after the implication operator :code:`>>`. For example, the condition "for all U such that U-X-(Y1,Y2) forms a Markov chain, we have I(U;Y1) >= I(U;Y2)" (less noisy broadcast channel [Korner-Marton 1975]) is represented by:
+
+.. code-block:: python
 
     (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))).forall(U)
 
-- Existential/universal quantification over marginal distributions is represented by the :code:`marginal_exists` or :code:`marginal_forall` method of :code:`Region`. This is usually used in channel coding settings where only the marginal distribution of the input can be altered (but not the channel). This is sometimes followed by the :code:`convexified()` (or :code:`imp_convexified()` for :code:`marginal_forall`) method to add a time sharing random variable, for example, for the less noisy broadcast channel::
+- Existential/universal quantification over marginal distributions is represented by the :code:`marginal_exists` or :code:`marginal_forall` method of :code:`Region`. This is usually used in channel coding settings where only the marginal distribution of the input can be altered (but not the channel). This is sometimes followed by the :code:`convexified()` (or :code:`imp_convexified()` for :code:`marginal_forall`) method to add a time sharing random variable, for example, for the less noisy broadcast channel:
+
+.. code-block:: python
 
     (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))
         ).forall(U).marginal_forall(X).imp_convexified()
@@ -224,11 +236,15 @@ Advanced
 
  - Call :code:`substituted_aux` instead of :code:`substituted` to stop treating :code:`x` as an auxiliary in the region :code:`r` (useful in substituting a known value of an auxiliary).
 
-- **Minimization / maximization** over an expression subject to the constraints in a region is represented by the :code:`minimum` / :code:`maximum` method of :code:`Region` respectively (which returns an :code:`Expr` object). This method usually follows an :code:`exists` call to mark the dummy variables in the optimization. For example, Wyner's common information [Wyner 1975] is represented by::
+- **Minimization / maximization** over an expression subject to the constraints in a region is represented by the :code:`minimum` / :code:`maximum` method of :code:`Region` respectively (which returns an :code:`Expr` object). This method usually follows an :code:`exists` call to mark the dummy variables in the optimization. For example, Wyner's common information [Wyner 1975] is represented by:
+
+.. code-block:: python
 
     markov(X, U, Y).exists(U).minimum(I(U & X+Y))
 
-- It is simple to define new information quantities. For example, to define the information bottleneck [Tishby-Pereira-Bialek 1999]::
+- It is simple to define new information quantities. For example, to define the information bottleneck [Tishby-Pereira-Bialek 1999]:
+
+.. code-block:: python
 
     def info_bot(X, Y, t):
         U = rv("U")
@@ -242,13 +258,17 @@ Advanced
 
 - The minimum / maximum of two (or more) :code:`Expr` objects is represented by the :code:`emin` / :code:`emax` function respectively. For example, :code:`bool(emin(H(X), H(Y)) >= I(X & Y))` returns True.
 
-- While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments. For example::
+- While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments. For example:
+
+.. code-block:: python
 
     (markov(X, U, Y).exists(U).minimum(I(U & X+Y)) <= H(X)).check_getaux()
 
   returns :code:`[(U, X)]`.
 
- - If branching is required (e.g. for union of regions), :code:`check_getaux` may give a list of lists of pairs, where each list represents a branch. For example::
+ - If branching is required (e.g. for union of regions), :code:`check_getaux` may give a list of lists of pairs, where each list represents a branch. For example:
+
+  .. code-block:: python
 
     (markov(X, U, Y).exists(U).minimum(I(U & X+Y))
         <= emin(H(X),H(Y))).check_getaux()
@@ -265,7 +285,9 @@ Advanced
 Fourier-Motzkin elimination
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The :code:`exists` method of :code:`Region` with real variable arguments performs Fourier-Motzkin elimination over those variables, for example::
+The :code:`exists` method of :code:`Region` with real variable arguments performs Fourier-Motzkin elimination over those variables, for example:
+
+.. code-block:: python
 
     from psitip import *
     PsiOpts.set_setting(solver = "pulp.glpk")
@@ -300,7 +322,9 @@ The :code:`exists` method of :code:`Region` with real variable arguments perform
 Automated Converse Proof
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-The :code:`check_converse` method of :code:`Region` attempts to prove the two-letter version of the converse by identifying auxiliary random variables. In the call::
+The :code:`check_converse` method of :code:`Region` attempts to prove the two-letter version of the converse by identifying auxiliary random variables. In the call:
+
+.. code-block:: python
 
     r.check_converse(r_op, chan_cond = c, nature = S)
 
@@ -322,7 +346,9 @@ The :code:`check_converse` method of :code:`Region` attempts to prove the two-le
 
 All the above also applies to the :code:`tensorize` method of :code:`Region` (e.g. :code:`r.tensorize(chan_cond = c, nature = S)`), which checks whether the two-letter version of :code:`r` is a subset of the single-letter version (except that there is no argument :code:`r_op`).
 
-The following code demonstrates its use in proving that superposition coding is optimal for more capable broadcast channel (this program can take several minutes)::
+The following code demonstrates its use in proving that superposition coding is optimal for more capable broadcast channel (this program can take several minutes):
+
+.. code-block:: python
 
     from psitip import *
     PsiOpts.set_setting(solver = "pulp.glpk")
@@ -352,7 +378,9 @@ The following code demonstrates its use in proving that superposition coding is 
         print(str(a) + " : " + str(b))
 
 
-The following code demonstrates its use in proving the converse part in Wyner-Ziv theorem for source coding with side information at the decoder [Wyner-Ziv 1976] (note that Psitip does not support distortion constraints)::
+The following code demonstrates its use in proving the converse part in Wyner-Ziv theorem for source coding with side information at the decoder [Wyner-Ziv 1976] (note that Psitip does not support distortion constraints):
+
+.. code-block:: python
 
     from psitip import *
     PsiOpts.set_setting(solver = "pulp.glpk")
@@ -387,21 +415,29 @@ Nested Implication
 
 WARNING: Nested implication may produce incorrect results for some cases. Use at your own risk. (The reason is that all nested structures are flattened to one layer. This may be fixed in future versions.) Nested implication may be performed implicitly, e.g., when using :code:`forall` and information quantities involving maximization/minimization. It is advisable to check manually that the output auxiliary random variables are indeed valid.
 
-It is possible to perform nested implications. For example, "if H(U|X)=0 implies H(U|Y)=0, then H(X|Y)=0" can be checked via::
+It is possible to perform nested implications. For example, "if H(U|X)=0 implies H(U|Y)=0, then H(X|Y)=0" can be checked via:
+
+.. code-block:: python
 
     bool(((H(U | X) == 0) >> (H(U | Y) == 0)).forall(U) >> (H(X | Y) == 0))
 
-We can nest even more layers of implications::
+We can nest even more layers of implications:
+
+.. code-block:: python
 
     bool(((H(U | X) == 0) >> (I(U & Y) == 0)).forall(U) >> 
         (((I(U & Y) == 0) >> (H(U | Z) == 0)).forall(U) >> (H(X | Z) == 0)))
 
-Nevertheless, under the default option, nested implication is sensitive to ordering, so the following will evaluate to False (although being equivalent to the previous statement)::
+Nevertheless, under the default option, nested implication is sensitive to ordering, so the following will evaluate to False (although being equivalent to the previous statement):
+
+.. code-block:: python
 
     bool(((I(U & Y) == 0) >> (H(U | Z) == 0)).forall(U) >> 
         (((H(U | X) == 0) >> (I(U & Y) == 0)).forall(U) >> (H(X | Z) == 0)))
 
-To ignore ordering, turn off the "imp_noncircular" option. The following returns True::
+To ignore ordering, turn off the "imp_noncircular" option. The following returns True:
+
+.. code-block:: python
 
     with PsiOpts(imp_noncircular = False):
         bool(((I(U & Y) == 0) >> (H(U | Z) == 0)).forall(U) >> 
@@ -413,16 +449,22 @@ WARNING: Turning off "imp_noncircular" may cause incorrect statements to be decl
 Bayesian network optimization
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Bayesian network optimization is turned on by default. It builds a Bayesian network automatically using the given conditional independence conditions, so as to reduce the dimension of the linear programming problem. The speed up is significant when the Bayesian network is sparse, for instance, when the variables form a Markov chain::
+Bayesian network optimization is turned on by default. It builds a Bayesian network automatically using the given conditional independence conditions, so as to reduce the dimension of the linear programming problem. The speed up is significant when the Bayesian network is sparse, for instance, when the variables form a Markov chain:
+
+.. code-block:: python
 
     X = rv_array("X", 0, 9)
     print(bool(markov(*X) >> (I(X[0] & X[8]) <= H(X[4]))))
 
-Nevertheless, building the Bayesian network can take some time. If your problem does not admit a sparse Bayesian network structure, you may turn off this optimization by::
+Nevertheless, building the Bayesian network can take some time. If your problem does not admit a sparse Bayesian network structure, you may turn off this optimization by:
+
+.. code-block:: python
 
     PsiOpts.set_setting(lptype = LinearProgType.H)
 
-The :code:`get_bayesnet` method of :code:`Region` returns a :code:`BayesNet` object (a Bayesian network) that can be deduced by the conditional independence conditions in the region. The :code:`check_ic` method of :code:`BayesNet` checks whether an expression containing conditional mutual information terms is always zero, e.g.::
+The :code:`get_bayesnet` method of :code:`Region` returns a :code:`BayesNet` object (a Bayesian network) that can be deduced by the conditional independence conditions in the region. The :code:`check_ic` method of :code:`BayesNet` checks whether an expression containing conditional mutual information terms is always zero, e.g.:
+
+.. code-block:: python
 
     ((I(X&Y|Z) == 0) & (I(U&X+Z|Y) <= 0)).get_bayesnet().check_ic(I(X&U|Z))
 
@@ -432,7 +474,9 @@ Information quantities
 
 There are several built-in information quantities listed below. While they can be defined by the user easily (see the source code for their definitions), they are provided for convenience.
 
-- **Gacs-Korner common information** [Gacs-Korner 1973] is given by :code:`gacs_korner(X & Y)`. The multivariate conditional version can be obtained by :code:`gacs_korner(X & Y & Z | W)`. The following tests return True::
+- **Gacs-Korner common information** [Gacs-Korner 1973] is given by :code:`gacs_korner(X & Y)`. The multivariate conditional version can be obtained by :code:`gacs_korner(X & Y & Z | W)`. The following tests return True:
+
+.. code-block:: python
 
     # Definition
     print(bool(gacs_korner(X & Y) == 
@@ -445,7 +489,9 @@ There are several built-in information quantities listed below. While they can b
     print(bool(indep(X+Y, Z+W) >> 
         (gacs_korner(X & Y) + gacs_korner(Z & W) <= gacs_korner(X+Z & Y+W))))
 
-- **Wyner's common information** [Wyner 1975] is given by :code:`wyner_ci(X & Y)`. The multivariate conditional version can be obtained by :code:`wyner_ci(X & Y & Z | W)`. The following tests return True::
+- **Wyner's common information** [Wyner 1975] is given by :code:`wyner_ci(X & Y)`. The multivariate conditional version can be obtained by :code:`wyner_ci(X & Y & Z | W)`. The following tests return True:
+
+.. code-block:: python
 
     # Definition
     print(bool(wyner_ci(X & Y) == markov(X, U, Y).exists(U).minimum(I(U & X+Y))))
@@ -458,7 +504,9 @@ There are several built-in information quantities listed below. While they can b
     print(bool(indep(X+Y, Z+W) >> 
         (wyner_ci(X & Y) + wyner_ci(Z & W) >= wyner_ci(X+Z & Y+W))))
 
-- **Common entropy** (or one-shot exact common information) [Kumar-Li-El Gamal 2014] is given by :code:`exact_ci(X & Y)`. The multivariate conditional version can be obtained by :code:`exact_ci(X & Y & Z | W)`. The following tests return True::
+- **Common entropy** (or one-shot exact common information) [Kumar-Li-El Gamal 2014] is given by :code:`exact_ci(X & Y)`. The multivariate conditional version can be obtained by :code:`exact_ci(X & Y & Z | W)`. The following tests return True:
+
+.. code-block:: python
 
     # Definition
     print(bool(exact_ci(X & Y) == markov(X, U, Y).exists(U).minimum(H(U))))
@@ -469,12 +517,16 @@ There are several built-in information quantities listed below. While they can b
     print(bool(indep(X+Y, Z+W) >> 
         (exact_ci(X & Y) + exact_ci(Z & W) >= exact_ci(X+Z & Y+W))))
 
-- **Total correlation** [Watanabe 1960] is given by :code:`total_corr(X & Y & Z)`. The conditional version can be obtained by :code:`total_corr(X & Y & Z | W)`. The following test returns True::
+- **Total correlation** [Watanabe 1960] is given by :code:`total_corr(X & Y & Z)`. The conditional version can be obtained by :code:`total_corr(X & Y & Z | W)`. The following test returns True:
+
+.. code-block:: python
 
     # By definition
     print(bool(total_corr(X & Y & Z) == H(X) + H(Y) + H(Z) - H(X+Y+Z)))
 
-- **Dual total correlation** [Han 1978] is given by :code:`dual_total_corr(X & Y & Z)`. The conditional version can be obtained by :code:`dual_total_corr(X & Y & Z | W)`. The following test returns True::
+- **Dual total correlation** [Han 1978] is given by :code:`dual_total_corr(X & Y & Z)`. The conditional version can be obtained by :code:`dual_total_corr(X & Y & Z | W)`. The following test returns True:
+
+.. code-block:: python
 
     # By definition
     print(bool(dual_total_corr(X & Y & Z) == 
@@ -482,7 +534,9 @@ There are several built-in information quantities listed below. While they can b
 
 - **Multivariate mutual information** [McGill 1954] is simply given by :code:`I(X & Y & Z) == I(X & Y) - I(X & Y | Z)`. The conditional version can be obtained by :code:`I(X & Y & Z | W)`.
 
-- **Mutual dependence** [Csiszar-Narayan 2004] is given by :code:`mutual_dep(X & Y & Z)`. The conditional version can be obtained by :code:`mutual_dep(X & Y & Z | W)`. The following tests return True::
+- **Mutual dependence** [Csiszar-Narayan 2004] is given by :code:`mutual_dep(X & Y & Z)`. The conditional version can be obtained by :code:`mutual_dep(X & Y & Z | W)`. The following tests return True:
+
+.. code-block:: python
 
     # By definition
     print(bool(mutual_dep(X & Y & Z) == 
@@ -494,7 +548,9 @@ There are several built-in information quantities listed below. While they can b
     print(bool(markov(X, Y, Z) >> 
         (mutual_dep(X & Y & Z) == emin(I(X & Y), I(Y & Z)))))
 
-- **Intrinsic mutual information** [Maurer-Wolf 1999] is given by :code:`intrinsic_mi(X & Y | Z)`. The following tests return True::
+- **Intrinsic mutual information** [Maurer-Wolf 1999] is given by :code:`intrinsic_mi(X & Y | Z)`. The following tests return True:
+
+.. code-block:: python
 
     # Definition
     print(bool(intrinsic_mi(X & Y | Z) == markov(X+Y, Z, U).exists(U).minimum(I(X & Y | U))))
@@ -510,11 +566,15 @@ There are several built-in information quantities listed below. While they can b
 Options
 ~~~~~~~
 
-There are two ways to set options. One can set an option globally using::
+There are two ways to set options. One can set an option globally using:
+
+.. code-block:: python
 
     PsiOpts.set_setting(option = value)
 
-or locally within a :code:`with` block using context manager::
+or locally within a :code:`with` block using context manager:
+
+.. code-block:: python
 
     with PsiOpts(option = value):
         # do something here
