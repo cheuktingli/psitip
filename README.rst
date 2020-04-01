@@ -363,8 +363,6 @@ The following code demonstrates its use in proving that superposition coding is 
     # Superposition coding region [Bergmans 1973], [Gallager 1974]
     r = ((R2 <= I(U & Y2)) & (R1 + R2 <= I(X & Y1 | U) + I(U & Y2)) & (R1 + R2 <= I(X & Y1))
                 & markov(U, X, Y1+Y2) & (R1 >= 0) & (R2 >= 0)).exists(U).marginal_exists(X)
-    r2 = ((R1 <= I(X & Y1 | U)) & (R2 <= I(U & Y2)) & (R1 + R2 <= I(X & Y1))
-                & markov(U, X, Y1+Y2) & (R1 >= 0) & (R2 >= 0)).exists(U).marginal_exists(X)
     
     # More capable [Korner-Marton 1975]
     # Reads: For all marginal distr. of X, I(X & Y1) >= I(X & Y2)
