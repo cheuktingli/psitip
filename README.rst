@@ -200,7 +200,7 @@ Advanced
 
 - **Existential quantification** is represented by the :code:`exists` method of :code:`Region` (which returns a :code:`Region`). For example, the condition "there exists auxiliary random variable U such that R <= I(U;Y) - I(U;S) and U-(X,S)-Y forms a Markov chain" (as in Gelfand-Pinsker theorem) is represented by:
 
-.. code-block:: python
+  .. code-block:: python
 
     ((R <= I(U & Y) - I(U & S)) & markov(U, X+S, Y)).exists(U) 
 
@@ -220,13 +220,13 @@ Advanced
 
 - **Universal quantification** is represented by the :code:`forall` method of :code:`Region` (which returns a :code:`Region`). This is usually called after the implication operator :code:`>>`. For example, the condition "for all U such that U-X-(Y1,Y2) forms a Markov chain, we have I(U;Y1) >= I(U;Y2)" (less noisy broadcast channel [Korner-Marton 1975]) is represented by:
 
-.. code-block:: python
+  .. code-block:: python
 
     (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))).forall(U)
 
 - Existential/universal quantification over marginal distributions is represented by the :code:`marginal_exists` or :code:`marginal_forall` method of :code:`Region`. This is usually used in channel coding settings where only the marginal distribution of the input can be altered (but not the channel). This is sometimes followed by the :code:`convexified()` (or :code:`imp_convexified()` for :code:`marginal_forall`) method to add a time sharing random variable, for example, for the less noisy broadcast channel:
 
-.. code-block:: python
+  .. code-block:: python
 
     (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))
         ).forall(U).marginal_forall(X).imp_convexified()
@@ -238,13 +238,13 @@ Advanced
 
 - **Minimization / maximization** over an expression subject to the constraints in a region is represented by the :code:`minimum` / :code:`maximum` method of :code:`Region` respectively (which returns an :code:`Expr` object). This method usually follows an :code:`exists` call to mark the dummy variables in the optimization. For example, Wyner's common information [Wyner 1975] is represented by:
 
-.. code-block:: python
+  .. code-block:: python
 
     markov(X, U, Y).exists(U).minimum(I(U & X+Y))
 
 - It is simple to define new information quantities. For example, to define the information bottleneck [Tishby-Pereira-Bialek 1999]:
 
-.. code-block:: python
+  .. code-block:: python
 
     def info_bot(X, Y, t):
         U = rv("U")
@@ -260,7 +260,7 @@ Advanced
 
 - While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments. For example:
 
-.. code-block:: python
+  .. code-block:: python
 
     (markov(X, U, Y).exists(U).minimum(I(U & X+Y)) <= H(X)).check_getaux()
 
@@ -476,7 +476,7 @@ There are several built-in information quantities listed below. While they can b
 
 - **Gacs-Korner common information** [Gacs-Korner 1973] is given by :code:`gacs_korner(X & Y)`. The multivariate conditional version can be obtained by :code:`gacs_korner(X & Y & Z | W)`. The following tests return True:
 
-.. code-block:: python
+  .. code-block:: python
 
     # Definition
     print(bool(gacs_korner(X & Y) == 
@@ -491,7 +491,7 @@ There are several built-in information quantities listed below. While they can b
 
 - **Wyner's common information** [Wyner 1975] is given by :code:`wyner_ci(X & Y)`. The multivariate conditional version can be obtained by :code:`wyner_ci(X & Y & Z | W)`. The following tests return True:
 
-.. code-block:: python
+  .. code-block:: python
 
     # Definition
     print(bool(wyner_ci(X & Y) == markov(X, U, Y).exists(U).minimum(I(U & X+Y))))
@@ -506,7 +506,7 @@ There are several built-in information quantities listed below. While they can b
 
 - **Common entropy** (or one-shot exact common information) [Kumar-Li-El Gamal 2014] is given by :code:`exact_ci(X & Y)`. The multivariate conditional version can be obtained by :code:`exact_ci(X & Y & Z | W)`. The following tests return True:
 
-.. code-block:: python
+  .. code-block:: python
 
     # Definition
     print(bool(exact_ci(X & Y) == markov(X, U, Y).exists(U).minimum(H(U))))
@@ -519,14 +519,14 @@ There are several built-in information quantities listed below. While they can b
 
 - **Total correlation** [Watanabe 1960] is given by :code:`total_corr(X & Y & Z)`. The conditional version can be obtained by :code:`total_corr(X & Y & Z | W)`. The following test returns True:
 
-.. code-block:: python
+  .. code-block:: python
 
     # By definition
     print(bool(total_corr(X & Y & Z) == H(X) + H(Y) + H(Z) - H(X+Y+Z)))
 
 - **Dual total correlation** [Han 1978] is given by :code:`dual_total_corr(X & Y & Z)`. The conditional version can be obtained by :code:`dual_total_corr(X & Y & Z | W)`. The following test returns True:
 
-.. code-block:: python
+  .. code-block:: python
 
     # By definition
     print(bool(dual_total_corr(X & Y & Z) == 
@@ -536,7 +536,7 @@ There are several built-in information quantities listed below. While they can b
 
 - **Mutual dependence** [Csiszar-Narayan 2004] is given by :code:`mutual_dep(X & Y & Z)`. The conditional version can be obtained by :code:`mutual_dep(X & Y & Z | W)`. The following tests return True:
 
-.. code-block:: python
+  .. code-block:: python
 
     # By definition
     print(bool(mutual_dep(X & Y & Z) == 
@@ -550,7 +550,7 @@ There are several built-in information quantities listed below. While they can b
 
 - **Intrinsic mutual information** [Maurer-Wolf 1999] is given by :code:`intrinsic_mi(X & Y | Z)`. The following tests return True:
 
-.. code-block:: python
+  .. code-block:: python
 
     # Definition
     print(bool(intrinsic_mi(X & Y | Z) == markov(X+Y, Z, U).exists(U).minimum(I(X & Y | U))))
