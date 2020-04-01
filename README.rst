@@ -8,6 +8,8 @@ The ITIP software was developed by Raymond W. Yeung and Ying-On Yan
 
 Psitip is unique in the sense that it is a Python module tightly integrated with the Python syntax, benefitting from its operator overloading support. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it supports a versatile deduction system for automated theorem proving. For example::
 
+.. code-block:: python
+
     from psitip import *
     PsiOpts.set_setting(solver = "pulp.glpk")
     
