@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.0
+Version 1.01
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -82,6 +82,7 @@ It CANNOT check for general affine/convex constraints, e.g.:
 """
 
 import itertools
+import collections
 import fractions
 import warnings
 
@@ -165,12 +166,14 @@ class PsiOpts:
         "imp_simplify": True,
         "tensorize_simplify": False,
         "forall_multiuse": True,
+        "forall_multiuse_numsave": 32,
         
         "verbose_lp": False,
         "verbose_auxsearch": False,
         "verbose_auxsearch_step": False,
         "verbose_auxsearch_result": False,
         "verbose_auxsearch_cache": False,
+        "verbose_auxsearch_step_cached": False,
         "verbose_subset": False,
         "verbose_sfrl": False,
         "verbose_flatten": False,
@@ -328,6 +331,30 @@ class IUtil:
                 while len(r) < tgtlen:
                     r += " "
         return r
+    
+    def list_tostr(x, tuple_delim = ", ", list_delim = ", ", inden = 0):
+        r = " " * inden
+        if isinstance(x, list):
+            if len([a for a in x if isinstance(a, list) or isinstance(a, tuple)]) > 0:
+                r += "["
+                for i in range(len(x)):
+                    if i == 0:
+                        r += IUtil.list_tostr(x[i], tuple_delim, list_delim, inden + 2)[inden + 1:]
+                    else:
+                        r += list_delim + "\n" + IUtil.list_tostr(x[i], tuple_delim, list_delim, inden + 2)
+                r += " ]"
+                return r
+            else:
+                r += "[" + list_delim.join([IUtil.list_tostr(a, tuple_delim, list_delim, 0) for a in x]) + "]"
+                return r
+        elif isinstance(x, tuple):
+            r += "(" + tuple_delim.join([IUtil.list_tostr(a, tuple_delim, list_delim, 0) for a in x]) + ")"
+            return r
+        r += str(x)
+        return r
+    
+    def list_tostr_std(x):
+        return IUtil.list_tostr(x, tuple_delim = ": ", list_delim = "; ")
 
     def enum_partition(n):
         def enum_partition_recur(mask):
@@ -500,15 +527,26 @@ class Comp:
         return len(self.varlist)
         
     def isempty(self):
+        """Whether self is empty."""
         return (len(self.varlist) == 0)
+    
+    def from_mask(self, mask):
+        """Return subset using bit mask."""
+        r = []
+        for i in range(len(self.varlist)):
+            if mask & (1 << i) != 0:
+                r.append(self.varlist[i])
+        return Comp(r)
         
     def super_of(self, other):
+        """Whether self is a superset of other."""
         for i in range(len(other.varlist)):
             if not (other.varlist[i] in self.varlist):
                 return False
         return True
         
     def disjoint(self, other):
+        """Whether self is disjoint from other."""
         for i in range(len(other.varlist)):
             if other.varlist[i] in self.varlist:
                 return False
@@ -790,6 +828,13 @@ class Term:
             return (self.x[0]-self.z).disjoint(self.x[1]-self.z)
             #return ((self.x[0]+self.x[1]+self.z).size() 
             #        == self.x[0].size()+self.x[1].size()+self.z.size())
+        return False
+        
+    def ishc(self):
+        if self.get_type() == TermType.IC:
+            if len(self.x) != 1:
+                return False
+            return True
         return False
         
     def record_to(self, index):
@@ -1628,8 +1673,17 @@ class BayesNet:
                 x1 &= ~z
                 x0 &= ~x1
                 ics.append((x0, x1, z))
+            elif a.ishc():
+                self.record(a.x[0])
+                self.record(a.z)
+                x0 = self.index.get_mask(a.x[0])
+                z = self.index.get_mask(a.z)
+                x0 &= ~z
+                ics.append((x0, -1, z))
         
         n = self.index.comprv.size()
+        ics = [(x0, x1 if x1 >= 0 else (1 << n) - 1 - x0 - z, z) for x0, x1, z in ics]
+        
         xk = 0
         zk = 0
         vis = 0
@@ -3015,11 +3069,13 @@ class Region:
         """
         return self.optimum(v, -1)
     
-    def init_prog(self, index):
+    def init_prog(self, index, lptype = None):
         prog = None
-        if PsiOpts.settings["lptype"] == LinearProgType.H:
+        if lptype is None:
+            lptype = PsiOpts.settings["lptype"]
+        if lptype == LinearProgType.H:
             prog = LinearProg(index, LinearProgType.H)
-        elif PsiOpts.settings["lptype"] == LinearProgType.HC1BN:
+        elif lptype == LinearProgType.HC1BN:
             bnet = self.get_bayesnet_imp(skip_simplify = True)
             kindex = bnet.index.copy()
             kindex.add_varindex(index)
@@ -3037,7 +3093,9 @@ class Region:
         cs = self.consonly().imp_flipped()
         index = IVarIndex()
         cs.record_to(index)
-        return cs.init_prog(index).get_region(toreal, toreal_only)
+        
+        r = cs.init_prog(index, lptype = LinearProgType.H).get_region(toreal, toreal_only)
+        return r
     
     def implies_ineq_quick(self, expr, sg):
         """Return whether self implies expr >= 0 or expr == 0, without linear programming"""
@@ -3139,6 +3197,7 @@ class Region:
         verbose_step = PsiOpts.settings.get("verbose_auxsearch_step", False)
         verbose_result = PsiOpts.settings.get("verbose_auxsearch_result", False)
         verbose_cache = PsiOpts.settings.get("verbose_auxsearch_cache", False)
+        verbose_step_cached = PsiOpts.settings.get("verbose_auxsearch_step_cached", False)
         
         if must_include is None:
             must_include = Comp.empty()
@@ -3148,6 +3207,7 @@ class Region:
         #noncircular_skipfail = True
         
         forall_multiuse = PsiOpts.settings["forall_multiuse"]
+        forall_multiuse_numsave = PsiOpts.settings["forall_multiuse_numsave"]
         
         cs = self.copy()
         
@@ -3391,30 +3451,33 @@ class Region:
         cs_added = Region.universe()
         #self.imp_only_copy_to(cs_added)
         condflagadded = {}
+        condflagadded_true = collections.deque()
         
         maxprogress = [-1, 0, -1]
         flipflaglen = 0
         numfail = [0]
         numclear = [0]
         
-        def clear_cache(mini):
+        def clear_cache(mini, maxi):
+            if verbose_cache:
+                print("========= cache clear: " + str(mini) + " - " + str(maxi) + " =========")
             progs[:] = []
-            auxcache[mini:] = [{} for i in range(mini, n)]
+            auxcache[mini:maxi] = [{} for i in range(mini, maxi)]
             
             for i in range(mini * 2, eqvs_range):
-                eqvsncache[i] = [[[], []] for j in range(len(eqvs[i]))]
-                eqvflagcache[i] = [{} for j in range(len(eqvs[i]))]
+                for j in range(len(eqvs[i])):
+                    if eqvpresflag[i][j] & ((1 << maxi) - (1 << mini)) != 0:
+                        eqvsncache[i][j] = [[], []]
+                        eqvflagcache[i][j] = {}
+                # eqvsncache[i] = [[[], []] for j in range(len(eqvs[i]))]
+                # eqvflagcache[i] = [{} for j in range(len(eqvs[i]))]
                 
         
         def build_region(i, allflag, allownew):
             numclear[0] += 1
-            if noncircular:
-                if noncircular_allaux:
-                    clear_cache(n_cond)
-                else:
-                    clear_cache(min(1, n_cond))
-            else:
-                clear_cache(0)
+            
+            cs_added_changed = False
+            prev_csstr = cs.tostring(tosort = True)
             
             if i > 0 and i >= n_cond and forall_multiuse:
                 csnew = Region.universe()
@@ -3427,13 +3490,19 @@ class Region:
                     
                     if allownew:
                         condflagadded[allflag] = True
-                        prev_numexpr = cs_added.numterm()
+                        prev_csaddedstr = cs_added.tostring(tosort = True)
                         cs_added.iand_norename(csnew)
                         cs_added.simplify_quick(zero_group = True)
-                        if verbose_step and cs_added.numterm() != prev_numexpr:
-                            print("========= forall added =========")
-                            print(cs_added.imp_flipped())
-                            print("==================")
+                        if prev_csaddedstr != cs_added.tostring(tosort = True):
+                            cs_added_changed = True
+                            condflagadded_true.appendleft(allflag)
+                            if len(condflagadded_true) > forall_multiuse_numsave:
+                                condflagadded_true.pop()
+                            if verbose_step:
+                                print("========= forall added =========")
+                                print(cs_added.imp_flipped())
+                                print("==================")
+                        
                 
                 cs_added.imp_only_copy_to(cs)
                 if not allownew:
@@ -3445,6 +3514,27 @@ class Region:
                     cs.remove_present(Comp([auxcomp.varlist[i3]]))
                 for i3 in range(i):
                     cs.substitute(Comp([auxcomp.varlist[i3]]), auxlist[i3])
+            
+            if cs_added_changed or prev_csstr != cs.tostring(tosort = True):
+                if verbose_cache:
+                    print("========= cleared =========")
+                    print(prev_csstr)
+                    print("========= to =========")
+                    print(cs.tostring(tosort = True))
+                maxi = n
+                if forall_multiuse and not cs_added_changed:
+                    maxi = n_cond
+                if noncircular:
+                    if noncircular_allaux:
+                        clear_cache(n_cond, maxi)
+                    else:
+                        clear_cache(min(1, n_cond), maxi)
+                else:
+                    clear_cache(0, maxi)
+            else:
+                if verbose_cache:
+                    print("========= not cleared =========")
+                    print(prev_csstr)
                 
         
         build_region(0, 0, False)
@@ -3517,36 +3607,34 @@ class Region:
                         tres = None
                         computed = False
                         
-                        if isone:
-                            eqvsn = eqvsns[i2][ieq]
-                            if eqvsn == 0:
-                                tres = eqvflagcache[i2][ieq].get(auxflagpres, None)
-                            else:
-                                eqvsn = (eqvsn + 1) // 2
-                                for f in eqvsncache[i2][ieq][eqvsn]:
-                                    if auxflagpres == f | auxflagpres:
-                                        tres = (eqvsn == 1)
+                        eqvsn = eqvsns[i2][ieq]
+                        if eqvsn == 0:
+                            tres = eqvflagcache[i2][ieq].get(auxflagpres, None)
+                        else:
+                            eqvsn = (eqvsn + 1) // 2
+                            for f in eqvsncache[i2][ieq][eqvsn]:
+                                if auxflagpres == f | auxflagpres:
+                                    tres = (eqvsn == 1)
+                                    break
+                            if tres is None:
+                                for f in eqvsncache[i2][ieq][1 - eqvsn]:
+                                    if f == f | auxflagpres:
+                                        tres = (eqvsn == 0)
                                         break
-                                if tres is None:
-                                    for f in eqvsncache[i2][ieq][1 - eqvsn]:
-                                        if f == f | auxflagpres:
-                                            tres = (eqvsn == 0)
-                                            break
                         
                         if tres is None:
                             
                             tres = cs.implies_ineq_prog(index, progs, x2, sg)
                             computed = True
                             
-                            if isone:
-                                eqvsn = eqvsns[i2][ieq]
-                                if eqvsn == 0:
-                                    eqvflagcache[i2][ieq][auxflagpres] = tres
-                                else:
-                                    eqvsncache[i2][ieq][1 if tres else 0].append(auxflagpres)
+                            eqvsn = eqvsns[i2][ieq]
+                            if eqvsn == 0:
+                                eqvflagcache[i2][ieq][auxflagpres] = tres
+                            else:
+                                eqvsncache[i2][ieq][1 if tres else 0].append(auxflagpres)
                         
                         if not tres:
-                            if verbose_step:
+                            if verbose_step and (verbose_step_cached or computed):
                                 numfail[0] += 1
                                 print(IUtil.strpad("; ".join([str(auxlist[i3]) for i3 in range(i)]),
                                    26, " S=" + str(cursizepass) + ",T=" + str(stepsize)
@@ -3671,12 +3759,24 @@ class Region:
             if check_recur(0, size, stepsize, 0):
                 
                 if verbose or verbose_result:
-                    print("========== success  =========")
+                    print("========= success =========")
+                    print("========= final region =========")
+                    print(cs.imp_flipped())
+                    print("========== aux  =========")
                     for i in range(n):
                         print(IUtil.strpad(str(auxcomp.varlist[i]), 6, ": " + str(auxlist[i])))
                         
                 namelist = [auxcomp.varlist[i].name for i in range(n)]
-                return [(Comp([self.aux.varlist[i]]), auxlist[namelist.index(self.aux.varlist[i].name)]) for i in range(n)]
+                res = []
+                for i in range(n):
+                    i2 = namelist.index(self.aux.varlist[i].name)
+                    cval = auxlist[i2]
+                    if forall_multiuse and i2 < n_cond and len(condflagadded_true) > 0:
+                        cval = [ccomp.from_mask(x >> (m * i2)) for x in condflagadded_true]
+                        if len(cval) == 1:
+                            cval = cval[0]
+                    res.append((Comp([self.aux.varlist[i]]), cval))
+                return res
             
             if size >= maxsize:
                 break
@@ -3781,15 +3881,29 @@ class Region:
             if i == n:
                 return None
             
-            for xmask in range(1, (1 << m) - 1):
-                ymask = (1 << m) - 1 - xmask
-                while ymask != 0:
-                    sfrlcomp[i][0] = xmask
-                    sfrlcomp[i][1] = ymask
-                    tres = check_getaux_sfrl_recur(i + 1)
-                    if tres is not None:
-                        return tres
-                    ymask = (ymask - 1) & ~xmask
+            for size in range(2, m + 1):
+                for xsize in range(1, size):
+                    for xtuple in itertools.combinations(range(m), xsize):
+                        xmask = sum([1 << x for x in xtuple])
+                        yset = [i for i in range(m) if not (i in xtuple)]
+                        for ytuple in itertools.combinations(yset, size - xsize):
+                            ymask = sum([1 << y for y in ytuple])
+                            sfrlcomp[i][0] = xmask
+                            sfrlcomp[i][1] = ymask
+                            tres = check_getaux_sfrl_recur(i + 1)
+                            if tres is not None:
+                                return tres
+                            
+            if False:
+                for xmask in range(1, (1 << m) - 1):
+                    ymask = (1 << m) - 1 - xmask
+                    while ymask != 0:
+                        sfrlcomp[i][0] = xmask
+                        sfrlcomp[i][1] = ymask
+                        tres = check_getaux_sfrl_recur(i + 1)
+                        if tres is not None:
+                            return tres
+                        ymask = (ymask - 1) & ~xmask
         
         
         return check_getaux_sfrl_recur(0)
@@ -3889,6 +4003,7 @@ class Region:
         False return value does NOT necessarily mean region is not convex
         """
         return self.convexified().implies(self)
+        #return ((self + self) / 2).implies(self)
         
     def simplify_quick(self, reg = None, zero_group = False):
         """Simplify a region in place, without linear programming
@@ -4487,6 +4602,59 @@ class Region:
         r = self.copy()
         r.kernel_eliminate(w)
         return r
+    
+    
+    def __imul__(self, other):
+        compreal = self.allcompreal()
+        for a in compreal.varlist:
+            self.substitute(Expr.fromcomp(Comp([a])), Expr.fromcomp(Comp([a])) / other)
+        self.simplify_quick()
+        return self
+        
+    def __mul__(self, other):
+        r = self.copy()
+        r *= other
+        return r
+        
+    def __rmul__(self, other):
+        r = self.copy()
+        r *= other
+        return r
+        
+    def __itruediv__(self, other):
+        self *= 1.0 / other
+        return self
+        
+    def __truediv__(self, other):
+        r = self.copy()
+        r *= 1.0 / other
+        return r
+    
+    def sum_minkowski(self, other):
+        if other.get_type() != RegionType.NORMAL:
+            return other.sum_minkowski(self)
+        
+        cs = self.copy()
+        co = other.copy()
+        param_real = cs.allcompreal() + co.allcompreal()
+        param_real_expr = Expr.zero()
+        
+        for a in param_real.varlist:
+            newname = "TENSOR_TMP_" + a.name
+            cs.substitute(Expr.real(a.name), Expr.real(a.name) - Expr.real(newname))
+            co.substitute(Expr.real(a.name), Expr.real(newname))
+            param_real_expr += Expr.real(newname)
+        
+        if PsiOpts.settings["tensorize_simplify"]:
+            return (cs & co).eliminated(param_real_expr)
+        else:
+            return (cs & co).eliminated_quick(param_real_expr)
+        
+    def __add__(self, other):
+        return self.sum_minkowski(other)
+        
+    def __iadd__(self, other):
+        return self + other
         
     def copy_rename(self):
         """Return a copy with renamed variables, together with map from old name to new.
@@ -4829,6 +4997,25 @@ class RegionOp(Region):
         r = self.copy()
         r |= other
         return r
+    
+    
+    def __imul__(self, other):
+        for i in range(len(self.regs)):
+            self.regs[i] *= other
+        return self
+    
+    def sum_minkowski(self, other):
+        if self.get_type() == RegionType.UNION:
+            return RegionOp(RegionType.UNION, [a.sum_minkowski(other) for a in self.regs])
+        if other.get_type() == RegionType.UNION:
+            return RegionOp(RegionType.UNION, [self.sum_minkowski(a) for a in other.regs])
+        
+        # The following are technically wrong
+        if self.get_type() == RegionType.INTER:
+            return RegionOp(RegionType.INTER, [a.sum_minkowski(other) for a in self.regs])
+        if other.get_type() == RegionType.INTER:
+            return RegionOp(RegionType.INTER, [self.sum_minkowski(a) for a in other.regs])
+        return self.copy()
     
     def implicate_entrywise(self, other, skip_simplify = False):
         tregs = []

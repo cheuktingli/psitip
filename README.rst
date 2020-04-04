@@ -167,6 +167,8 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - The union of two regions can be obtained using the ":code:`|`" operator. E.g. :code:`(I(X & Y) == 0) | (H(X | Y) <= H(Z) + a)`. (Note that the return value is a :code:`RegionOp` object, a subclass of :code:`Region`.)
 
+- The Minkowski sum of two regions (with respect to their real variables) can be obtained using the ":code:`+`" operator.
+
 - A region object can be converted to :code:`bool`, returning whether the conditions in the region can be proved to be true (using Shannon-type inequalities). E.g. :code:`bool(H(X) >= I(X & Y))`.
 
 - **Logical implication**. To test whether the conditions in region :code:`r1` implies the conditions in region :code:`r2` (i.e., whether :code:`r1` is a subset of :code:`r2`), use :code:`r1.implies(r2)` (which returns :code:`bool`). E.g. :code:`(I(X & Y) == 0).implies(H(X + Y) == H(X) + H(Y))`.

@@ -286,8 +286,7 @@ class TestPsitip(unittest.TestCase):
             aux = r.tensorize(chan_cond = c_dg)
             
             # Print auxiliary RVs
-            for (a, b) in aux:
-                print(str(a) + " : " + str(b))
+            print(IUtil.list_tostr_std(aux))
                 
             self.assertEqual(str(aux[0][1]), "U")
             self.assertEqual(str(aux[1][1]), "U,Y1")
@@ -297,8 +296,7 @@ class TestPsitip(unittest.TestCase):
             aux = r.check_converse(reg_subset = r_op, chan_cond = c_dg)
             
             # Print auxiliary RVs
-            for (a, b) in aux:
-                print(str(a) + " : " + str(b))
+            print(IUtil.list_tostr_std(aux))
                 
             self.assertEqual(str(aux[0][1]), "M2")
             self.assertEqual(str(aux[1][1]), "M2,Y1")
@@ -309,8 +307,7 @@ class TestPsitip(unittest.TestCase):
                 aux = r.check_converse(reg_subset = r_op, chan_cond = c_mc)
             
             # Print auxiliary RVs
-            for (a, b) in aux:
-                print(str(a) + " : " + str(b))
+            print(IUtil.list_tostr_std(aux))
                 
             #self.assertEqual(str(aux[0][1]), "M1,Y1_")
             #self.assertEqual(str(aux[1][1]), "M1,Y2")
@@ -347,7 +344,7 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(
             (markov(X, Y, Z) & indep(X+Z, Y)).exists(Y, toreal = True)
-            ), "{ I(Z;X) == 0 }")
+            ), "{ I(X;Z) == 0 }")
         
         # Mutual information region outer bound [Li-El Gamal 2017]
         self.assertEqual((
@@ -363,11 +360,8 @@ class TestPsitip(unittest.TestCase):
         )
         
         self.assertEqual(str(
-            (markov(X, Y, Z, U, W) & (H(U) == 0)).exists(U, toreal = True)),
-            ("{ I(W;X) == 0,\n"
-            "  I(W;Y) == 0,\n"
-            "  I(W;Z) == 0,\n"
-            "  I(X;Z|Y) == 0 }")
+            (markov(X, Y, U, W) & (H(U) == 0)).exists(U, toreal = True)),
+            ("{ I(X,Y;W) == 0 }")
         )
         
         # This currently fails
@@ -532,9 +526,13 @@ class TestPsitip(unittest.TestCase):
         self.assertFalse(((H(U | X) == 0) >> (H(U | Y) == 0)).forall(U) >> (H(Z | Y) == 0))
         self.assertFalse(((H(U | X) == 0) >> (H(U | Y) == 0)).forall(U) << (H(Z | Y) == 0))
         
+        self.assertTrue((H(X | U) == 0).forall(U) >> (H(X) == 0))
+        self.assertFalse((H(U | X) == 0).forall(U) >> (H(X) == 0))
         
         self.assertTrue(((H(U | X) == 0) >> (I(Y & Z | U) == 0)).forall(U)
             >> ((I(Y & Z) == 0) & (I(Y & Z | X) == 0)))
+        self.assertTrue(((H(U | X) == 0) >> (I(Y & Z | U) == 0)).forall(U)
+            >> (I(Y & Z & X) == 0))
         
         # If we do not allow U to take multiple values, this check will fail
         with PsiOpts(forall_multiuse = False):
@@ -754,6 +752,45 @@ class TestPsitip(unittest.TestCase):
                 "  H(W)-2H(X) >= 0 } ->\n"
                 "{ 2H(Z)-H(W) >= 0,\n"
                 "  H(W)-2H(Y) >= 0 }"))
+        
+    
+    def test_sum(self):
+        
+        R, R1, R2 = real("R", "R1", "R2")
+        X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
+        
+        r = (R1 >= 0) & (R2 >= 0) & (R1 <= H(X)) & (R2 <= H(Y))
+        r2 = (R1 >= 0) & (R2 >= 0) & (R1 + R2 <= H(Z))
+        
+        self.assertEqual(str(r * 2),
+            ("{ R1 >= 0,\n"
+            "  R2 >= 0,\n"
+            "  2H(X)-R1 >= 0,\n"
+            "  2H(Y)-R2 >= 0 }"))
+        self.assertEqual(str(r + r),
+            ("{ R1 >= 0,\n"
+            "  2H(X)-R1 >= 0,\n"
+            "  R2 >= 0,\n"
+            "  2H(Y)-R2 >= 0 }"))
+        self.assertEqual(str(r + r2),
+            ("{ R1 >= 0,\n"
+            "  R2 >= 0,\n"
+            "  H(Z)+H(X)-R1+H(Y)-R2 >= 0,\n"
+            "  H(Z)+H(X)-R1 >= 0,\n"
+            "  H(Z)+H(Y)-R2 >= 0 }"))
+        self.assertEqual(str(r + (r | r2)),
+            ("{\n"
+            "  { R1 >= 0,\n"
+            "    2H(X)-R1 >= 0,\n"
+            "    R2 >= 0,\n"
+            "    2H(Y)-R2 >= 0 }\n"
+            " OR\n"
+            "  { R1 >= 0,\n"
+            "    R2 >= 0,\n"
+            "    H(X)+H(Z)-R1 >= 0,\n"
+            "    H(Y)+H(Z)-R2 >= 0,\n"
+            "    H(Y)+H(X)+H(Z)-R1-R2 >= 0 }\n"
+            "}"))
         
     
     def test_performance(self):
