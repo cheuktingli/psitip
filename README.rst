@@ -13,7 +13,7 @@ Psitip is unique in the sense that it is a Python module tightly integrated with
     from psitip import *
     PsiOpts.set_setting(solver = "pulp.glpk")
     
-    X, Y, Z, U, S, M = rv("X", "Y", "Z", "U", "S", "M") # declare random variables
+    X, Y, Z, W, U, M, S = rv("X", "Y", "Z", "W", "U", "M", "S") # declare random variables
     print(bool(H(X) + I(Y & Z | X) >= I(Y & Z))) # H(X)+I(Y;Z|X)>=I(Y;Z) is True
     print(markov(X, Y, Z).implies(H(X | Y) <= H(X | Z))) # returns True
     print((H(X) == I(X & Y) + H(X | Y+Z)).implies(markov(X, Y, Z))) # returns True
@@ -43,6 +43,7 @@ Psitip is unique in the sense that it is a Python module tightly integrated with
     print((indep(X+Z, Y) & markov(X, Y, Z)).exists(Y, toreal = True))
     # the above gives { I(Z;X) == 0 }
 
+
     R = real("R") # declare real variable
     logg = real("logg")
 
@@ -55,7 +56,7 @@ Psitip is unique in the sense that it is a Python module tightly integrated with
             & (R >= 0)).exists(U).marginal_exists(X)
     
     # Using strong functional representation lemma [Li-El Gamal 2018]
-    with PsiOpts(sfrl = "sfrl_gap.logg"):
+    with PsiOpts(truth = sfrl(logg)):
         
         # Automated achievability proof of Gelfand-Pinsker theorem
         print(r.implies(r_op.relaxed(R, logg * 5))) # returns True
@@ -68,7 +69,25 @@ Psitip is unique in the sense that it is a Python module tightly integrated with
         print(str(a) + " : " + str(b))
 
 
-Psitip supports advanced features such as automated converse proofs (e.g. Gelfand-Pinsker theorem above), Fourier-Motzkin elimination, automated search for auxiliary random variables, automated checking of whether a region tensorizes, and user-defined information quantities (e.g. Wyner's CI and Gacs-Korner CI above). Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
+    # Zhang-Yeung inequality [Zhang-Yeung 1998] cannot be proved by Shannon-type inequalities
+    print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns False
+    
+    # Using copy lemma [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011]
+    with PsiOpts(truth = copylem()):
+        
+        # Prove Zhang-Yeung inequality
+        print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns True
+
+
+Psitip supports advanced features such as automated converse proofs (e.g. Gelfand-Pinsker theorem above), Fourier-Motzkin elimination, non-Shannon-type inequalities, automated search for auxiliary random variables, automated checking of whether a region tensorizes, and user-defined information quantities (e.g. Wyner's CI and Gacs-Korner CI above). Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
+
+
+About
+~~~~~
+
+Author: Cheuk Ting Li ( https://www.ie.cuhk.edu.hk/people/ctli.shtml ). The source code of Psitip is released under the GNU General Public License v3.0 ( https://www.gnu.org/licenses/gpl-3.0.html ).
+
+The author would like to thank Raymond W. Yeung and Chandra Nair for their invaluable comments.
 
 
 WARNING
@@ -78,20 +97,18 @@ This program comes with ABSOLUTELY NO WARRANTY. This section lists some known li
 
 This program may produce false rejects (i.e., returning False when checking a true inequality) in scenarios involving:
 
-- True non-Shannon-type inequalities. This is the same limitation as in ITIP.
+- True non-Shannon-type inequalities. Nevertheless, Psitip supports the strong functional representation lemma and the copy lemma, which allows it to prove some results that cannot be proved using Shannon-type inequalities.
 
 - Union of regions. While Psitip will attempt to perform deduction in this case, unions are generally much harder to handle than intersection.
 
 - A lower (resp. upper) bound on the maximum (resp. minimum) of two expressions, by extension of the limitation about union.
 
-- Auxiliary random variable searching. Psitip can only identify auxiliaries that are joint random variables of existing random variables (as in Gallager converse), and those produced by the strong functional representation lemma, if the :code:`sfrl` option is on.
+- Auxiliary random variable searching. Psitip can only identify auxiliaries that are joint random variables of existing random variables (as in Gallager converse), and those produced by the strong functional representation lemma (if :code:`sfrl(logg)` is assumed).
 
 - Numerical errors in the linear programming solver.
 
 
 This program may produce false accepts (i.e., declaring a false inequality to be true) in scenarios involving:
-
-- Nested implications. See "nested implication" section for details.
 
 - Existential quantification on random variables with the option :code:`toreal = True` (see Advanced section).
 
@@ -128,12 +145,17 @@ The default solver is Scipy, though it is highly recommended to switch to anothe
     PsiOpts.set_setting(solver = "pyomo.glpk")
     PsiOpts.set_setting(solver = "pulp.cbc") # Not recommended
 
-PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following lines to set the solver to any supported solver:
+PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following line to set the solver to any supported solver:
 
 .. code-block:: python
 
-    PsiOpts.set_setting(solver = "pulp.other")
-    IUtil.pulp_solver = pulp.solvers.GLPK(msg = 0) # Or another solver
+    PsiOpts.set_setting(pulp_solver = pulp.solvers.GLPK(msg = 0)) # Or another solver
+
+For Pyomo (see https://pyomo.readthedocs.io/en/stable/solving_pyomo_models.html#supported-solvers ), use the following line (replace ??? with the desired solver):
+
+.. code-block:: python
+
+    PsiOpts.set_setting(solver = "pyomo.???")
 
 WARNING: It is possible for inaccuracies in the solver to result in wrong output in Psitip. Try switching to another solver if a problem is encountered.
 
@@ -155,19 +177,25 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - Expressions can be added and subtracted with each other, and multiplied and divided by scalars, e.g. :code:`I(X + Y & Z) * 3 - a * 4`.
 
- - Expressions CANNOT be multiplied with each other. :code:`H(X) * H(Y)` is invalid. Expressions CANNOT be added with a constant. :code:`H(X) + 1` is invalid.
+ - Expressions CANNOT be multiplied with each other. :code:`H(X) * H(Y)` is invalid.
+ 
+ - While Psitip can handle affine expressions like :code:`H(X) + 1` (i.e., adding or subtracting a constant), affine expressions are highly unrecommended as they are prone to numerical error in the solver.
 
 - When two expressions are compared (using :code:`<=`, :code:`>=` or :code:`==`), the return value is a :code:`Region` object (not a :code:`bool`). The :code:`Region` object represents the set of distributions where the condition is satisfied. E.g. :code:`I(X & Y) == 0`, :code:`H(X | Y) <= H(Z) + a`.
+ 
+ - While Psitip can handle general affine and half-space constraints like :code:`H(X) <= 1` (i.e., comparing an expression with a nonzero constant, or comparing affine expressions), they are highly unrecommended as they are prone to numerical error in the solver.
+ 
+ - While Psitip can handle strict inequalities like :code:`H(X) > H(Y)`, strict inequalities are highly unrecommended as they are prone to numerical error in the solver.
 
- - If one side of the equation is a constant, then that constant must be zero. :code:`I(X & Y) == 5` is invalid.
-
-- The intersection of two regions (i.e., the region where the conditions in both regions are satisfied) can be obtained using the ":code:`&`" operator. E.g. :code:`(I(X & Y) == 0) & (H(X | Y) <= H(Z) + a)`.
+- The **intersection** of two regions (i.e., the region where the conditions in both regions are satisfied) can be obtained using the ":code:`&`" operator. E.g. :code:`(I(X & Y) == 0) & (H(X | Y) <= H(Z) + a)`.
 
  - To build complicated regions, it is often convenient to declare :code:`r = universe()` (:code:`universe()` is the region without constraints), and add constraints to :code:`r` by, e.g., :code:`r &= I(X & Y) == 0`.
 
-- The union of two regions can be obtained using the ":code:`|`" operator. E.g. :code:`(I(X & Y) == 0) | (H(X | Y) <= H(Z) + a)`. (Note that the return value is a :code:`RegionOp` object, a subclass of :code:`Region`.)
+- The **union** of two regions can be obtained using the ":code:`|`" operator. E.g. :code:`(I(X & Y) == 0) | (H(X | Y) <= H(Z) + a)`. (Note that the return value is a :code:`RegionOp` object, a subclass of :code:`Region`.)
 
-- The Minkowski sum of two regions (with respect to their real variables) can be obtained using the ":code:`+`" operator.
+- The **complement** of a region can be obtained using the ":code:`~`" operator. E.g. :code:`~(H(X | Y) <= H(Z) + a)`. (Note that the return value is a :code:`RegionOp` object, a subclass of :code:`Region`.)
+
+- The **Minkowski sum** of two regions (with respect to their real variables) can be obtained using the ":code:`+`" operator.
 
 - A region object can be converted to :code:`bool`, returning whether the conditions in the region can be proved to be true (using Shannon-type inequalities). E.g. :code:`bool(H(X) >= I(X & Y))`.
 
@@ -206,7 +234,7 @@ Advanced
 
     ((R <= I(U & Y) - I(U & S)) & markov(U, X+S, Y)).exists(U) 
 
- - Calling :code:`exists` on real variables will cause the variable to be eliminated by Fourier-Motzkin elimination (see Fourier-Motzkin elimination section).
+ - Calling :code:`exists` on real variables will cause the variable to be eliminated by Fourier-Motzkin elimination (see Fourier-Motzkin elimination section). Currently, calling :code:`exists` on real variables for a region obtained from material implication is not supported.
 
  - Calling :code:`exists` on random variables will cause the variable to be marked as auxiliary (dummy).
 
@@ -220,18 +248,22 @@ Advanced
 
 - **Material implication** between :code:`Region` is denoted by the operator :code:`>>`, which returns a :code:`Region` object. The region :code:`r1 >> r2` represents the condition that :code:`r2` is true whenever :code:`r1` is true. Note that :code:`r1.implies(r2)` is equivalent to :code:`bool(r1 >> r2)`.
 
+ - **Material equivalence** is denoted by the operator :code:`==`, which returns a :code:`Region` object. The region :code:`r1 == r2` represents the condition that :code:`r2` is true if and only if :code:`r1` is true.
+
 - **Universal quantification** is represented by the :code:`forall` method of :code:`Region` (which returns a :code:`Region`). This is usually called after the implication operator :code:`>>`. For example, the condition "for all U such that U-X-(Y1,Y2) forms a Markov chain, we have I(U;Y1) >= I(U;Y2)" (less noisy broadcast channel [Korner-Marton 1975]) is represented by:
 
   .. code-block:: python
 
     (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))).forall(U)
 
-- Existential/universal quantification over marginal distributions is represented by the :code:`marginal_exists` or :code:`marginal_forall` method of :code:`Region`. This is usually used in channel coding settings where only the marginal distribution of the input can be altered (but not the channel). This is sometimes followed by the :code:`convexified()` (or :code:`imp_convexified()` for :code:`marginal_forall`) method to add a time sharing random variable, for example, for the less noisy broadcast channel:
+ - Currently, calling :code:`forall` on real variables is not supported.
+
+- Existential/universal quantification over marginal distributions is represented by the :code:`marginal_exists` or :code:`marginal_forall` method of :code:`Region`. This is usually used in channel coding settings where only the marginal distribution of the input can be altered (but not the channel). This is sometimes followed by the :code:`convexified()` (use :code:`convexified(forall = True)` for :code:`marginal_forall`) method to add a time sharing random variable, for example, for the less noisy broadcast channel:
 
   .. code-block:: python
 
     (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))
-        ).forall(U).marginal_forall(X).imp_convexified()
+        ).forall(U).marginal_forall(X).convexified(forall = True)
 
 
 - The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`.
@@ -258,9 +290,11 @@ Advanced
     print(bool((t1 <= t2) >> (info_bot(X, Y, t1) <= info_bot(X, Y, t2)))) # True
     
 
-- The minimum / maximum of two (or more) :code:`Expr` objects is represented by the :code:`emin` / :code:`emax` function respectively. For example, :code:`bool(emin(H(X), H(Y)) >= I(X & Y))` returns True.
+- The **minimum / maximum** of two (or more) :code:`Expr` objects is represented by the :code:`emin` / :code:`emax` function respectively. For example, :code:`bool(emin(H(X), H(Y)) >= I(X & Y))` returns True.
 
-- While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments. For example:
+- The **absolute value** of an :code:`Expr` object is represented by the :code:`abs` function. For example, :code:`bool(abs(H(X) - H(Y)) <= H(X) + H(Y))` returns True.
+
+- While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments (returns None if :code:`bool(r)` is False). For example:
 
   .. code-block:: python
 
@@ -275,13 +309,13 @@ Advanced
     (markov(X, U, Y).exists(U).minimum(I(U & X+Y))
         <= emin(H(X),H(Y))).check_getaux()
 
-  returns :code:`[[(U, X)], [(U, Y)]]`.
+  returns :code:`[[(U, X)], [(U, X+Y)], [(U, Y)]]`.
 
-- The **Gacs-Korner common part** [Gacs-Korner 1973] between X and Y is denoted as :code:`meet(X, Y)` (a :code:`Comp` object).
+- The **meet** or **Gacs-Korner common part** [Gacs-Korner 1973] between X and Y is denoted as :code:`meet(X, Y)` (a :code:`Comp` object).
 
 - The **minimal sufficient statistic** of X about Y is denoted as :code:`mss(X, Y)` (a :code:`Comp` object).
 
-- The random variable given by the **strong functional representation lemma** [Li-El Gamal 2018] applied on X, Y (:code:`Comp` objects) with a gap term logg (:code:`Expr` object) is denoted as :code:`sfrl(X, Y, logg)` (a :code:`Comp` object). If the gap term is omitted, this will be the ordinary functional representation lemma [El Gamal-Kim 2011].
+- The random variable given by the **strong functional representation lemma** [Li-El Gamal 2018] applied on X, Y (:code:`Comp` objects) with a gap term logg (:code:`Expr` object) is denoted as :code:`sfrl_rv(X, Y, logg)` (a :code:`Comp` object). If the gap term is omitted, this will be the ordinary functional representation lemma [El Gamal-Kim 2011].
 
 
 Fourier-Motzkin elimination
@@ -368,7 +402,7 @@ The following code demonstrates its use in proving that superposition coding is 
     
     # More capable [Korner-Marton 1975]
     # Reads: For all marginal distr. of X, I(X & Y1) >= I(X & Y2)
-    c_mc = (I(X & Y1) >= I(X & Y2)).marginal_forall(X).imp_convexified()
+    c_mc = (I(X & Y1) >= I(X & Y2)).marginal_forall(X).convexified(forall = True)
 
     # Attempt to prove converse assuming more capable
     aux = r.check_converse(r_op, chan_cond = c_mc)
@@ -404,48 +438,6 @@ The following code demonstrates its use in proving the converse part in Wyner-Zi
         print(str(a) + " : " + str(b))
 
 
-Strong Functional Representation Lemma
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The strong functional representation lemma [Li-El Gamal 2018] states that for any random variables (X, Y), there exists random variable Z independent of X such that Y is a function of (X, Z), and I(X;Z|Y) <= log(I(X;Y) + 1) + 4. The "log(I(X;Y) + 1) + 4" term is usually represented by the real variable :code:`logg = real("logg")`. Use the context manager :code:`with PsiOpts(sfrl = "sfrl_gap.logg"):` to allow the strong functional representation lemma to be used in auxiliary random variable searching. See the Gelfand-Pinsker theorem example above.
-
-
-Nested Implication
-~~~~~~~~~~~~~~~~~~
-
-WARNING: Nested implication may produce incorrect results for some cases. Use at your own risk. (The reason is that all nested structures are flattened to one layer. This may be fixed in future versions.) Nested implication may be performed implicitly, e.g., when using :code:`forall` and information quantities involving maximization/minimization. It is advisable to check manually that the output auxiliary random variables are indeed valid.
-
-It is possible to perform nested implications. For example, "if H(U|X)=0 implies H(U|Y)=0, then H(X|Y)=0" can be checked via:
-
-.. code-block:: python
-
-    bool(((H(U | X) == 0) >> (H(U | Y) == 0)).forall(U) >> (H(X | Y) == 0))
-
-We can nest even more layers of implications:
-
-.. code-block:: python
-
-    bool(((H(U | X) == 0) >> (I(U & Y) == 0)).forall(U) >> 
-        (((I(U & Y) == 0) >> (H(U | Z) == 0)).forall(U) >> (H(X | Z) == 0)))
-
-Nevertheless, under the default option, nested implication is sensitive to ordering, so the following will evaluate to False (although being equivalent to the previous statement):
-
-.. code-block:: python
-
-    bool(((I(U & Y) == 0) >> (H(U | Z) == 0)).forall(U) >> 
-        (((H(U | X) == 0) >> (I(U & Y) == 0)).forall(U) >> (H(X | Z) == 0)))
-
-To ignore ordering, turn off the "imp_noncircular" option. The following returns True:
-
-.. code-block:: python
-
-    with PsiOpts(imp_noncircular = False):
-        bool(((I(U & Y) == 0) >> (H(U | Z) == 0)).forall(U) >> 
-            (((H(U | X) == 0) >> (I(U & Y) == 0)).forall(U) >> (H(X | Z) == 0)))
-
-WARNING: Turning off "imp_noncircular" may cause incorrect statements to be declared as correct.
-
-
 Bayesian network optimization
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -460,7 +452,7 @@ Nevertheless, building the Bayesian network can take some time. If your problem 
 
 .. code-block:: python
 
-    PsiOpts.set_setting(lptype = LinearProgType.H)
+    PsiOpts.set_setting(lptype = "H")
 
 The :code:`get_bayesnet` method of :code:`Region` returns a :code:`BayesNet` object (a Bayesian network) that can be deduced by the conditional independence conditions in the region. The :code:`check_ic` method of :code:`BayesNet` checks whether an expression containing conditional mutual information terms is always zero, e.g.:
 
@@ -469,10 +461,99 @@ The :code:`get_bayesnet` method of :code:`Region` returns a :code:`BayesNet` obj
     ((I(X&Y|Z) == 0) & (I(U&X+Z|Y) <= 0)).get_bayesnet().check_ic(I(X&U|Z))
 
 
-Information quantities
-~~~~~~~~~~~~~~~~~~~~~~
+Built-in functions
+~~~~~~~~~~~~~~~~~~
 
-There are several built-in information quantities listed below. While they can be defined by the user easily (see the source code for their definitions), they are provided for convenience.
+There are several built-in information functions listed below. While they can be defined by the user easily (see the source code for their definitions), they are provided for convenience.
+
+Theorems
+--------
+
+The following are true statements (:code:`Region` objects) that allow Psitip to prove results not provable by Shannon-type inequalities (at the expense of longer computation time). They can either be used in the context manager (e.g. :code:`with PsiOpts(truth = sfrl(logg)):`, see Options section), or directly (e.g. sfrl().implies(excess_fi(X, Y) <= H(X | Y))).
+
+- **Strong functional representation lemma** [Li-El Gamal 2018] is given by :code:`sfrl(logg)`. It states that for any random variables (X, Y), there exists random variable Z independent of X such that Y is a function of (X, Z), and I(X;Z|Y) <= log(I(X;Y) + 1) + 4. The "log(I(X;Y) + 1) + 4" term is usually represented by the real variable :code:`logg = real("logg")` (which is the argument of :code:`sfrl(logg)`). Omitting the :code:`logg` argument gives the original functional representation lemma [El Gamal-Kim 2011]. For example:
+
+  .. code-block:: python
+
+    R = real("R") # declare real variable
+    logg = real("logg")
+
+    # Channel with state information at encoder, lower bound
+    r_op = ((R <= I(M & Y)) & indep(M,S) & markov(M, X+S, Y)
+            & (R >= 0)).exists(M).marginal_exists(X)
+    
+    # Gelfand-Pinsker theorem [Gel'fand-Pinsker 1980]
+    r = ((R <= I(U & Y) - I(U & S)) & markov(U, X+S, Y)
+            & (R >= 0)).exists(U).marginal_exists(X)
+    
+    # Using strong functional representation lemma
+    with PsiOpts(truth = sfrl(logg)):
+        
+        # Automated achievability proof of Gelfand-Pinsker theorem
+        print(r.implies(r_op.relaxed(R, logg * 5))) # returns True
+
+ - Note that writing :code:`with PsiOpts(truth = sfrl(logg)):` allows SFRL to be used only once. To allow it to be used twice, write :code:`with PsiOpts(truth = sfrl(logg) & sfrl(logg)):`.
+
+- **Copy lemma** [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011] is given by :code:`copylem(n, m)`. It states that for any random variables X_1,...,X_n,Y_1,...,Y_m, there exists Z_1,...,Z_m such that (X_1,...,X_n,Y_1,...,Y_m) has the same distribution as (X_1,...,X_n,Z_1,...,Z_m) (only equalities of entropies are enforced in Psitip), and (Y_1,...,Y_m)-(X_1,...,X_n)-(Z_1,...,Z_m) forms a Markov chain. The default values of n, m are 2, 1 respectively. For example:
+
+  .. code-block:: python
+
+    # Using copy lemma
+    with PsiOpts(truth = copylem()):
+        
+        # Prove Zhang-Yeung inequality
+        print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns True
+
+- **Double Markov property** [Csiszar-Korner 2011] is given by :code:`dblmarkov()`. It states that if X-Y-Z and Y-X-Z are Markov chains, then there exists W that is a function of X, a function of Y, and (X,Y)-W-Z is Markov chain. For example:
+
+  .. code-block:: python
+  
+    # Using double Markov property
+    with PsiOpts(truth = dblmarkov()):
+        aux = ((markov(X, Y, Z) & markov(Y, X, Z))
+            >> (H(mss(X, Z) | mss(Y, Z)) == 0)).check_getaux()
+        print(IUtil.list_tostr_std(aux))
+        
+        aux = ((markov(X, Y, Z) & markov(Y, X, Z))
+            >> markov(X+Y, meet(X, Y), Z)).check_getaux()
+        print(IUtil.list_tostr_std(aux))
+
+- **Existence of meet and minimal sufficient statistics** is given by :code:`existence(meet)` and :code:`existence(mss)` respectively.
+
+Conditions
+----------
+
+The following are conditions (:code:`Region` objects) on the random variable arguments.
+
+- **Mutual independence** is expressed as :code:`indep(X, Y, Z)`. The function :code:`indep` can take any number of arguments. For random sequence :code:`X = rv_array("X", 0, 5)`, the mutual independence condition can be expressed as :code:`indep(*X)`.
+
+- **Markov chain** is expressed as :code:`markov(X, Y, Z)`. The function :code:`markov` can take any number of arguments. For random sequence :code:`X = rv_array("X", 0, 5)`, the Markov chain condition can be expressed as :code:`markov(*X)`.
+
+- **Informational equivalence** (i.e., containing the same information) is expressed as :code:`equiv(X, Y, Z)`. The function :code:`equiv` can take any number of arguments. Note that :code:`equiv(X, Y)` is the same as :code:`(H(X|Y) == 0) & (H(Y|X) == 0)`.
+
+- **Same distribution**. The condition that (X,Y) has the same distribution as (Z,W) is expressed as :code:`eqdist([X, Y], [Z, W])`. The function :code:`eqdist` can take any number of arguments (that are all lists). Note that only equalities of entropies are enforced (i.e., H(X)=H(Z), H(Y)=H(W), H(X,Y)=H(Z,W)).
+
+- **Exchangeability** is expressed as :code:`exchangeable(X, Y, Z)`. The function :code:`exchangeable` can take any number of arguments. For random sequence :code:`X = rv_array("X", 0, 5)`, the condition that it is an exchangeable sequence of random variables can be expressed as :code:`exchangeable(*X)`. Note that only equalities of entropies are enforced.
+
+- **IID sequence** is expressed as :code:`iidseq(X, Y, Z)`. The function :code:`iidseq` can take any number of arguments. For random sequence :code:`X = rv_array("X", 0, 5)`, the condition that it is an IID sequence of random variables can be expressed as :code:`iidseq(*X)`. Note that only equalities of entropies are enforced.
+
+
+Random variables
+----------------
+
+The following are :code:`Comp` objects (random-variable-valued functions).
+
+- **Meet** or **Gacs-Korner common part** [Gacs-Korner 1973] between X and Y is denoted as :code:`meet(X, Y)` (a :code:`Comp` object).
+
+- **Minimal sufficient statistic** of X about Y is denoted as :code:`mss(X, Y)` (a :code:`Comp` object).
+
+- The random variable given by the **strong functional representation lemma** [Li-El Gamal 2018] applied on X, Y (:code:`Comp` objects) with a gap term logg (:code:`Expr` object) is denoted as :code:`sfrl_rv(X, Y, logg)` (a :code:`Comp` object). If the gap term is omitted, this will be the ordinary functional representation lemma [El Gamal-Kim 2011].
+
+
+Real-valued information quantities
+----------------------------------
+
+The following are :code:`Expr` objects (real-valued functions).
 
 - **Gacs-Korner common information** [Gacs-Korner 1973] is given by :code:`gacs_korner(X & Y)`. The multivariate conditional version can be obtained by :code:`gacs_korner(X & Y & Z | W)`. The following tests return True:
 
@@ -563,6 +644,7 @@ There are several built-in information quantities listed below. While they can b
 - **Excess functional information** [Li-El Gamal 2018] is given by :code:`excess_fi(X, Y)`.
 
 
+
 Options
 ~~~~~~~
 
@@ -581,43 +663,71 @@ or locally within a :code:`with` block using context manager:
 
 Some of the options are:
 
+- :code:`truth` : Specify a region that is assumed to be true in all deductions. For example, use :code:`truth = sfrl(logg)` to assume the strong functional representation lemma with logarithmic gap given by :code:`logg = real("logg")`. Default is None.
+
+- :code:`truth_add` : Add another assumption (:code:`Region` object) to :code:`truth`.
+
 - :code:`solver` : The solver used (e.g. :code:`"pulp.glpk"`, :code:`"pyomo.glpk"`, :code:`"pulp.cbc"`, :code:`"scipy"`).
 
-- :code:`solver_scipy_maxsize` : For linear programming problems with number of variables less than or equal to this value, the scipy solver will be used (regardless of the :code:`solver` option). This can lead to significant speed-up for small problems. Default is 12. Set to -1 to disable.
+- :code:`solver_scipy_maxsize` : For linear programming problems with number of variables less than or equal to this value, the scipy solver will be used (regardless of the :code:`solver` option). This can lead to significant speed-up for small problems. Default is -1 (disabled).
 
-- :code:`lptype` : Values are :code:`LinearProgType.HC1BN` (Bayesian network optimization, default) or :code:`LinearProgType.H` (no optimization).
+- :code:`lptype` : Values are :code:`"HC1BN"` (Bayesian network optimization, default) or :code:`"H"` (no optimization).
 
-- :code:`forall_multiuse` : Turn to False to only allow one value for variables with universal quantification. Default is True. Note that if this option is True, then the auxiliary search result for variables with universal quantification will be meaningless.
+- :code:`lp_bounded` : Set to True to add an upper bound (given by the option :code:`lp_ubound`) on the joint entropy of all random variables (so the linear program is always bounded). Default is False.
 
-- :code:`imp_noncircular` : Turn to False to ignore ordering of implications. Default is True.
+- :code:`lp_ubound` : The value of the upper bound for :code:`lp_bounded`. Default is :code:`1e3`. It should be set to a value larger than all affine constants in the problem.
 
-- :code:`imp_noncircular_allaux` : Turn to True to skip part of the nested implications for efficiency (but may fail to prove some provable results). Default is False.
+- :code:`lp_eps` : Strict inequalities in the constraints like :code:`H(X) > H(Y)` are replaced by :code:`H(X) >= H(Y) + lp_eps`. Default is :code:`1e-3`. It should be set to a value smaller than all affine constants in the problem.
 
-- :code:`imp_simplify` : Turn to False to disable calling :code:`simplify` before each implication (may result in some speed-up). Default is True.
+- :code:`lp_eps_obj` : Strict inequalities in the objective (region to be proved) like :code:`H(X) > H(Y)` are replaced by :code:`H(X) >= H(Y) + lp_eps_obj`. Default is :code:`1e-4`. It should be set to a value smaller than :code:`lp_eps`.
 
-- :code:`sfrl` : Strong functional representation lemma searching mode. Values are :code:`"no"` (default), :code:`"frl"` (only the original functional representation lemma), :code:`"sfrl_gap.logg"` (with a logarithmic gap given by :code:`real("logg")`, the name "logg" can be changed) and :code:`sfrl_nogap` (gap assumed to be 0, which is technically inaccurate).
+- :code:`lp_zero_cutoff` : An optimal value larger than :code:`lp_zero_cutoff` is considered nonnegative in a linear program. Default is :code:`-1e-5`. It should be set to a value smaller than all affine constants in the problem.
+
+- :code:`auxsearch_leaveone` : Set to True to handle case decomposition in auxiliary search. Default is False.
+
+- :code:`forall_multiuse` : Set to False to only allow one value for variables with universal quantification. Default is True. Note that if this option is True, then the auxiliary search result for variables with universal quantification will be meaningless.
 
 - :code:`str_style` : The style of string conversion :code:`str(x)` and verbose output. Values are :code:`PsiOpts.STR_STYLE_STANDARD` (e.g. :code:`3I(X,Y;Z|W)-H(X)`, default) or :code:`PsiOpts.STR_STYLE_PSITIP` (e.g. :code:`3*I(X+Y&Z|W)-H(X)`, consistent with the Psitip syntax so the output can be copied back to the code).
 
-- :code:`verbose_lp` : Turn to True to output linear programming problem sizes and results. Default is False.
+- :code:`verbose_lp` : Set to True to output linear programming problem sizes and results. Default is False.
 
-- :code:`verbose_auxsearch` : Turn to True to output each problem of auxiliary random variable searching. Default is False.
+- :code:`verbose_lp_cons` : Set to True to output the constraints in the linear program. Default is False. For example:
 
-- :code:`verbose_auxsearch_step` : Turn to True to output each step in auxiliary searching. Default is False.
+  .. code-block:: python
 
-- :code:`verbose_auxsearch_result` : Turn to True to output the final result of auxiliary searching. Default is False.
+    with PsiOpts(lptype = "H", verbose_lp = True, verbose_lp_cons = True):
+        bool(H(X) * 2 >= I(X & Y))
 
-- :code:`verbose_auxsearch_all` : Turn to True to turn on :code:`verbose_auxsearch`, :code:`verbose_auxsearch_step` and :code:`verbose_auxsearch_result`.
+ gives::
 
-- :code:`verbose_auxsearch_cache` : Turn to True to output each event in which the cache of auxiliary searching is discarded. Default is False.
+    ============ LP constraints ============
+    { H(X,Y)-H(Y) >= 0,
+      H(X,Y)-H(X) >= 0,
+      H(X)+H(Y)-H(X,Y) >= 0 }
+    ============  LP objective  ============
+    -H(X)+H(Y)-H(X,Y)
+    ========================================
+    LP nrv=2 nreal=0 nvar=3/3 nineq=3 neq=0 solver=pulp.glpk
+      status=Optimal optval=0.0
 
-- :code:`verbose_subset` : Turn to True to output each implication problem. Default is False.
 
-- :code:`verbose_sfrl` : Turn to True to output strong functional representation lemma searching steps. Default is False.
+- :code:`verbose_auxsearch` : Set to True to output each problem of auxiliary random variable searching. Default is False.
 
-- :code:`verbose_flatten` : Turn to True to output progress in unfolding user-defined information quantities. Default is False.
+- :code:`verbose_auxsearch_step` : Set to True to output each step in auxiliary searching. Default is False.
 
-- :code:`verbose_eliminate_toreal` : Turn to True to output progress in eliminating random variables using the :code:`toreal = True` option. Default is False.
+- :code:`verbose_auxsearch_result` : Set to True to output the final result of auxiliary searching. Default is False.
+
+- :code:`verbose_auxsearch_all` : Set to True to turn on :code:`verbose_auxsearch`, :code:`verbose_auxsearch_step` and :code:`verbose_auxsearch_result`.
+
+- :code:`verbose_auxsearch_cache` : Set to True to output each event in which the cache of auxiliary searching is discarded. Default is False.
+
+- :code:`verbose_subset` : Set to True to output each implication problem. Default is False.
+
+- :code:`verbose_sfrl` : Set to True to output strong functional representation lemma searching steps. Default is False.
+
+- :code:`verbose_flatten` : Set to True to output progress in unfolding user-defined information quantities. Default is False.
+
+- :code:`verbose_eliminate_toreal` : Set to True to output progress in eliminating random variables using the :code:`toreal = True` option. Default is False.
 
 
 License
@@ -682,3 +792,7 @@ Results used as examples above:
 - \U. Maurer and S. Wolf. "Unconditionally secure key agreement and the intrinsic conditional information." IEEE Transactions on Information Theory 45.2 (1999): 499-514.
 
 - Wyner, Aaron, and Jacob Ziv. "The rate-distortion function for source coding with side information at the decoder." IEEE Transactions on information Theory 22.1 (1976): 1-10.
+
+- Randall Dougherty, Chris Freiling, and Kenneth Zeger. "Non-Shannon information inequalities in four random variables." arXiv preprint arXiv:1104.3602 (2011).
+
+- Imre Csiszar and Janos Korner. Information theory: coding theorems for discrete memoryless systems. Cambridge University Press, 2011.
