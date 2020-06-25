@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.02
+Version 1.03
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -543,7 +543,7 @@ class MHashSet:
         return self.s != other.s
     
     def __hash__(self):
-        return hash(tuple(sorted(a for a in self.s)))
+        return hash(frozenset(self.s))
     
 
 class PsiRec:
@@ -585,7 +585,7 @@ class IVar:
         return self.tostring()
         
     def __hash__(self):
-        return hash(self.tostring())
+        return hash(self.name)
         
     def __eq__(self, other):
         return self.name == other.name
@@ -861,7 +861,8 @@ class Comp:
         return self.tostring(PsiOpts.settings["str_style"])
         
     def __hash__(self):
-        return hash(self.tostring(tosort = True))
+        #return hash(self.tostring(tosort = True))
+        return hash(frozenset(a.name for a in self.varlist))
         
     def get_type(self):
         if len(self.varlist) == 0:
@@ -1203,7 +1204,8 @@ class Term:
         return self.tostring(PsiOpts.settings["str_style"])
         
     def __hash__(self):
-        return hash(self.tostring(tosort = True))
+        #return hash(self.tostring(tosort = True))
+        return hash((frozenset(hash(a) for a in self.x), hash(self.z)))
     
     def simplify(self):
         if self.get_type() == TermType.IC:
@@ -1245,9 +1247,21 @@ class Term:
             return False
         if len(self.x) != len(other.x):
             return False
-        (viss, viso) = self.match_x(other)
-        if -1 in viso:
-            return False
+        
+        viso = [-1] * len(other.x)
+        for i in range(len(self.x)):
+            found = False
+            for j in range(len(other.x)):
+                if viso[j] < 0 and self.x[i] == other.x[j]:
+                    found = True
+                    viso[j] = i
+                    break
+            if not found:
+                return False
+        
+#        (viss, viso) = self.match_x(other)
+#        if -1 in viso:
+#            return False
         return True
         
         
@@ -1385,12 +1399,13 @@ class Expr:
     """An expression
     """
     
-    def __init__(self, terms):
+    def __init__(self, terms, mhash = None):
         self.terms = terms
+        self.mhash = mhash
     
         
     def copy(self):
-        return Expr([(a.copy(), c) for (a, c) in self.terms])
+        return Expr([(a.copy(), c) for (a, c) in self.terms], self.mhash)
         
     
     def fromcomp(x):
@@ -1405,6 +1420,7 @@ class Expr:
         if not isinstance(other, Expr):
             other = Expr.const(other)
         self.terms += [(a.copy(), c) for (a, c) in other.terms]
+        self.mhash = None
         return self
         
     def __add__(self, other):
@@ -1432,6 +1448,7 @@ class Expr:
         if not isinstance(other, Expr):
             other = Expr.const(other)
         self.terms += [(a.copy(), -c) for (a, c) in other.terms]
+        self.mhash = None
         return self
         
     def __sub__(self, other):
@@ -1444,6 +1461,7 @@ class Expr:
         
     def __imul__(self, other):
         self.terms = [(a, c * other) for (a, c) in self.terms]
+        self.mhash = None
         return self
         
     def __mul__(self, other):
@@ -1454,6 +1472,7 @@ class Expr:
         
     def __itruediv__(self, other):
         self.terms = [(a, c / other) for (a, c) in self.terms]
+        self.mhash = None
         return self
         
     def record_to(self, index):
@@ -1467,6 +1486,12 @@ class Expr:
             r += a.allcomp()
         return r
         
+    def allcomprv_shallow(self):
+        r = Comp.empty()
+        for (a, c) in self.terms:
+            r += a.allcomprv_shallow()
+        return r
+        
     def size(self):
         return len(self.terms)
         
@@ -1477,6 +1502,7 @@ class Expr:
     def setzero(self):
         """Set expression to zero"""
         self.terms = []
+        self.mhash = None
         
     def isnonneg(self):
         """Whether the expression is always nonnegative"""
@@ -1612,7 +1638,11 @@ class Expr:
         return self.tostring(PsiOpts.settings["str_style"])
         
     def __hash__(self):
-        return hash(self.tostring(tosort = True))
+        if self.mhash is None:
+            #self.mhash = hash(self.tostring(tosort = True))
+            self.mhash = hash(tuple(sorted((hash(a), c) for a, c in self.terms)))
+            
+        return self.mhash
         
     def sortIc(self):
         def sortkey(a):
@@ -1623,6 +1653,7 @@ class Expr:
                 return 100000
             
         self.terms.sort(key=sortkey)
+        self.mhash = None
         
     def __le__(self, other):
         if not isinstance(other, Expr):
@@ -1700,6 +1731,7 @@ class Expr:
     def remove_term(self, b):
         """Remove Term b in place"""
         self.terms = [(a, c) for (a, c) in self.terms if a != b]
+        self.mhash = None
         return self
     
     def removed_term(self, b):
@@ -1712,6 +1744,7 @@ class Expr:
         return sum([c for (a, c) in self.terms])
     
     def simplify_mul(self, mul_allowed = 0):
+        self.mhash = None
         if mul_allowed > 0:
             max_denom = PsiOpts.settings["max_denom"]
             max_denom_mul = PsiOpts.settings["max_denom_mul"]
@@ -1732,6 +1765,9 @@ class Expr:
     
     def simplify(self, reg = None):
         """Simplify the expression in place"""
+        
+        self.mhash = None
+        
         for (a, c) in self.terms:
             a.simplify()
             
@@ -1776,30 +1812,40 @@ class Expr:
         r.simplify(reg)
         return r
     
-    def get_ratio(self, other):
+    def get_ratio(self, other, skip_simplify = False):
         """Try dividing self by other, return None if self is not scalar multiple of other"""
-        es = self.simplified()
-        eo = other.simplified()
+        
+        es = self
+        eo = other
+        
+        if not skip_simplify:
+            es = self.simplified()
+            eo = other.simplified()
         
         if es.iszero():
             return 0.0
-        if eo.iszero():
-            return None
         
         if len(es.terms) != len(eo.terms):
+            return None
+        
+        if eo.iszero():
             return None
             
         rmax = -1e12
         rmin = 1e12
         
+        vis = [False] * len(eo.terms)
+        
         for i in range(len(es.terms)):
             found = False
             for j in range(len(eo.terms)):
-                if abs(eo.terms[j][1]) > PsiOpts.settings["eps"] and es.terms[i][0] == eo.terms[j][0]:
+                if not vis[j] and abs(eo.terms[j][1]) > PsiOpts.settings["eps"] and es.terms[i][0] == eo.terms[j][0]:
                     cr = es.terms[i][1] / eo.terms[j][1]
                     rmax = max(rmax, cr)
                     rmin = min(rmin, cr)
-                    eo.terms[j] = (Term.zero(), 0.0)
+                    if rmax > rmin + PsiOpts.settings["eps"]:
+                        return None
+                    vis[j] = True
                     found = True
                     break
             if not found:
@@ -1826,16 +1872,19 @@ class Expr:
     def rename_var(self, name0, name1):
         for (a, c) in self.terms:
             a.rename_var(name0, name1)
+        self.mhash = None
         
     def rename_map(self, namemap):
         """Rename according to name map
         """
         for (a, c) in self.terms:
             a.rename_map(namemap)
+        self.mhash = None
         return self
 
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), in place"""
+        self.mhash = None
         if isinstance(v0, Expr):
             if len(v0.terms) > 0:
                 t = v0.terms[0][0]
@@ -1862,6 +1911,7 @@ class Expr:
         for (a, c) in self.terms:
             if a.get_type() == TermType.IC:
                 a.z += b
+        self.mhash = None
         return self
 
     def conditioned(self, b):
@@ -2132,6 +2182,9 @@ class BayesNet:
             
     def get_ic(self):
         return self.tsorted().get_ic_sorted()
+            
+    def get_region(self):
+        return self.get_ic() == 0
         
     def tostring(self):
         n = self.index.comprv.size()
@@ -4094,9 +4147,58 @@ class Region:
         r = cs.init_prog(index, lptype = LinearProgType.H).get_extreme_rays()
         return r
         
+    def implies_ineq_cons_hash(self, expr, sg):
+        chash = hash(expr)
+        
+        if sg == ">=":
+            for x in self.exprs_ge:
+                if chash == hash(x):
+                    return True
+                
+        for x in self.exprs_eq:
+            if chash == hash(x):
+                return True
+        
+        return False
+    
+    
+    def implies_ineq_cons_quick(self, expr, sg):
+        """Return whether self implies expr >= 0 or expr == 0, without linear programming"""
+        
+        if sg == "==" and expr.isnonneg():
+            sg = ">="
+            expr = -expr
+            
+        if sg == ">=":
+            for x in self.exprs_ge:
+                d = (expr - x).simplified()
+                if d.isnonneg():
+                    return True
+            for x in self.exprs_eq:
+                d = (expr - x).simplified()
+                if d.isnonneg():
+                    return True
+                d = (expr + x).simplified()
+                if d.isnonneg():
+                    return True
+            return False
+        
+        if sg == "==":
+            for x in self.exprs_eq:
+                d = (expr - x).simplified()
+                if d.iszero():
+                    return True
+            return False
+        
+        return False
     
     def implies_ineq_quick(self, expr, sg):
         """Return whether self implies expr >= 0 or expr == 0, without linear programming"""
+        
+        if sg == "==" and expr.isnonneg():
+            sg = ">="
+            expr = -expr
+            
         if sg == ">=":
             for x in self.exprs_gei:
                 d = (expr - x).simplified()
@@ -4465,6 +4567,7 @@ class Region:
         symm_ids = [-1 for i in range(n)]
         nonsubset_ids = [-1 for i in range(n)]
         nonempty_is = [False for i in range(n)]
+        symm_nonempty_ns = [0] * n
         for i in range(n):
             if auxcomp.varlist[i].markers is None:
                 continue
@@ -4473,8 +4576,17 @@ class Region:
             symm_ids[i] = cdict.get("symm", -1)
             nonsubset_ids[i] = cdict.get("nonsubset", -1)
             nonempty_is[i] = "nonempty" in cdict
+            symm_nonempty_ns[i] = cdict.get("symm_nonempty", 0)
             
-            
+        for i in range(n):
+            if symm_nonempty_ns[i] > 0:
+                nsymm = 0
+                for i2 in range(i + 1, n):
+                    if symm_ids[i] == symm_ids[i2]:
+                        nsymm += 1
+                if nsymm < symm_nonempty_ns[i]:
+                    nonempty_is[i] = True
+        
         #print("NONSUBSET  " + "; ".join(str(auxcomp[i]) for i in range(n) if nonsubset_ids[i] >= 0))
         
         
@@ -5588,25 +5700,33 @@ class Region:
         for x in self.exprs_eq:
             x.simplify(reg)
         
+        index = IVarIndex()
+        self.record_to(index)
+        gemask = [index.get_mask(x.allcomprv_shallow()) for x in self.exprs_ge]
+        eqmask = [index.get_mask(x.allcomprv_shallow()) for x in self.exprs_eq]
         
         did = True
-        while did:
+        if True:
             did = False
             for i in range(len(self.exprs_ge)):
                 if not self.exprs_ge[i].iszero():
                     for j in range(i):
-                        if not self.exprs_ge[j].iszero():
-                            ratio = self.exprs_ge[i].get_ratio(self.exprs_ge[j])
+                        if not self.exprs_ge[j].iszero() and gemask[i] == gemask[j]:
+                            ratio = self.exprs_ge[i].get_ratio(self.exprs_ge[j], skip_simplify = True)
                             if ratio is None:
                                 continue
                             if ratio > PsiOpts.settings["eps"]:
                                 self.exprs_ge[i] = Expr.zero()
+                                gemask[i] = 0
                                 did = True
                                 break
                             elif ratio < -PsiOpts.settings["eps"]:
                                 self.exprs_eq.append(self.exprs_ge[i])
+                                eqmask.append(gemask[i])
                                 self.exprs_ge[i] = Expr.zero()
+                                gemask[i] = 0
                                 self.exprs_ge[j] = Expr.zero()
+                                gemask[j] = 0
                                 did = True
                                 break
                             
@@ -5614,11 +5734,12 @@ class Region:
             for i in range(len(self.exprs_ge)):
                 if not self.exprs_ge[i].iszero():
                     for j in range(len(self.exprs_eq)):
-                        if not self.exprs_eq[j].iszero():
-                            ratio = self.exprs_ge[i].get_ratio(self.exprs_eq[j])
+                        if not self.exprs_eq[j].iszero() and gemask[i] == eqmask[j]:
+                            ratio = self.exprs_ge[i].get_ratio(self.exprs_eq[j], skip_simplify = True)
                             if ratio is None:
                                 continue
                             self.exprs_ge[i] = Expr.zero()
+                            gemask[i] = 0
                             did = True
                             break
             
@@ -5626,11 +5747,12 @@ class Region:
             for i in range(len(self.exprs_eq)):
                 if not self.exprs_eq[i].iszero():
                     for j in range(i):
-                        if not self.exprs_eq[j].iszero():
-                            ratio = self.exprs_eq[i].get_ratio(self.exprs_eq[j])
+                        if not self.exprs_eq[j].iszero() and eqmask[i] == eqmask[j]:
+                            ratio = self.exprs_eq[i].get_ratio(self.exprs_eq[j], skip_simplify = True)
                             if ratio is None:
                                 continue
                             self.exprs_eq[i] = Expr.zero()
+                            eqmask[i] = 0
                             did = True
                             break
                             
@@ -5641,6 +5763,8 @@ class Region:
         for i in range(len(self.exprs_ge)):
             if self.exprs_ge[i].isnonneg():
                 self.exprs_ge[i] = Expr.zero()
+        
+        self.exprs_ge = [x for x in self.exprs_ge if not x.iszero()]
         
         if True:
             allzero = Expr.zero()
@@ -5708,6 +5832,25 @@ class Region:
             self.exprs_ge = [x for x in self.exprs_ge if not x.iszero()]
             self.exprs_eq = [x for x in self.exprs_eq if not x.iszero()]
         
+    
+    def iand_simplify_quick(self, other, skip_simplify = True):
+        did = False
+        
+        for x in other.exprs_ge:
+            if not self.implies_ineq_cons_hash(x, ">="):
+                self.exprs_ge.append(x)
+                did = True
+        
+        for x in other.exprs_eq:
+            if not self.implies_ineq_cons_hash(x, "=="):
+                self.exprs_eq.append(x)
+                did = True
+            
+        if not skip_simplify and did:
+            self.simplify_quick(zero_group = 1)
+            
+        return self
+    
         
     def split_ic2(self):
         ge_insert = []
@@ -6548,7 +6691,16 @@ class Region:
         return self.tostring(PsiOpts.settings["str_style"])
         
     def __hash__(self):
-        return hash(self.tostring(tosort = True))
+        #return hash(self.tostring(tosort = True))
+        
+        return hash((
+            hash(frozenset(hash(x) for x in self.exprs_ge)),
+            hash(frozenset(hash(x) for x in self.exprs_eq)),
+            hash(frozenset(hash(x) for x in self.exprs_gei)),
+            hash(frozenset(hash(x) for x in self.exprs_eqi)),
+            hash(self.aux), hash(self.inp), hash(self.oup), hash(self.auxi)
+            ))
+        
         
 
 class RegionOp(Region):
@@ -7586,7 +7738,8 @@ class RegionOp(Region):
                             print("========= #" + IUtil.strpad(str(i), 3, " before indep ===="))
                             print(rcur2)
                         
-                        clcomp = csnonaux.copy()
+                        #clcomp = csnonaux.copy()
+                        clcomp = csauxiall - csauxidep
                         #clcomp = rcur2.imp_flippedonly().allcomprv() + csnonaux
                         #for i2 in auxvis:
                         #    clcomp -= xallcomprv[i2]
@@ -7689,6 +7842,7 @@ class RegionOp(Region):
                                 if t_multiuse:
                                     if creg_indep is None:
                                         creg_indep = RegionOp.auxs_icreg(cur_auxs_incomp, rcaseallcomprv - allcomprv, rcaseallcomprv + reqcomprv)
+                                        #creg_indep.simplify()
                                         #creg_indep = RegionOp.auxs_icreg(cur_auxs_incomp, clcomp - allcomprv, clcomp)
                                         #cauxi = auxi - rcaseallcomprv
                                         #ccond = allcomprv - auxi
@@ -7710,8 +7864,9 @@ class RegionOp(Region):
                                             ccon.iand_norename(creg_indep)
                                             Comp.substitute_list(ccon, rr, suffix = "_R" + str(i))
                                             crcase = rcase_toadd.copy()
-                                            crcase.iand_norename(ccon)
-                                            crcase.simplify_quick(zero_group = 1)
+                                            #crcase.iand_norename(ccon)
+                                            #crcase.simplify_quick(zero_group = 1)
+                                            crcase.iand_simplify_quick(ccon)
                                             rcases_toadd.add((crcase, rcase_toadd_vis[:]))
                                     if rcases_toadd != rcases_toadd2:
                                         tauxlist = [(None if w is None else w.copy()) for w in auxlist]
@@ -7739,9 +7894,9 @@ class RegionOp(Region):
                                         else:
                                             for con in cons:
                                                 crcase = rcase_toadd.copy()
-                                                crcase.iand_norename(con)
-                                                #crcase.iand_norename(creg_indep)
-                                                crcase.simplify_quick(zero_group = 1)
+                                                #crcase.iand_norename(con)
+                                                #crcase.simplify_quick(zero_group = 1)
+                                                crcase.iand_simplify_quick(con)
                                                 rcases_toadd.add((crcase, [rcase_toadd_vis[i2] or i2 == i for i2 in range(n)]))
                                              
                                     tauxmasks = auxmasks[:]
@@ -7768,8 +7923,10 @@ class RegionOp(Region):
                                     for rcase_toadd_tuple in rcases_toadd2:
                                         rcase_toadd = rcase_toadd_tuple[0]
                                         rcase_toadd_vis = rcase_toadd_tuple[1]
-                                        crcase = rcase_toadd & (rr[2] >= 0)
-                                        crcase.simplify_quick(zero_group = 1)
+                                        #crcase = rcase_toadd & (rr[2] >= 0)
+                                        #crcase.simplify_quick(zero_group = 1)
+                                        crcase = rcase_toadd.copy()
+                                        crcase.iand_simplify_quick(rr[2] >= 0)
                                         rcases_toadd.add((crcase, rcase_toadd_vis))
                                         
                                     if rcases_toadd != rcases_toadd2:
@@ -7913,7 +8070,7 @@ class RegionOp(Region):
         zero_group = 2: group all nonnegative terms as a single inequality.
         """
         #self.distribute()
-        for x in self.regs:
+        for x, c in self.regs:
             x.simplify(reg, zero_group)
         return self
         
@@ -8000,8 +8157,36 @@ class RegionOp(Region):
             r += "}"
         return r
             
+        
+    def __hash__(self):
+        #return hash(self.tostring(tosort = True))
+        
+        return hash((self.rtype,
+            hash(frozenset((hash(x), c) for x, c in self.regs)),
+            hash(tuple((hash(x), c) for x, c in self.auxs)),
+            hash(self.inp), hash(self.oup)
+            ))
+        
             
 # Shortcuts
+
+def alland(a):
+    r = None
+    for x in a:
+        if r is None:
+            r = x
+        else:
+            r &= x
+    return r
+
+def anyor(a):
+    r = None
+    for x in a:
+        if r is None:
+            r = x
+        else:
+            r |= x
+    return r
     
 def rv(*args):
     """Random variable"""
@@ -8138,20 +8323,24 @@ def iidseq(*args):
     """
     return indep(*args) & eqdist(*args)
 
-#def cardbd(x, n):
-#    """Return Region where the cardinality of x is upper bounded by n."""
-#    if n <= 1:
-#        return H(x) == 0
-#    V = rv_array("V", 0, n-1)
-#    r = Region.universe()
-#    r2 = Region.universe()
-#    for i in range(0, n - 1):
-#        r2 |= Expr.Hc(V[i], V[i - 1] if i > 0 else x) == 0
-#        r &= Expr.Hc(V[i - 1] if i > 0 else x, V[i]) == 0
-#    r |= Expr.H(V[n - 2]) == 0
-#    r = r.implicated(r2, skip_simplify = True).forall(V)
-#    return r
 
+def cardbd(x, n):
+    """Return Region where the cardinality of x is upper bounded by n."""
+    if n <= 1:
+        return H(x) == 0
+    V = rv_array("V", 0, n-1)
+    r = Expr.H(V[n - 2]) == 0
+    r2 = Region.universe()
+    for i in range(0, n - 1):
+        r2 &= Expr.Hc(V[i], V[i - 1] if i > 0 else x) == 0
+        r |= Expr.Hc(V[i - 1] if i > 0 else x, V[i]) == 0
+    r = r.implicated(r2, skip_simplify = True).forall(V)
+    return r & (H(x) <= numpy.log2(n))
+
+
+def isbin(x):
+    """Return Region where x is a binary random variable."""
+    return cardbd(x, 2)
 
 
 def sfrl(gap = None):
@@ -8172,6 +8361,7 @@ def sfrl(gap = None):
         r &= Expr.Ic(SX, SU, SY) <= gap
     return r.exists(SU).forall(SX + SY)
 
+
 def copylem(n = 2, m = 1):
     """Copy lemma: for any X, Y, there exists Z such that (X, Y) has the same
     distribution as (X, Z), and Y-X-Z forms a Markov chain.
@@ -8187,11 +8377,11 @@ def copylem(n = 2, m = 1):
     
     X = rv_array("CX", 0, n)
     for i in range(n):
-        X[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_x)])
+        X[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_x), ("symm_nonempty", 1)])
     Y = rv_array("CY", 0, m)
     Z = rv_array("CZ", 0, m)
     for i in range(m):
-        Y[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_y)])
+        Y[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_y), ("symm_nonempty", 1)])
     return (eqdist(X + Y, X + Z) & markov(Y, X, Z)).exists(Z).forall(X + Y)
 
 
@@ -8212,6 +8402,63 @@ def dblmarkov():
     Z.add_markers([("nonempty", 1)])
     return ((markov(X, Y, Z) & markov(Y, X, Z))
         >> ((H(W|X) == 0) & (H(W|Y) == 0) & markov(X+Y, W, Z)).exists(W)).forall(X+Y+Z)
+    
+
+def mmrv_thm(n = 2):
+    """The non-Shannon inequality in the paper:
+    Makarychev, K., Makarychev, Y., Romashchenko, A., & Vereshchagin, N. (2002). A new class of 
+    non-Shannon-type inequalities for entropies. Communications in Information and Systems, 2(2), 147-166.
+    """
+    disjoint_id = IUtil.get_count()
+    symm_id_x = IUtil.get_count()
+    symm_id_u = IUtil.get_count()
+    
+    X = rv_array("CX", 0, n)
+    for i in range(n):
+        X[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_x), ("symm_nonempty", 2)])
+    U = rv("CU")
+    V = rv("CV")
+    Z = rv("CZ")
+    U.add_markers([("nonempty", 1), ("symm", symm_id_u)])
+    V.add_markers([("nonempty", 1), ("symm", symm_id_u)])
+    Z.add_markers([("nonempty", 1)])
+    
+    expr = H(X) + n * I(U & V & Z)
+    expr -= sum(I(U & V | Xi) for Xi in X)
+    expr -= sum(H(Xi) for Xi in X)
+    expr -= I(U+V & Z)
+    
+    return (expr <= 0).forall(X + U + V + Z)
+
+    
+
+def zydfz_thm():
+    """The non-Shannon inequalities in the paper:
+    Z. Zhang and R. W. Yeung, "On characterization of entropy function via information inequalities,"
+    IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
+    Randall Dougherty, Christopher Freiling, and Kenneth Zeger. "Six new non-Shannon 
+    information inequalities." 2006 IEEE International Symposium on Information Theory. IEEE, 2006.
+    """
+    disjoint_id = IUtil.get_count()
+    A = rv("CA")
+    B = rv("CB")
+    C = rv("CC")
+    D = rv("CD")
+    A.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    B.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    C.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    D.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    
+    r = Region.universe()
+    r &= 2*I(C&D) <= I(A&B) + I(A&C+D) + 3*I(C&D|A) + I(C&D|B)                                           # ZY
+    r &= 2*I(A&B) <= 3*I(A&B|C) + 3*I(A&C|B) + 3*I(B&C|A) + 2*I(A&D) + 2*I(B&C|D)                        # DFZ1
+    r &= 2*I(A&B) <= 4*I(A&B|C) +   I(A&C|B) + 2*I(B&C|A) + 3*I(A&B|D)            + I(B&D|A) + 2*I(C&D)  # DFZ2
+    r &= 2*I(A&B) <= 3*I(A&B|C) + 2*I(A&C|B) + 4*I(B&C|A) + 2*I(A&C|D) + I(A&D|C) + 2*I(B&D) + I(C&D|A)  # DFZ3
+    r &= 2*I(A&B) <= 5*I(A&B|C) + 3*I(A&C|B) +   I(B&C|A) + 2*I(A&D) + 2*I(B&C|D)                        # DFZ4
+    r &= 2*I(A&B) <= 4*I(A&B|C) + 4*I(A&C|B) +   I(B&C|A) + 2*I(A&D) + 3*I(B&C|D) + I(C&D|B)             # DFZ5
+    r &= 2*I(A&B) <= 3*I(A&B|C) + 2*I(A&C|B) + 2*I(B&C|A) + 2*I(A&B|D) + I(A&D|B) + I(B&D|A) + 2*I(C&D)  # DFZ6
+    
+    return r.forall(A+B+C+D)
     
     
 def existence(f, numarg = 2, nonempty = False):
@@ -8399,6 +8646,30 @@ def excess_fi(x, y):
     R = real("EFI(" + str(x) + ";" + str(y) + ")")
     r = indep(U, x)
     r &= R >= Expr.Hc(y, U) - Expr.I(x, y)
+    return r.exists(U).minimum(R)
+
+
+def minent_coupling(x, y):
+    """Minimum entropy coupling of the distributions p_{Y|X=x}. 
+    M. Vidyasagar, "A metric between probability distributions on finite sets of 
+    different cardinalities and applications to order reduction," IEEE Transactions 
+    on Automatic Control, vol. 57, no. 10, pp. 2464-2477, 2012.
+    A. Painsky, S. Rosset, and M. Feder, "Memoryless representation of Markov processes," 
+    in 2013 IEEE International Symposium on Information Theory. IEEE, 2013, pp. 2294-298.
+    M. Kovacevic, I. Stanojevic, and V. Senk, "On the entropy of couplings," 
+    Information and Computation, vol. 242, pp. 369-382, 2015.
+    M. Kocaoglu, A. G. Dimakis, S. Vishwanath, and B. Hassibi, "Entropic causal inference," 
+    in Thirty-First AAAI Conference on Artificial Intelligence, 2017.
+    F. Cicalese, L. Gargano, and U. Vaccaro, "Minimum-entropy couplings and their 
+    applications," IEEE Transactions on Information Theory, vol. 65, no. 6, pp. 3436-3451, 2019.
+    Cheuk Ting Li, "Efficient Approximate Minimum Entropy Coupling of Multiple 
+    Probability Distributions," https://arxiv.org/abs/2006.07955 , 2020.
+    e.g. minent_coupling(X, Y)
+    """
+    U = rv("U")
+    R = real("MEC(" + str(x) + ";" + str(y) + ")")
+    r = indep(U, x) & (Expr.Hc(y, x + U) == 0)
+    r &= R >= Expr.H(U)
     return r.exists(U).minimum(R)
 
 

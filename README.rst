@@ -246,7 +246,7 @@ Advanced
 
   gives :code:`{ I(Z;X) == 0 }`. Note that using :code:`toreal = True` can be extremely slow if the number of random variables is more than 5, and may cause false accepts (i.e., declaring a false inequality to be true) since only Shannon-type inequalities are enforced.
 
-- **Material implication** between :code:`Region` is denoted by the operator :code:`>>`, which returns a :code:`Region` object. The region :code:`r1 >> r2` represents the condition that :code:`r2` is true whenever :code:`r1` is true. Note that :code:`r1.implies(r2)` is equivalent to :code:`bool(r1 >> r2)`.
+- **Material implication** between :code:`Region` is denoted by the operator :code:`>>`, which returns a :code:`Region` object. The region :code:`r1 >> r2` represents the condition that :code:`r2` is true whenever :code:`r1` is true. Note that :code:`r1 >> r2` is equivalent to :code:`~r1 | r2`, and :code:`r1.implies(r2)` is equivalent to :code:`bool(r1 >> r2)`.
 
  - **Material equivalence** is denoted by the operator :code:`==`, which returns a :code:`Region` object. The region :code:`r1 == r2` represents the condition that :code:`r2` is true if and only if :code:`r1` is true.
 
@@ -454,11 +454,12 @@ Nevertheless, building the Bayesian network can take some time. If your problem 
 
     PsiOpts.set_setting(lptype = "H")
 
-The :code:`get_bayesnet` method of :code:`Region` returns a :code:`BayesNet` object (a Bayesian network) that can be deduced by the conditional independence conditions in the region. The :code:`check_ic` method of :code:`BayesNet` checks whether an expression containing conditional mutual information terms is always zero, e.g.:
+The :code:`get_bayesnet` method of :code:`Region` returns a :code:`BayesNet` object (a Bayesian network) that can be deduced by the conditional independence conditions in the region. The :code:`check_ic` method of :code:`BayesNet` checks whether an expression containing conditional mutual information terms is always zero. The :code:`get_region` method of :code:`BayesNet` returns the :code:`Region` corresponding to the network. E.g.:
 
 .. code-block:: python
 
     ((I(X&Y|Z) == 0) & (I(U&X+Z|Y) <= 0)).get_bayesnet().check_ic(I(X&U|Z))
+    ((I(X&Y|Z) == 0) & (I(U&X+Z|Y) <= 0)).get_bayesnet().get_region()
 
 
 Built-in functions
@@ -518,7 +519,12 @@ The following are true statements (:code:`Region` objects) that allow Psitip to 
             >> markov(X+Y, meet(X, Y), Z)).check_getaux()
         print(IUtil.list_tostr_std(aux))
 
+- The non-Shannon inequality in [Makarychev-Makarychev-Romashchenko-Vereshchagin 2002] is given by :code:`mmrv_thm(n)`.
+
+- The non-Shannon inequalities in four variables in [Zhang-Yeung 1998] and [Dougherty-Freiling-Zeger 2006] is given by :code:`zydfz_thm`.
+
 - **Existence of meet and minimal sufficient statistics** is given by :code:`existence(meet)` and :code:`existence(mss)` respectively.
+
 
 Conditions
 ----------
@@ -642,6 +648,8 @@ The following are :code:`Expr` objects (real-valued functions).
 - **Necessary conditional entropy** [Cuff-Permuter-Cover 2010] is given by :code:`H_nec(Y | X)`.
 
 - **Excess functional information** [Li-El Gamal 2018] is given by :code:`excess_fi(X, Y)`.
+
+- The entropy of the **minimum entropy coupling** of the distributions p_{Y|X=x} is given by :code:`minent_coupling(X, Y)` ([Vidyasagar 2012], [Painsky et al. 2013], [Kovacevic et al. 2015], [Kocaoglu et al. 2017], [Cicalese et al. 2019], [Li 2020]).
 
 
 
@@ -796,3 +804,19 @@ Results used as examples above:
 - Randall Dougherty, Chris Freiling, and Kenneth Zeger. "Non-Shannon information inequalities in four random variables." arXiv preprint arXiv:1104.3602 (2011).
 
 - Imre Csiszar and Janos Korner. Information theory: coding theorems for discrete memoryless systems. Cambridge University Press, 2011.
+
+- Makarychev, K., Makarychev, Y., Romashchenko, A., & Vereshchagin, N. (2002). A new class of non-Shannon-type inequalities for entropies. Communications in Information and Systems, 2(2), 147-166.
+
+- Randall Dougherty, Christopher Freiling, and Kenneth Zeger. "Six new non-Shannon information inequalities." 2006 IEEE International Symposium on Information Theory. IEEE, 2006.
+
+- \M. Vidyasagar, "A metric between probability distributions on finite sets of different cardinalities and applications to order reduction," IEEE Transactions on Automatic Control, vol. 57, no. 10, pp. 2464-2477, 2012.
+
+- \A. Painsky, S. Rosset, and M. Feder, "Memoryless representation of Markov processes," in 2013 IEEE International Symposium on Information Theory. IEEE, 2013, pp. 2294-298.
+
+- \M. Kovacevic, I. Stanojevic, and V. Senk, "On the entropy of couplings," Information and Computation, vol. 242, pp. 369-382, 2015.
+
+- \M. Kocaoglu, A. G. Dimakis, S. Vishwanath, and B. Hassibi, "Entropic causal inference," in Thirty-First AAAI Conference on Artificial Intelligence, 2017.
+
+- \F. Cicalese, L. Gargano, and U. Vaccaro, "Minimum-entropy couplings and their applications," IEEE Transactions on Information Theory, vol. 65, no. 6, pp. 3436-3451, 2019.
+
+- Cheuk Ting Li, "Efficient Approximate Minimum Entropy Coupling of Multiple Probability Distributions," https://arxiv.org/abs/2006.07955 , 2020.
