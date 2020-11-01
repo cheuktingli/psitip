@@ -11,7 +11,7 @@ Psitip is unique in the sense that it is a Python module tightly integrated with
 .. code-block:: python
 
     from psitip import *
-    PsiOpts.set_setting(solver = "pulp.glpk")
+    PsiOpts.setting(solver = "pyomo.glpk")
     
     X, Y, Z, W, U, M, S = rv("X", "Y", "Z", "W", "U", "M", "S") # declare random variables
     print(bool(H(X) + I(Y & Z | X) >= I(Y & Z))) # H(X)+I(Y;Z|X)>=I(Y;Z) is True
@@ -56,7 +56,7 @@ Psitip is unique in the sense that it is a Python module tightly integrated with
             & (R >= 0)).exists(U).marginal_exists(X)
     
     # Using strong functional representation lemma [Li-El Gamal 2018]
-    with PsiOpts(truth = sfrl(logg)):
+    with sfrl(logg).assumed():
         
         # Automated achievability proof of Gelfand-Pinsker theorem
         print(r.implies(r_op.relaxed(R, logg * 5))) # returns True
@@ -73,13 +73,19 @@ Psitip is unique in the sense that it is a Python module tightly integrated with
     print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns False
     
     # Using copy lemma [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011]
-    with PsiOpts(truth = copylem()):
+    with copylem().assumed():
         
         # Prove Zhang-Yeung inequality
         print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns True
 
 
-Psitip supports advanced features such as automated converse proofs (e.g. Gelfand-Pinsker theorem above), Fourier-Motzkin elimination, non-Shannon-type inequalities, automated search for auxiliary random variables, automated checking of whether a region tensorizes, and user-defined information quantities (e.g. Wyner's CI and Gacs-Korner CI above). Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
+    # State the copy lemma
+    r = eqdist([X, Y, U], [X, Y, Z]) & markov(Z+W, X+Y, U)
+
+    # Automatically discover non-Shannon-type inequalities using copy lemma
+    print(r.discover(mi_cells(X, Y, Z, W)))
+
+Psitip supports advanced features such as automated converse proofs (e.g. Gelfand-Pinsker theorem above), Fourier-Motzkin elimination, convex hull method for polyhedron projection [Lassez-Lassez 1991], non-Shannon-type inequalities, automated search for auxiliary random variables, automated checking of whether a region tensorizes, and user-defined information quantities (e.g. Wyner's CI and Gacs-Korner CI above). Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
 
 
 About
@@ -124,10 +130,11 @@ Download `psitip.py <https://raw.githubusercontent.com/cheuktingli/psitip/master
 
 Python 3 and numpy are required to run psitip. It also requires at least one of the following for sparse linear programming:
 
-- **PuLP** (https://github.com/coin-or/pulp). Recommended. Can use GLPK (installed separately), CBC (https://github.com/coin-or/Cbc , provided with PuLP, not recommended) or another solver.
-- **Pyomo** (https://github.com/Pyomo/pyomo). Also requires GLPK or another solver.
+- **Pyomo** (https://github.com/Pyomo/pyomo). Recommended. Requires GLPK (installed separately) or another solver.
+- **PuLP** (https://github.com/coin-or/pulp). Can use GLPK (installed separately), CBC (https://github.com/coin-or/Cbc , provided with PuLP, not recommended) or another solver.
 - **GLPK** (https://www.gnu.org/software/glpk/). Recommended. An external solver to be used with PuLP or Pyomo. Can be installed using Conda (see https://anaconda.org/conda-forge/glpk ).
 - **SciPy** (https://www.scipy.org/). Not recommended for problems with more than 8 random variables.
+- **Pycddlib** (https://github.com/mcmtroffaes/pycddlib/), a Python wrapper for Komei Fukuda's cddlib (https://people.inf.ethz.ch/fukudak/cdd_home/). Needed only for the convex hull method for polyhedron projection.
 
 See the Solver section for details.
 
@@ -141,21 +148,21 @@ The default solver is Scipy, though it is highly recommended to switch to anothe
 .. code-block:: python
 
     from psitip import *
-    PsiOpts.set_setting(solver = "pulp.glpk")
-    PsiOpts.set_setting(solver = "pyomo.glpk")
-    PsiOpts.set_setting(solver = "pulp.cbc") # Not recommended
+    PsiOpts.setting(solver = "pulp.glpk")
+    PsiOpts.setting(solver = "pyomo.glpk")
+    PsiOpts.setting(solver = "pulp.cbc") # Not recommended
 
 PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following line to set the solver to any supported solver:
 
 .. code-block:: python
 
-    PsiOpts.set_setting(pulp_solver = pulp.solvers.GLPK(msg = 0)) # Or another solver
+    PsiOpts.setting(pulp_solver = pulp.solvers.GLPK(msg = 0)) # Or another solver
 
 For Pyomo (see https://pyomo.readthedocs.io/en/stable/solving_pyomo_models.html#supported-solvers ), use the following line (replace ??? with the desired solver):
 
 .. code-block:: python
 
-    PsiOpts.set_setting(solver = "pyomo.???")
+    PsiOpts.setting(solver = "pyomo.???")
 
 WARNING: It is possible for inaccuracies in the solver to result in wrong output in Psitip. Try switching to another solver if a problem is encountered.
 
@@ -326,7 +333,7 @@ The :code:`exists` method of :code:`Region` with real variable arguments perform
 .. code-block:: python
 
     from psitip import *
-    PsiOpts.set_setting(solver = "pulp.glpk")
+    PsiOpts.setting(solver = "pyomo.glpk")
 
     # Fourier-Motzkin elimination for Marton's inner bound with common message
     # [Marton 1979], [Liang-Kramer 2007]
@@ -355,7 +362,39 @@ The :code:`exists` method of :code:`Region` with real variable arguments perform
     print(region_str)
 
 
-Automated Converse Proof
+Discover inequalities
+~~~~~~~~~~~~~~~~~~~~~
+
+The :code:`discover` method of :code:`Region` accepts a list of variables of interest (:code:`Comp` or :code:`Expr`), and automatically discover inequalities among those variables implied by the region. It either uses the convex hull method for polyhedron projection [Lassez-Lassez 1991], or trial and error in case the region is a :code:`RegionOp` object. For example:
+
+.. code-block:: python
+
+    from psitip import *
+
+    PsiOpts.setting(solver = "pyomo.glpk")
+
+    X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
+
+    K = gacs_korner(X&Y)
+    J = wyner_ci(X&Y)
+    G = exact_ci(X&Y)
+
+    RK, RJ, RG = real("RK", "RJ", "RG")
+
+    # Automatically discover relationship between different notions of common information
+    # Gives RK >= 0, RG >= RJ, RG <= H(X), RG <= H(Y), RK <= I(X;Y), RJ >= I(X;Y)
+    print(universe().discover([(RK, K), (RJ, J), (RG, G), X, Y], maxsize = 2))
+
+
+    # State the copy lemma [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011]
+    r = eqdist([X, Y, U], [X, Y, Z]) & markov(Z+W, X+Y, U)
+
+    # Automatically discover non-Shannon-type inequalities using copy lemma
+    # Gives 2I(X;Y|Z,W)+I(X;Z|Y,W)+I(Y;Z|X,W)+I(Z;W|X,Y)+I(X;Y;W|Z)+2I(X;Z;W|Y)+2I(Y;Z;W|X) >= 0, etc
+    print(r.discover(mi_cells(X, Y, Z, W)))
+
+
+Automated converse proof
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 The :code:`check_converse` method of :code:`Region` attempts to prove the two-letter version of the converse by identifying auxiliary random variables. In the call:
@@ -387,7 +426,7 @@ The following code demonstrates its use in proving that superposition coding is 
 .. code-block:: python
 
     from psitip import *
-    PsiOpts.set_setting(solver = "pulp.glpk")
+    PsiOpts.setting(solver = "pyomo.glpk")
 
     R1, R2 = real("R1", "R2")
     U, X, Y1, Y2, M1, M2 = rv("U", "X", "Y1", "Y2", "M1", "M2")
@@ -417,7 +456,7 @@ The following code demonstrates its use in proving the converse part in Wyner-Zi
 .. code-block:: python
 
     from psitip import *
-    PsiOpts.set_setting(solver = "pulp.glpk")
+    PsiOpts.setting(solver = "pyomo.glpk")
 
     R = real("R")
     U, X, Y, Z, M = rv("U", "X", "Y", "Z", "M")
@@ -452,7 +491,7 @@ Nevertheless, building the Bayesian network can take some time. If your problem 
 
 .. code-block:: python
 
-    PsiOpts.set_setting(lptype = "H")
+    PsiOpts.setting(lptype = "H")
 
 The :code:`get_bayesnet` method of :code:`Region` returns a :code:`BayesNet` object (a Bayesian network) that can be deduced by the conditional independence conditions in the region. The :code:`check_ic` method of :code:`BayesNet` checks whether an expression containing conditional mutual information terms is always zero. The :code:`get_region` method of :code:`BayesNet` returns the :code:`Region` corresponding to the network. E.g.:
 
@@ -470,7 +509,7 @@ There are several built-in information functions listed below. While they can be
 Theorems
 --------
 
-The following are true statements (:code:`Region` objects) that allow Psitip to prove results not provable by Shannon-type inequalities (at the expense of longer computation time). They can either be used in the context manager (e.g. :code:`with PsiOpts(truth = sfrl(logg)):`, see Options section), or directly (e.g. sfrl().implies(excess_fi(X, Y) <= H(X | Y))).
+The following are true statements (:code:`Region` objects) that allow Psitip to prove results not provable by Shannon-type inequalities (at the expense of longer computation time). They can either be used in the context manager (e.g. :code:`with sfrl(logg).assumed():`), or directly (e.g. sfrl().implies(excess_fi(X, Y) <= H(X | Y))).
 
 - **Strong functional representation lemma** [Li-El Gamal 2018] is given by :code:`sfrl(logg)`. It states that for any random variables (X, Y), there exists random variable Z independent of X such that Y is a function of (X, Z), and I(X;Z|Y) <= log(I(X;Y) + 1) + 4. The "log(I(X;Y) + 1) + 4" term is usually represented by the real variable :code:`logg = real("logg")` (which is the argument of :code:`sfrl(logg)`). Omitting the :code:`logg` argument gives the original functional representation lemma [El Gamal-Kim 2011]. For example:
 
@@ -488,19 +527,19 @@ The following are true statements (:code:`Region` objects) that allow Psitip to 
             & (R >= 0)).exists(U).marginal_exists(X)
     
     # Using strong functional representation lemma
-    with PsiOpts(truth = sfrl(logg)):
+    with sfrl(logg).assumed():
         
         # Automated achievability proof of Gelfand-Pinsker theorem
         print(r.implies(r_op.relaxed(R, logg * 5))) # returns True
 
- - Note that writing :code:`with PsiOpts(truth = sfrl(logg)):` allows SFRL to be used only once. To allow it to be used twice, write :code:`with PsiOpts(truth = sfrl(logg) & sfrl(logg)):`.
+ - Note that writing :code:`with sfrl(logg).assumed():` allows SFRL to be used only once. To allow it to be used twice, write :code:`with (sfrl(logg) & sfrl(logg)).assumed():`.
 
 - **Copy lemma** [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011] is given by :code:`copylem(n, m)`. It states that for any random variables X_1,...,X_n,Y_1,...,Y_m, there exists Z_1,...,Z_m such that (X_1,...,X_n,Y_1,...,Y_m) has the same distribution as (X_1,...,X_n,Z_1,...,Z_m) (only equalities of entropies are enforced in Psitip), and (Y_1,...,Y_m)-(X_1,...,X_n)-(Z_1,...,Z_m) forms a Markov chain. The default values of n, m are 2, 1 respectively. For example:
 
   .. code-block:: python
 
     # Using copy lemma
-    with PsiOpts(truth = copylem()):
+    with copylem().assumed():
         
         # Prove Zhang-Yeung inequality
         print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns True
@@ -510,18 +549,20 @@ The following are true statements (:code:`Region` objects) that allow Psitip to 
   .. code-block:: python
   
     # Using double Markov property
-    with PsiOpts(truth = dblmarkov()):
+    with dblmarkov().assumed():
         aux = ((markov(X, Y, Z) & markov(Y, X, Z))
             >> (H(mss(X, Z) | mss(Y, Z)) == 0)).check_getaux()
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
         
         aux = ((markov(X, Y, Z) & markov(Y, X, Z))
             >> markov(X+Y, meet(X, Y), Z)).check_getaux()
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
+
+- The approximate infinite divisibility of information [Li 2020] is given by :code:`ainfdiv(n)`.
 
 - The non-Shannon inequality in [Makarychev-Makarychev-Romashchenko-Vereshchagin 2002] is given by :code:`mmrv_thm(n)`.
 
-- The non-Shannon inequalities in four variables in [Zhang-Yeung 1998] and [Dougherty-Freiling-Zeger 2006] is given by :code:`zydfz_thm`.
+- The non-Shannon inequalities in four variables in [Zhang-Yeung 1998] and [Dougherty-Freiling-Zeger 2006] is given by :code:`zydfz_thm()`.
 
 - **Existence of meet and minimal sufficient statistics** is given by :code:`existence(meet)` and :code:`existence(mss)` respectively.
 
@@ -660,7 +701,7 @@ There are two ways to set options. One can set an option globally using:
 
 .. code-block:: python
 
-    PsiOpts.set_setting(option = value)
+    PsiOpts.setting(option = value)
 
 or locally within a :code:`with` block using context manager:
 
@@ -695,7 +736,7 @@ Some of the options are:
 
 - :code:`forall_multiuse` : Set to False to only allow one value for variables with universal quantification. Default is True. Note that if this option is True, then the auxiliary search result for variables with universal quantification will be meaningless.
 
-- :code:`str_style` : The style of string conversion :code:`str(x)` and verbose output. Values are :code:`PsiOpts.STR_STYLE_STANDARD` (e.g. :code:`3I(X,Y;Z|W)-H(X)`, default) or :code:`PsiOpts.STR_STYLE_PSITIP` (e.g. :code:`3*I(X+Y&Z|W)-H(X)`, consistent with the Psitip syntax so the output can be copied back to the code).
+- :code:`str_style` : The style of string conversion :code:`str(x)` and verbose output. Values are :code:`"standard"` (e.g. :code:`3I(X,Y;Z|W)-H(X) >= 0`, default), :code:`"code"` (e.g. :code:`3*I(X+Y&Z|W)-H(X) >= 0`, consistent with the Psitip syntax so the output can be copied back to the code), or :code:`"latex"` (e.g. :code:`3I(X,Y;Z|W)-H(X) \ge 0`, for LaTeX equations).
 
 - :code:`verbose_lp` : Set to True to output linear programming problem sizes and results. Default is False.
 
@@ -715,7 +756,7 @@ Some of the options are:
     ============  LP objective  ============
     -H(X)+H(Y)-H(X,Y)
     ========================================
-    LP nrv=2 nreal=0 nvar=3/3 nineq=3 neq=0 solver=pulp.glpk
+    LP nrv=2 nreal=0 nvar=3/3 nineq=3 neq=0 solver=pyomo.glpk
       status=Optimal optval=0.0
 
 
@@ -764,6 +805,9 @@ theoretic inequality is based on the following work:
 
 - \Z. Zhang and R. W. Yeung, "On characterization of entropy function via information inequalities," IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
 
+Convex hull method for polyhedron projection:
+
+- \C. Lassez and J.-L. Lassez, Quantifier elimination for conjunctions of linear constraints via a convex hull algorithm, IBM Research Report, T.J. Watson Research Center, RC 16779 (1991)
 
 Results used as examples above:
 
@@ -819,4 +863,6 @@ Results used as examples above:
 
 - \F. Cicalese, L. Gargano, and U. Vaccaro, "Minimum-entropy couplings and their applications," IEEE Transactions on Information Theory, vol. 65, no. 6, pp. 3436-3451, 2019.
 
-- Cheuk Ting Li, "Efficient Approximate Minimum Entropy Coupling of Multiple Probability Distributions," https://arxiv.org/abs/2006.07955 , 2020.
+- \C. T. Li, "Efficient Approximate Minimum Entropy Coupling of Multiple Probability Distributions," arXiv preprint https://arxiv.org/abs/2006.07955 , 2020.
+
+- \C. T. Li, "Infinite Divisibility of Information," arXiv preprint https://arxiv.org/abs/2008.06092 , 2020.

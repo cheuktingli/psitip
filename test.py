@@ -60,7 +60,7 @@ class TestPsitip(unittest.TestCase):
             "  R2 >= 0,\n"
             "  R0+R1 <= I(U0,U1;Y1),\n"
             "  R0+R2 <= I(U0,U2;Y2),\n"
-            "  I(U1;Y1|U0)+I(U2;Y2|U0)-I(U1;U2|U0) >= 0,\n"
+            "  I(U1;Y1|U0)+I(U2;Y2|U0) >= I(U1;U2|U0),\n"
             "  R0+R1+R2 <= I(U0,U1;Y1)+I(U2;Y2|U0)-I(U1;U2|U0),\n"
             "  R0+R1+R2 <= I(U0,U2;Y2)+I(U1;Y1|U0)-I(U1;U2|U0),\n"
             "  2R0+R1+R2 <= I(U0,U1;Y1)+I(U0,U2;Y2)-I(U1;U2|U0) | U0,U1,U2 }")
@@ -172,6 +172,31 @@ class TestPsitip(unittest.TestCase):
         
         # self.assertTrue((H(X) >= eci) & (H(Y) >= eci)) # This currently fails
         
+        
+    def test_commoninfo_discover(self):
+        
+        X, Y = rv("X", "Y")
+        
+        K = gacs_korner(X&Y)
+        J = wyner_ci(X&Y)
+        G = exact_ci(X&Y)
+        
+        RK, RJ, RG = real("RK", "RJ", "RG")
+        
+        # Automatically discover relationship between these quantities
+        region_str = str(universe().discover([(RK, K), (RJ, J), (RG, G), X, Y], maxsize = 2))
+        print("test_commoninfo_discover")
+        print(region_str)
+        
+        self.assertEqual(region_str, 
+           ("{ RK >= 0,\n"
+            "  RG >= RJ,\n"
+            "  RG <= H(X),\n"
+            "  RG <= H(Y),\n"
+            "  RK <= I(X;Y),\n"
+            "  RJ >= I(X;Y) }")
+            )
+        
     def test_new_rv(self):
         
         X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
@@ -226,7 +251,7 @@ class TestPsitip(unittest.TestCase):
              & (R >= 0)).exists(U).marginal_exists(X)
         
         # Strong functional representation lemma with logarithmic gap [Li-El Gamal 2018]
-        with PsiOpts(truth = sfrl(logg)):
+        with sfrl(logg).assumed():
             
             # Achievability: GP region implies operational region relaxed by log gap
             self.assertTrue(r >> r_op.relaxed(R, logg * 5))
@@ -235,7 +260,7 @@ class TestPsitip(unittest.TestCase):
         aux = r.check_converse(r_op, nature = S)
             
         print("test_csie_region")
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
         self.assertEqual(str(aux[0][1]), "M,S_")
         self.assertEqual(str(aux[1][1]), "M,Y")
         
@@ -257,7 +282,7 @@ class TestPsitip(unittest.TestCase):
         aux = r.check_converse(r_op)
         
         print("test_wz_region")
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
         self.assertTrue(aux is not None)
         #self.assertEqual(str(aux[0][1]), "M,Y_")
         #self.assertEqual(str(aux[1][1]), "M,Y")
@@ -270,7 +295,7 @@ class TestPsitip(unittest.TestCase):
         U, X, Y1, Y2, M1, M2 = rv("U", "X", "Y1", "Y2", "M1", "M2")
         
         # Broadcast channel operational region
-        r_op = ((R1 <= I(M1 & Y1)) & (R2 <= I(M2 & Y2)) & indep(M1,M2) & markov(M1+M2, X, Y1+Y2)
+        r_op = ((R1 <= I(M1 & Y1)) & (R2 <= I(M2 & Y2)) & (H(X | M1+M2) == 0) & indep(M1,M2) & markov(M1+M2, X, Y1+Y2)
              & (R1 >= 0) & (R2 >= 0)).exists(M1+M2).marginal_exists(X)
         
         # Superposition coding region [Bergmans 1973], [Gallager 1974]
@@ -293,7 +318,7 @@ class TestPsitip(unittest.TestCase):
             aux = r.tensorize(chan_cond = c_dg)
             
             # Print auxiliary RVs
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
                 
             self.assertTrue(aux is not None)
             #self.assertEqual(str(aux[0][1]), "U")
@@ -304,7 +329,7 @@ class TestPsitip(unittest.TestCase):
             aux = r.check_converse(reg_subset = r_op, chan_cond = c_dg)
             
             # Print auxiliary RVs
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
                 
             self.assertTrue(aux is not None)
             #self.assertEqual(str(aux[0][1]), "M2")
@@ -315,7 +340,7 @@ class TestPsitip(unittest.TestCase):
             aux = r.check_converse(reg_subset = r_op, chan_cond = c_mc)
             
             # Print auxiliary RVs
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
                 
             self.assertTrue(aux is not None)
             #self.assertEqual(str(aux[0][1]), "M1,Y1_")
@@ -338,7 +363,7 @@ class TestPsitip(unittest.TestCase):
         aux = r.tensorize()
             
         print("test_gw_region")
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
         self.assertTrue(aux is not None)
         
         self.assertEqual(str(aux[0][1]), "U_1")
@@ -353,12 +378,12 @@ class TestPsitip(unittest.TestCase):
         self.assertFalse(2 * I(Z & W) <= I(X & Y) + I(X & Z+W) + 3 * I(Z & W | X) + I(Z & W | Y))
         
         # Using copy lemma [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011]
-        with PsiOpts(truth = copylem()):
+        with copylem().assumed():
             
             # Prove Zhang-Yeung inequality
             aux = (2 * I(Z & W) <= I(X & Y) + I(X & Z+W) + 3 * I(Z & W | X) + I(Z & W | Y)).check_getaux()
             self.assertTrue(aux is not None)
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
             
             self.assertEqual(str(aux[0][1]), "X")
             self.assertEqual(str(aux[1][1]), "Z")
@@ -372,16 +397,22 @@ class TestPsitip(unittest.TestCase):
         print("test_dblmarkov")
         
         # Using double Markov property [Csiszar-Korner 2011]
-        with PsiOpts(truth = dblmarkov()):
+        with dblmarkov().assumed():
             aux = ((markov(X, Y, Z) & markov(Y, X, Z))
                 >> (H(mss(X, Z) | mss(Y, Z)) == 0)).check_getaux()
             self.assertTrue(aux is not None)
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
             
             aux = ((markov(X, Y, Z) & markov(Y, X, Z))
                 >> markov(X+Y, meet(X, Y), Z)).check_getaux()
             self.assertTrue(aux is not None)
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
+            
+            aux = ((markov(X, Y, Z) & markov(Y, X, Z) & markov(Y, Z, X))
+                >> (indep(X, Y, Z).conditioned(U)
+                  & (H(U|X)==0) & (H(U|Y)==0) & (H(U|Z)==0)).exists(U)).check_getaux()
+            self.assertTrue(aux is not None)
+            print(iutil.list_tostr_std(aux))
             
         
     def test_eliminate_toreal(self):
@@ -399,8 +430,8 @@ class TestPsitip(unittest.TestCase):
         ).exists(U, toreal = True).tostring(tosort = True, lhsvar = IX+IY+IXY),
             ("{ IX >= 0,\n"
             "  IY >= 0,\n"
-            "  IXY-IX >= 0,\n"
-            "  IXY-IY >= 0,\n"
+            "  IXY >= IX,\n"
+            "  IXY >= IY,\n"
             "  IXY-IX <= H(Y|X),\n"
             "  IXY-IY <= H(X|Y),\n"
             "  IX+IY-IXY <= I(X;Y) }")
@@ -469,7 +500,7 @@ class TestPsitip(unittest.TestCase):
         self.assertTrue(excess_fi(X, Y) <= H(Y | X))
         
         # The following two requires functional representation lemma to prove
-        with PsiOpts(truth = sfrl()):
+        with sfrl().assumed():
             self.assertTrue(excess_fi(X, Y) <= exact_ci(X & Y) - I(X & Y))
             self.assertTrue(excess_fi(X, Y) <= H(X | Y))
         
@@ -508,6 +539,32 @@ class TestPsitip(unittest.TestCase):
         
         t1, t2 = real("t1", "t2")
         self.assertTrue((t1 <= t2) >> (info_bot(X, Y, t1) <= info_bot(X, Y, t2)))
+        
+        
+    def test_exists(self):
+        X, Y, Z, W, U, V = rv("X", "Y", "Z", "W", "U", "V")
+        
+        self.assertFalse((H(X) > 0).exists(X))
+        self.assertTrue((H(Y)==1) >> (H(X)==1).exists(X))
+        self.assertFalse((H(Y)==1) >> (H(X)==2).exists(X))
+        
+        # Assume there exists a random variable with entropy 1
+        with exists_bit().assumed():
+            self.assertTrue((H(X) > 0).exists(X))
+            self.assertTrue(((H(X) > 0) & indep(X, Y)).exists(X))
+            self.assertFalse(((H(X) > 0) & indep(X, X)).exists(X))
+            self.assertTrue((~(H(X) <= 0)).exists(X))
+            self.assertTrue((~(H(X) <= 0) & indep(X, Y)).exists(X))
+            self.assertFalse((~(H(X) <= 0) & indep(X, X)).exists(X))
+            
+            self.assertTrue((~(H(X) <= 0) & ~(H(Y) <= 0)).exists(X + Y))
+            self.assertFalse((~(H(X) <= 0) & ~(H(Y) <= 0) & indep(X, Y)).exists(X + Y))
+            self.assertFalse((~(H(X) <= 0) & ~(H(Y | X) <= 0)).exists(X + Y))
+            
+        # Assume there exists two random variables with entropy 1
+        with (exists_bit() ** 2).assumed():
+            self.assertTrue((~(H(X) <= 0) & ~(H(Y) <= 0) & indep(X, Y)).exists(X + Y))
+            self.assertTrue((~(H(X) <= 0) & ~(H(Y | X) <= 0)).exists(X + Y))
         
         
     def test_sfrl(self):
@@ -567,18 +624,18 @@ class TestPsitip(unittest.TestCase):
         print("test_regionop")
         aux = (H(X | U) == 0).exists(U).forall(X).check_getaux()
         self.assertTrue(aux is not None)
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
         
         aux = (H(X | U) == 0).forall(X).exists(U).check_getaux()
         self.assertFalse(aux is not None)
         
         aux = (H(U | X) == 0).exists(U).forall(X).check_getaux()
         self.assertTrue(aux is not None)
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
         
         aux = (H(U | X) == 0).forall(X).exists(U).check_getaux()
         self.assertTrue(aux is not None)
-        print(IUtil.list_tostr_std(aux))
+        print(iutil.list_tostr_std(aux))
         
     
     def test_nested_implication(self):
@@ -667,7 +724,7 @@ class TestPsitip(unittest.TestCase):
         
         r = universe()
         a = real("a")
-        X, Y = rv("X", "Y")
+        X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
         
         r &= H(X) >= a
         r &= a >= H(Y)
@@ -687,6 +744,14 @@ class TestPsitip(unittest.TestCase):
         self.assertTrue(r >> (a >= I(X & Y)))
         self.assertTrue(r >> (a >= I(X & Y | X)))
         self.assertFalse(r >> (a <= I(X & Y)))
+        
+        self.assertTrue(((H(X|Z+W)==0) & (H(Y|Z) == 0)) >> (H(X+Y|Z+W) == 0))
+        self.assertFalse(((H(X|Z+W)==0) & (H(Y|Z) == 0)) >> (H(X+Y|Z) == 0))
+        self.assertFalse(((H(X|Z+W)==0) & (H(Y|Z) == 0)) >> (H(X+Y|W) == 0))
+        self.assertTrue(((H(X|Y)==0) & (H(Y|Z+W) == 0)) >> (H(X+Y|Z+W) == 0))
+        self.assertTrue(((H(X|Y)==0) & (H(Y|Z+W) == 0)) >> (H(X|Z+W) == 0))
+        self.assertFalse(((H(X|Y)==0) & (H(Y|Z+W) == 0)) >> (H(X|W) == 0))
+        self.assertFalse(((H(X|Y)==0) & (H(Y|Z+W) == 0)) >> (H(X|U) == 0))
     
     
     def test_simplify(self):
@@ -735,7 +800,7 @@ class TestPsitip(unittest.TestCase):
     
         self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
             & (-2*H(U) - 3*I(Y & W) == 0)).simplified(zero_group = 2)),
-            "{ -I(W;U)-I(Y;U)-I(Y;W)-I(Z;W|X)-H(X)-H(U) >= 0 }")
+            "{ I(W;U)+I(Y;U)+I(Y;W)+I(Z;W|X)+H(X)+H(U) <= 0 }")
         
         self.assertEqual(str(((H(X | Y) == 0) & (I(X & Y) <= 0)).simplified()),
             "{ H(X) == 0 }")
@@ -745,11 +810,11 @@ class TestPsitip(unittest.TestCase):
         self.assertTrue(((I(X & Y) == 0) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (I(X+Y & Z) == 0))
         == ((I(X & Y) == 0) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (I(X+Y & Z) == 0)).simplified())
         
-        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X))).simplified()), "{ H(Y)-H(X) == 0 }")
-        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) == H(X))).simplified()), "{ H(Y)-H(X) == 0 }")
-        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y))).simplified()), "{ H(Y)-H(X) == 0 }")
+        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X))).simplified()), "{ H(Y) == H(X) }")
+        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) == H(X))).simplified()), "{ H(Y) == H(X) }")
+        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y))).simplified()), "{ H(Y) == H(X) }")
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y)) & (H(Y) <= H(Z)) & (H(Y) == H(Z))).simplified()),
-                         "{ H(Y)-H(Z) == 0,\n  H(Y)-H(X) == 0 }")
+                         "{ H(Y) == H(Z),\n  H(Y) == H(X) }")
     
         
     def test_eliminate(self):
@@ -759,18 +824,18 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(
                 (((R >= H(Y)) & (R <= H(Z)))).exists(R)),
-                "{ H(Z)-H(Y) >= 0 }")
+                "{ H(Z) >= H(Y) }")
         
         self.assertEqual(str(
                 (((R >= H(Y)) & (R <= H(Z)) & (R == H(W)))).exists(R)),
-                ("{ H(Z)-H(W) >= 0,\n"
-                "  H(W)-H(Y) >= 0 }"))
+                ("{ H(Z) >= H(W),\n"
+                "  H(W) >= H(Y) }"))
         
         self.assertEqual(str(
                 ((R == H(X)) >> ((R >= H(Y)) & (R <= H(Z)) & (R == H(W)))).forall(R)),
-                ("{ H(Z)-H(X) >= 0,\n"
-                "  H(X)-H(Y) >= 0,\n"
-                "  H(W)-H(X) == 0 }"))
+                ("{ H(Z) >= H(X),\n"
+                "  H(X) >= H(Y),\n"
+                "  H(W) == H(X) }"))
         
         
     
@@ -785,31 +850,31 @@ class TestPsitip(unittest.TestCase):
         self.assertEqual(str(r * 2),
             ("{ R1 >= 0,\n"
             "  R2 >= 0,\n"
-            "  2H(X)-R1 >= 0,\n"
-            "  2H(Y)-R2 >= 0 }"))
+            "  R1 <= 2H(X),\n"
+            "  R2 <= 2H(Y) }"))
         self.assertEqual(str(r + r),
             ("{ R1 >= 0,\n"
-            "  2H(X)-R1 >= 0,\n"
+            "  R1 <= 2H(X),\n"
             "  R2 >= 0,\n"
-            "  2H(Y)-R2 >= 0 }"))
+            "  R2 <= 2H(Y) }"))
         self.assertEqual(str(r + r2),
             ("{ R1 >= 0,\n"
             "  R2 >= 0,\n"
-            "  H(Z)+H(X)-R1+H(Y)-R2 >= 0,\n"
-            "  H(Z)+H(X)-R1 >= 0,\n"
-            "  H(Z)+H(Y)-R2 >= 0 }"))
+            "  R1+R2 <= H(Z)+H(X)+H(Y),\n"
+            "  R1 <= H(Z)+H(X),\n"
+            "  R2 <= H(Z)+H(Y) }"))
         self.assertEqual(str(r + (r | r2)),
             ("{\n"
             "  { R1 >= 0,\n"
-            "    2H(X)-R1 >= 0,\n"
+            "    R1 <= 2H(X),\n"
             "    R2 >= 0,\n"
-            "    2H(Y)-R2 >= 0 }\n"
+            "    R2 <= 2H(Y) }\n"
             " OR\n"
             "  { R1 >= 0,\n"
             "    R2 >= 0,\n"
-            "    H(X)+H(Z)-R1 >= 0,\n"
-            "    H(Y)+H(Z)-R2 >= 0,\n"
-            "    H(Y)+H(X)+H(Z)-R1-R2 >= 0 }\n"
+            "    R1 <= H(X)+H(Z),\n"
+            "    R2 <= H(Y)+H(Z),\n"
+            "    R1+R2 <= H(Y)+H(X)+H(Z) }\n"
             "}"))
         
         
@@ -839,15 +904,15 @@ class TestPsitip(unittest.TestCase):
             
             aux = ((I(X&Y|U) >= I(X&Y|Z)) & (I(X&Y|U) >= I(X&Y))).exists(U).check_getaux()
             self.assertTrue(aux is not None)
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
             
             aux = RegionOp.inter([(I(X&Y|U) >= I(X&Y|Z)) & (I(X&Y|U) >= I(X&Y))]).exists(U).check_getaux()
             self.assertTrue(aux is not None)
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
             
             aux = (((H(U) == H(X)) & (H(X) >= H(Y))) | ((H(U) == H(X+Y)) & (H(Y) >= H(X)))).exists(U).check_getaux()
             self.assertTrue(aux is not None)
-            print(IUtil.list_tostr_std(aux))
+            print(iutil.list_tostr_std(aux))
             
             aux = (((H(U) == H(X)) & (H(X) >= H(Y))) | ((H(U) == H(X+Y)) & (H(X) >= H(Y)))).exists(U).check_getaux()
             self.assertFalse(aux is not None)
@@ -900,21 +965,24 @@ class TestPsitip(unittest.TestCase):
         self.assertFalse((H(X) >= 0.5) >> (H(X) * 2 > 1))
         self.assertFalse((H(X) >= 2) >> (H(X) * 0.5 > 1))
         
+        
+    def test_condindep(self):
+        
+        A, B, C, D = rv("A", "B", "C", "D")
+        
+        # [Studeny 1989]
+        s1 = (I(A&B|C+D)==0) & (I(C&D|A)==0) & (I(C&D|B)==0) & (I(A&B)==0)
+        s2 = (I(C&D|A+B)==0) & (I(A&B|C)==0) & (I(A&B|D)==0) & (I(C&D)==0)
+        
+        self.assertTrue(s1 >> s2)
+        self.assertTrue(s2 >> s1)
+        
     
     def test_performance(self):
         
         ls = [(3, 6), (6, 2), (9, 1)]
-        for mode in range(4):
-            solver = ""
-            if mode == 0:
-                solver = "pulp.glpk"
-            elif mode == 1:
-                solver = "pulp.cbc"
-            elif mode == 2:
-                solver = "pyomo.glpk"
-            elif mode == 3:
-                solver = "scipy"
-            
+        
+        for solver in ["pulp.glpk", "pyomo.glpk", "scipy"]:
             for (l, nit) in ls:
                 if solver == "scipy" and l > 6:
                     continue
@@ -933,7 +1001,9 @@ class TestPsitip(unittest.TestCase):
         
 
 # Run tests
-PsiOpts.set_setting(solver = "pulp.glpk")
+#PsiOpts.set_setting(solver = "pulp.glpk")
+PsiOpts.set_setting(solver = "pyomo.glpk")
+#PsiOpts.set_setting(pulp_solver = pulp.solvers.GUROBI(mip = False, msg = 0))
 
 unittest.main(verbosity=2)
 
@@ -1024,5 +1094,9 @@ information inequalities." 2006 IEEE International Symposium on Information Theo
 
 Imre Csiszar and Janos Korner. Information theory: coding theorems for 
 discrete memoryless systems. Cambridge University Press, 2011.
+
+M. Studeny, Multiinformation and the problem of characterization of conditional 
+independence relations, Problems of Control and Information Theory 18 (1989) 3-16.
+
 """
 
