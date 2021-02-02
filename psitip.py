@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.04
+Version 1.05
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -82,6 +82,8 @@ import warnings
 import types
 import functools
 import math
+import time
+
 
 try:
     import numpy
@@ -114,6 +116,32 @@ try:
 except ImportError:
     cdd = None
 
+
+try:
+    import graphviz
+except ImportError:
+    graphviz = None
+    
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.patches
+    import matplotlib.lines
+    import matplotlib.patheffects
+    from matplotlib.collections import PatchCollection
+except ImportError:
+    matplotlib = None
+    plt = None
+
+try:
+    import torch
+    import torch.optim
+except ImportError:
+    torch = None
+
+try:
+    import torch.linalg
+except ImportError:
+    pass
 
 class LinearProgType:
     NIL = 0
@@ -157,16 +185,24 @@ class PsiOpts:
     SFRL_LEVEL_MULTIPLE = 2
     
     settings = {
+        "ent_coeff": 1.0 / math.log(2.0),
+        
         "eps": 1e-10,
         "eps_lp": 1e-5,
+        "eps_check": 1e-6,
         "max_denom": 1000000,
         "max_denom_mul": 10000,
-        "str_style": 1,
+        
+        "str_style": 2,
+        "str_tosort": False,
         "str_lhsreal": True,
         "rename_char": "_",
         
         "truth": None,
         "proof": None,
+        
+        "timer_start": None,
+        "timer_end": None,
         
         "solver": "scipy",
         "lptype": LinearProgType.HC1BN,
@@ -178,6 +214,41 @@ class PsiOpts:
         "fcn_mode": 1,
         "solver_scipy_maxsize": -1,
         
+        "simplify_enabled": True,
+        "simplify_quick": False,
+        "simplify_remove_missing_aux": True,
+        "simplify_aux": True,
+        "simplify_aux_commonpart": True,
+        "simplify_aux_xor_len": 1,
+        "simplify_aux_empty": False,
+        "simplify_aux_recombine": False,
+        "simplify_pair": True,
+        "simplify_redundant": True,
+        "simplify_redundant_full": True,
+        "simplify_bayesnet": True,
+        "simplify_redundant_op": True,
+        "simplify_union": False,
+        
+        "istorch": False,
+        "opt_optimizer": "SLSQP", #"sgd",
+        "opt_eps_denom": 1e-8,
+        "opt_eps_tol": 1e-7,
+        "opt_learnrate": 0.04,
+        "opt_learnrate2": 0.02,
+        "opt_momentum": 0.0,
+        "opt_num_iter": 800,
+        "opt_num_iter2": 0,
+        "opt_num_points": 1,
+        "opt_eps_converge": 1e-9,
+        "opt_num_hop": 1,
+        "opt_hop_temp": 0.05,
+        "opt_hop_prob": 0.2,
+        "opt_alm_rho": 1.0,
+        "opt_alm_rho_pow": 1.0,
+        "opt_alm_step": 5,
+        "opt_alm_penalty": 20.0,
+        "opt_aux_card": 5,
+        
         "imp_noncircular": True,
         "imp_noncircular_allaux": False,
         "imp_simplify": False,
@@ -188,6 +259,7 @@ class PsiOpts:
         "forall_multiuse_numsave": 128,
         "auxsearch_local": True,
         "auxsearch_leaveone": False,
+        "auxsearch_leaveone_add_ineq": True,
         "init_leaveone": True,
         "auxsearch_max_iter": 0,
         "auxsearch_op_casesteplimit": 16,
@@ -227,6 +299,11 @@ class PsiOpts:
         "verbose_discover_terms": False,
         "verbose_discover_terms_inner": False,
         "verbose_discover_terms_outer": False,
+        "verbose_opt": False,
+        "verbose_opt_step": False,
+        "verbose_opt_step_var": False,
+        "verbose_float_dp": 8,
+        "verbose_commmodel": False,
         
         "sfrl_level": 0,
         "sfrl_maxsize": 1,
@@ -249,6 +326,43 @@ class PsiOpts:
         elif key == "str_style":
             
             d["str_style"] = iutil.convert_str_style(value)
+                    
+        elif key == "timer":
+            if value is None:
+                d["timer_start"] = None
+                d["timer_end"] = None
+            else:
+                curtime = time.time() * 1000
+                d["timer_start"] = curtime
+                d["timer_end"] = curtime + float(value)
+            
+                    
+            
+        elif key == "simplify_level":
+            d["simplify_enabled"] = value >= 1
+            d["simplify_quick"] = value <= 2
+            # d["simplify_remove_missing_aux"] = True
+            d["simplify_aux"] = value >= 4
+            d["simplify_aux_commonpart"] = value >= 5
+            
+            if value >= 9:
+                d["simplify_aux_xor_len"] = 4
+            elif value >= 7:
+                d["simplify_aux_xor_len"] = 3
+            else:
+                d["simplify_aux_xor_len"] = 1
+                
+            d["simplify_aux_empty"] = value >= 6
+            d["simplify_aux_recombine"] = value >= 10
+            d["simplify_pair"] = value >= 2
+            d["simplify_redundant"] = value >= 3
+            d["simplify_redundant_full"] = value >= 4
+            d["simplify_bayesnet"] = value >= 4
+            d["simplify_redundant_op"] = value >= 4
+            d["simplify_union"] = value >= 8
+            
+        elif key == "ent_base":
+            d["ent_coeff"] = 1.0 / math.log(value)
                     
         elif key == "verbose_auxsearch_all":
             d["verbose_auxsearch"] = value
@@ -321,6 +435,33 @@ class PsiOpts:
                     d["proof"] = ProofObj.empty()
                 else:
                     d["proof"] = d["proof"].copy()
+                    
+        elif key == "opt_singlepass":
+            d["opt_learnrate"] = 0.04
+            d["opt_num_iter"] = 800
+            d["opt_num_iter2"] = 0
+            d["opt_num_points"] = 1
+            d["opt_num_hop"] = 1
+            
+        elif key == "opt_basinhopping":
+            d["opt_learnrate"] = 0.12
+            d["opt_learnrate2"] = 0.02 #0.001
+            d["opt_num_points"] = 5
+            d["opt_num_iter"] = 15
+            d["opt_num_iter2"] = 500
+            d["opt_num_hop"] = 20
+            
+            
+        elif key == "opt_learnrate_mul":
+            d["opt_learnrate"] *= value
+            d["opt_learnrate2"] *= value
+            
+        elif key == "opt_num_iter_mul":
+            d["opt_num_iter"] = int(d["opt_num_iter"] * value)
+            d["opt_num_iter2"] = int(d["opt_num_iter2"] * value)
+            
+        elif key == "opt_num_points_mul":
+            d["opt_num_points"] = int(d["opt_num_points"] * value)
             
         else:
             if key not in d:
@@ -345,7 +486,27 @@ class PsiOpts:
     def get_truth():
         return PsiOpts.settings["truth"]
             
+    def is_timer_ended():
+        if PsiOpts.settings["timer_end"] is None:
+            return False
+        curtime = time.time() * 1000
+        return curtime > PsiOpts.settings["timer_end"]
+    
+        
     def __init__(self, **kwargs):
+        """
+        Options.
+
+        Parameters
+        ----------
+        **kwargs : TYPE
+            DESCRIPTION.
+
+        Returns
+        -------
+        None.
+
+        """
         self.cur_settings = PsiOpts.settings.copy()
         for key, value in kwargs.items():
             PsiOpts.set_setting_dict(self.cur_settings, key, value)
@@ -368,8 +529,9 @@ class iutil:
     pulp_solvers = {}
     
     cur_count = 0
+    cur_count_name = {}
     
-    def float_tostr(x, style = 0):
+    def float_tostr(x, style = 0, bracket = True):
         if abs(x) <= 1e-10:
             return "0"
         elif abs(x - round(x)) <= 1e-10:
@@ -381,22 +543,47 @@ class iutil:
                 if style & PsiOpts.STR_STYLE_LATEX_FRAC:
                     return "\\frac{" + str(frac.numerator) + "}{" + str(frac.denominator) + "}"
                 else:
-                    return "(" + str(frac) + ")"
+                    if bracket:
+                        return "(" + str(frac) + ")"
+                    else:
+                        return str(frac)
             else:
                 if style & PsiOpts.STR_STYLE_LATEX_FRAC:
                     return "-\\frac{" + str(frac.numerator) + "}{" + str(frac.denominator) + "}"
                 else:
-                    return "-(" + str(frac) + ")"
+                    if bracket:
+                        return "-(" + str(frac) + ")"
+                    else:
+                        return "-" + str(frac)
 
     def float_snap(x):
         t = float(fractions.Fraction(x).limit_denominator(PsiOpts.settings["max_denom"]))
         if abs(x - t) <= PsiOpts.settings["eps"]:
             return t
         return x
+    
+    def tostr_verbose(x):
+        if isinstance(x, float):
+            dp = PsiOpts.settings["verbose_float_dp"]
+            if dp is None:
+                return str(x)
+            return ("{:." + str(dp) + "f}").format(x)
+        elif isinstance(x, list):
+            return "[" + ", ".join(iutil.tostr_verbose(a) for a in x) + "]"
+        elif isinstance(x, tuple):
+            return "(" + ", ".join(iutil.tostr_verbose(a) for a in x) + ")"
+        else:
+            return str(x)
 
-    def get_count():
-        iutil.cur_count += 1
-        return iutil.cur_count
+    def get_count(counter_name = None):
+        if counter_name is None:
+            iutil.cur_count += 1
+            return iutil.cur_count
+        
+        if counter_name not in iutil.cur_count_name:
+            iutil.cur_count_name[counter_name] = 0
+        iutil.cur_count_name[counter_name] += 1
+        return iutil.cur_count_name[counter_name]
         
     def gcd(a, b):
         while b > 0:
@@ -448,6 +635,10 @@ class iutil:
         s = str(s)
         return "(\"" + "\\n\"\n\"".join(s.split("\n")) + "\")"
     
+    def istensor(a):
+        return hasattr(a, "shape")
+        # return isinstance(a, (numpy.array, IBaseArray)) or (torch is not None and isinstance(a, torch.Tensor))
+    
     def hash_short(s):
         s = str(s)
         return hash(s) % 99991
@@ -482,6 +673,58 @@ class iutil:
             r = pulp.PULP_CBC_CMD()
         
         iutil.pulp_solvers[copt] = r
+        return r
+    
+    def istorch(x):
+        return torch is not None and isinstance(x, torch.Tensor)
+    
+    def ensure_torch(x):
+        if hasattr(x, "get_x"):
+            x = x.get_x()
+        if iutil.istorch(x):
+            return x
+        return torch.tensor(x, dtype=torch.float64)
+        
+    
+    def log(x):
+        if iutil.istorch(x):
+            return torch.log(x)
+        else:
+            return numpy.log(x)
+    
+    def xlogxoy(x, y):
+        if iutil.istorch(x) or iutil.istorch(y):
+            ceps_d = PsiOpts.settings["opt_eps_denom"]
+            return x * iutil.log((x + ceps_d) / (y + ceps_d))
+        else:
+            ceps = PsiOpts.settings["eps"]
+            if x <= ceps:
+                return 0.0
+            else:
+                return x * numpy.log(x / y)
+    
+    def xlogxoy2(x, y):
+        if iutil.istorch(x) or iutil.istorch(y):
+            ceps_d = PsiOpts.settings["opt_eps_denom"]
+            return x * (iutil.log((x + ceps_d) / (y + ceps_d)) ** 2)
+        else:
+            ceps = PsiOpts.settings["eps"]
+            if x <= ceps:
+                return 0.0
+            else:
+                return x * (numpy.log(x / y) ** 2)
+            
+    
+    def sqrt(x):
+        if iutil.istorch(x):
+            return torch.sqrt(x)
+        else:
+            return numpy.sqrt(x)
+    
+    def product(x):
+        r = 1
+        for a in x:
+            r *= a
         return r
     
     def bitcount(x):
@@ -611,6 +854,16 @@ class iutil:
             return sum(iutil.sumlist(a) for a in x)
         return x
     
+    def find_similarity(s, x):
+        t = s.split("@@")
+        x2 = x.split("@@")
+        r = 0
+        for i in range(0, len(t), 2):
+            for j in range(0, len(x2), 2):
+                if x2[j] != "" and x2[j] in t[i]:
+                    r = max(r, 10000 + len(x2[j]) - len(t[i]))
+        return r
+    
     def set_suffix_num(s, k, schar, replace_mode = "set"):
         t = s.split("@@")
         if len(t) >= 2:
@@ -645,36 +898,69 @@ class iutil:
             return t[0], v[1:-1]
         return t[0], v
     
-    def fcn_name_maker(name, v, pname = None, lname = None, cropi = False):
+    def is_single_term(x):
+        if isinstance(x, (int, float, tuple, list, IVar)):
+            return True
+        if isinstance(x, (Comp, Expr)):
+            return len(x) == 1
+        return False
+    
+    def fcn_name_maker(name, v, pname = None, lname = None, cropi = False, infix = False, latex_group = False):
         if not isinstance(v, list) and not isinstance(v, tuple):
             v = [v]
         r = ""
         for style in [PsiOpts.STR_STYLE_STANDARD, PsiOpts.STR_STYLE_PSITIP, PsiOpts.STR_STYLE_LATEX]:
             if style != PsiOpts.STR_STYLE_STANDARD:
                 r += "@@" + str(style) + "@@"
-            if style == PsiOpts.STR_STYLE_STANDARD:
-                r += name
-            elif style == PsiOpts.STR_STYLE_PSITIP:
-                r += pname or name
-            elif style == PsiOpts.STR_STYLE_LATEX:
-                r += lname or name
                 
-            if not cropi:
-                r += "("
+                
             for i, a in enumerate(v):
-                if i:
-                    r += ","
-                t = ""
-                if style == PsiOpts.STR_STYLE_STANDARD and isinstance(a, Comp):
-                    t = a.tostring(style = style, add_braket = True)
+                a_single_term = iutil.is_single_term(a)
+                
+                if (i == 0) ^ infix:
+                    if style == PsiOpts.STR_STYLE_STANDARD:
+                        r += name
+                    elif style == PsiOpts.STR_STYLE_PSITIP:
+                        r += pname or name
+                    elif style == PsiOpts.STR_STYLE_LATEX:
+                        r += lname or name
+                if not infix:
+                    if i == 0:
+                        r += "("
+                    if i:
+                        r += ","
                 else:
-                    t = a.tostring(style = style)
-                if cropi and len(t) >= 1:
-                    r += t[1:]
+                    if latex_group and style == PsiOpts.STR_STYLE_LATEX:
+                        r += "{"
+                    if not a_single_term:
+                        r += "("
+                t = ""
+                if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                    if style == PsiOpts.STR_STYLE_STANDARD and isinstance(a, Comp):
+                        t = a.tostring(style = style, add_braket = True)
+                    else:
+                        t = a.tostring(style = style)
+                elif isinstance(a, str):
+                    if style == PsiOpts.STR_STYLE_PSITIP:
+                        t = repr(a)
+                    else:
+                        t = str(a)
+                else:
+                    t = str(a)
+                    
+                if cropi and isinstance(a, Term) and len(t) >= 3 and t.startswith("I("):
+                    r += t[2:-1]
                 else:
                     r += t
-            if not cropi:
-                r += ")"
+                    
+                if not infix:
+                    if i == len(v) - 1:
+                        r += ")"
+                else:
+                    if not a_single_term:
+                        r += ")"
+                    if latex_group and style == PsiOpts.STR_STYLE_LATEX:
+                        r += "}"
         return r
     
     def add_subscript_latex(s, v):
@@ -688,6 +974,38 @@ class iutil:
             return s + "_{" + v0 + "}"
         else:
             return s + "_" + v0
+    
+    def copy(x):
+        if (x is None or isinstance(x, int) or isinstance(x, float) 
+            or isinstance(x, str) or isinstance(x, tuple)):
+            return x
+        if isinstance(x, list):
+            return [iutil.copy(a) for a in x]
+        if isinstance(x, dict):
+            return {a: iutil.copy(b) for a, b in x.items()}
+        
+        return x.copy()
+    
+    def bit_reverse(x, n):
+        r = 0
+        for i in range(n):
+            if x & (1 << i):
+                r += 1 << (n - 1 - i)
+        return r
+    
+    def bin_to_gray(x):
+        """Binary to Gray code. From en.wikipedia.org/wiki/Gray_code
+        """
+        return x ^ (x >> 1)
+    
+    def gray_to_bin(x):
+        """Gray code to binary. From en.wikipedia.org/wiki/Gray_code
+        """
+        m = x
+        while m:
+            m >>= 1
+            x ^= m
+        return x
     
     def gbsearch(fcn, num_iter = 30):
         """Binary search.
@@ -816,11 +1134,18 @@ def fcn_list_to_list(fcn):
     @functools.wraps(fcn)
     def wrapper(*args, **kwargs):
         islist = False
-        maxlen = 0
+        maxlen = -1
+        maxshape = tuple()
         for a in itertools.chain(args, kwargs.values()):
-            if isinstance(a, CompList) or isinstance(a, ExprList):
+            if CompArray.isthis(a) or ExprArray.isthis(a):
                 islist = True
-                maxlen = max(maxlen, len(a))
+                # maxlen = max(maxlen, len(a))
+                if len(a) > maxlen:
+                    maxlen = len(a)
+                    if isinstance(a, list):
+                        maxshape = (len(a),)
+                    else:
+                        maxshape = a.shape
         
         if not islist:
             return fcn(*args, **kwargs)
@@ -829,12 +1154,12 @@ def fcn_list_to_list(fcn):
         for i in range(maxlen):
             targs = []
             for a in args:
-                if isinstance(a, CompList):
+                if CompArray.isthis(a):
                     if i < len(a):
                         targs.append(a[i])
                     else:
                         targs.append(Comp.empty())
-                elif isinstance(a, ExprList):
+                elif ExprArray.isthis(a):
                     if i < len(a):
                         targs.append(a[i])
                     else:
@@ -844,12 +1169,12 @@ def fcn_list_to_list(fcn):
                     
             tkwargs = dict()
             for key, a in kwargs.items():
-                if isinstance(a, CompList):
+                if CompArray.isthis(a):
                     if i < len(a):
                         tkwargs[key] = a[i]
                     else:
                         tkwargs[key] = Comp.empty()
-                elif isinstance(a, ExprList):
+                elif ExprArray.isthis(a):
                     if i < len(a):
                         tkwargs[key] = a[i]
                     else:
@@ -863,9 +1188,9 @@ def fcn_list_to_list(fcn):
             if isinstance(r[0], Region):
                 return alland(r)
             elif isinstance(r[0], Comp):
-                return CompList(r)
+                return CompArray(r, maxshape)
             elif isinstance(r[0], Expr):
-                return ExprList(r)
+                return ExprArray(r, maxshape)
             else:
                 return r
         else:
@@ -982,7 +1307,11 @@ class Comp:
     def real(name):
         return Comp([IVar(IVarType.REAL, name)])
     
-    def array(name, st, en):
+    def array(name, st, en = None):
+        if en is None:
+            en = st
+            st = 0
+            
         t = []
             
         for i in range(st, en):
@@ -998,6 +1327,22 @@ class Comp:
             return ""
         return self.varlist[0].name
     
+    def find_name(self, *args):
+        r = Comp.empty()
+        for carg in args:
+            cmax = 0
+            cmaxa = Comp.empty()
+            for a in self.varlist:
+                t = iutil.find_similarity(a.name, carg)
+                if t > cmax:
+                    cmax = t
+                    cmaxa = Comp([a.copy()])
+            r += cmaxa
+        if len(r) > 0 and r.get_type() == IVarType.REAL:
+            r = ExprArray([Expr.fromcomp(t) for t in r])
+            if len(r) == 1:
+                r = r[0]
+        return r
     
     def get_type(self):
         if len(self.varlist) == 0:
@@ -1006,6 +1351,13 @@ class Comp:
         
     def allcomp(self):
         return self.copy()
+    
+    def swapped_id(self, i, j):
+        if i >= len(self.varlist) or j >= len(self.varlist):
+            return self.copy()
+        r = self.copy()
+        r.varlist[i], r.varlist[j] = r.varlist[j], r.varlist[i]
+        return r
     
     def set_markers(self, markers):
         for a in self.varlist:
@@ -1037,11 +1389,10 @@ class Comp:
                 self.add_marker(a)
         return self
     
-    
     def get_marker_key(self, key):
         for a in self.varlist:
             if a.markers is not None:
-                for v, w in a.markers:
+                for v, w in reversed(a.markers):
                     if v == key:
                         return w
         return None
@@ -1057,6 +1408,23 @@ class Comp:
         return r
         
     
+    def set_card(self, m):
+        self.add_marker("card", m)
+        return self
+    
+    def get_card(self):
+        return self.get_marker_key("card")
+    
+    def get_shape(self):
+        r = []
+        for a in self:
+            t = a.get_card()
+            if t is None:
+                raise ValueError("Cardinality of " + str(a) + " not set. Use " + str(a) + ".set_card(m) to set cardinality.")
+                return
+            r.append(t)
+        return tuple(r)
+        
     def add_suffix(self, csuffix):
         for a in self.varlist:
             a.name += csuffix
@@ -1105,6 +1473,12 @@ class Comp:
                 r.varlist.append(a)
         return r
         
+    def index_of(self, x):
+        for i, a in enumerate(self.varlist):
+            if x.ispresent(a):
+                return i
+        return -1
+    
     def ispresent_shallow(self, x):
         
         if isinstance(x, str):
@@ -1141,7 +1515,7 @@ class Comp:
         return self
         
     def __add__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if isinstance(other, Expr):
             return other.__radd__(self)
@@ -1166,6 +1540,31 @@ class Comp:
         r -= other
         return r
         
+    def __imul__(self, other):
+        ceps = PsiOpts.settings["eps"]
+        if isinstance(other, int) and other == 0:
+            self.varlist = []
+            return self
+        if isinstance(other, float) and abs(other) <= ceps:
+            self.varlist = []
+            return self
+        if isinstance(other, Expr):
+            other = other.get_const()
+            if other is not None and abs(other) <= ceps:
+                self.varlist = []
+                return self
+        return self
+        
+    def __mul__(self, other):
+        r = self.copy()
+        r *= other
+        return r
+        
+    def __rmul__(self, other):
+        r = self.copy()
+        r *= other
+        return r
+    
     def inter(self, other):
         """Intersection."""
         return Comp([a for a in self.varlist if a in other.varlist])
@@ -1185,6 +1584,9 @@ class Comp:
     def __len__(self):
         return len(self.varlist)
         
+    def __bool__(self):
+        return bool(self.varlist)
+    
     def isempty(self):
         """Whether self is empty."""
         return (len(self.varlist) == 0)
@@ -1245,7 +1647,80 @@ class Comp:
         return other.super_of(self) and not self.super_of(other)
     
     def tolist(self):
-        return CompList([a.copy() for a in self])
+        return CompArray([a.copy() for a in self])
+    
+    
+    
+    def mean(self, f = None, name = None):
+        """
+        Returns the expectation of the function f.
+
+        Parameters
+        ----------
+        f : function, numpy.array or torch.Tensor
+            If f is a function, the number of arguments must match the number of
+            random variables.
+            If f is an array or tensor, shape must match the shape of the 
+            joint distribution.
+        Returns
+        -------
+        r : Expr
+            The expectation as an expression.
+
+        """
+        
+        if name is None:
+            name = "mean_" + str(iutil.get_count("mean"))
+            
+        def fcncall(xdist):
+            return xdist.mean(f)
+    
+        R = Expr.real(name)
+        
+        return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), Region.universe(), 0, fcncall, [self.copy()]))
+    
+    
+    def prob(self, *args):
+        """
+        Returns the probability mass function at *args.
+
+        Parameters
+        ----------
+        *args : int
+            The indices to query. E.g. (X+Y).prob(2,3) is P(X=2, Y=3).
+        Returns
+        -------
+        r : Expr
+            The probability as an expression.
+
+        """
+        
+        args = tuple(args)
+        name = "P(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_STANDARD) + "=" + str(b)) for a, b in zip(self, args)) + ")"
+        name += "@@" + str(PsiOpts.STR_STYLE_PSITIP) + "@@"
+        if len(self) == 1:
+            name += repr(self)
+        else:
+            name += "(" + repr(self) + ")"
+        name += ".prob(" + ",".join(str(b) for b in args) + ")"
+        name += "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@"
+        name += "P(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(self, args)) + ")"
+            
+        def fcncall(xdist):
+            return xdist[args]
+    
+        R = Expr.real(name)
+        
+        return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), Region.universe(), 0, fcncall, [self.copy()]))
+    
+    def pmf(self):
+        """ Returns the probability mass function as ExprArray.
+        """
+        shape = self.get_shape()
+        r = ExprArray.zeros(shape)
+        for xs in itertools.product(*[range(x) for x in shape]):
+            r[xs] = self.prob(*xs)
+        return r
     
     def tostring(self, style = 0, tosort = False, add_braket = False):
         """Convert to string
@@ -1283,7 +1758,8 @@ class Comp:
     
     def __str__(self):
         
-        return self.tostring(PsiOpts.settings["str_style"])
+        return self.tostring(PsiOpts.settings["str_style"],
+                             tosort = PsiOpts.settings["str_tosort"])
     
     def __repr__(self):
         return self.tostring(PsiOpts.STR_STYLE_PSITIP)
@@ -1307,12 +1783,12 @@ class Comp:
     
     
     def __and__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         return Term.H(self) & Term.H(other)
     
     def __or__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if isinstance(other, int):
             return Term.H(self)
@@ -1338,17 +1814,41 @@ class Comp:
     
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound)"""
-        r = []
-        for a in self.varlist:
-            if v0.ispresent_shallow(a):
-                r += [b.copy() for b in v1.varlist]
-            else:
-                r.append(a)
-        self.varlist = r
+        
+        if len(v0) > 1:
+            for v0c in v0:
+                self.substitute(v0c, v1)
+            return
+        
+        v0s = v0.get_name()
+        for i in range(len(self.varlist)):
+            if self.varlist[i].name == v0s:
+                nameset = set()
+                for j in range(len(self.varlist)):
+                    if j != i:
+                        nameset.add(self.varlist[j].name)
+                
+                self.varlist = self.varlist[:i] + [t.copy() for t in v1.varlist if t.name not in nameset] + self.varlist[i+1:]
+                break
+        
+        # r = Comp.empty()
+        # for a in self.varlist:
+        #     if v0.ispresent_shallow(a):
+        #         r += v1
+        #     else:
+        #         r += Comp([a])
+        # self.varlist = r.varlist
+        
         for a in self.varlist:
             if a.reg is not None:
                 a.reg.substitute(v0, v1)
     
+    def substituted(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound), return result"""
+        r = self.copy()
+        r.substitute(v0, v1)
+        return r
+        
     def substitute_list(a, vlist, suffix = "", isaux = False):
         """Substitute variables in vlist into a"""
         if isinstance(vlist, list):
@@ -1379,6 +1879,19 @@ class Comp:
         
     def fcn_of(self, b):
         return Expr.Hc(self, b) == 0
+    
+        
+    def table(self, *args, **kwargs):
+        """Plot the information diagram as a Gray-coded table.
+        """
+        return universe().table(self, *args, **kwargs)
+        
+    def venn(self, *args, **kwargs):
+        """Plot the information diagram as a Venn diagram.
+        Can handle up to 5 random variables (uses Branko Grunbaum's Venn diagram for n=5).
+        """
+        return universe().venn(self, *args, **kwargs)
+    
     
 class IVarIndex:
     """Store index of variables
@@ -1420,6 +1933,8 @@ class IVarIndex:
         
     # Get index of IVar
     def get_index(self, x):
+        if isinstance(x, Comp):
+            x = x.varlist[0]
         if x.vartype == IVarType.RV:
             if x.name in self.dictrv:
                 return self.dictrv[x.name]
@@ -1428,6 +1943,9 @@ class IVarIndex:
             if x.name in self.dictreal:
                 return self.dictreal[x.name]
             return -1
+        
+    def __contains__(self, other):
+        return self.get_index(other) >= 0
         
     # Get index of name
     def get_index_name(self, name):
@@ -1468,6 +1986,19 @@ class IVarIndex:
             name1 += PsiOpts.settings["rename_char"]
             
         return name1
+    
+    def calc_rename_map(self, a):
+        m = dict()
+        for x in a:
+            xstr = ""
+            if isinstance(x, Comp):
+                xstr = x.get_name()
+            else:
+                xstr = str(x)
+            tname = self.name_avoid(xstr)
+            self.record(Comp.rv(tname))
+            m[xstr] = tname
+        return m
         
 
 class TermType:
@@ -1481,17 +2012,20 @@ class Term:
     Do NOT use this class directly. Use Expr instead
     """
     
-    def __init__(self, x, z, reg = None, sn = 0):
+    def __init__(self, x, z = None, reg = None, sn = 0, fcncall = None, fcnargs = None):
         self.x = x
-        self.z = z
+        if z is None:
+            self.z = Comp.empty()
+        else:
+            self.z = z
         self.reg = reg
         self.sn = sn
+        self.fcncall = fcncall
+        self.fcnargs = fcnargs
         
     def copy(self):
-        if self.reg is None:
-            return Term([a.copy() for a in self.x], self.z.copy(), None, self.sn)
-        else:
-            return Term([a.copy() for a in self.x], self.z.copy(), self.reg.copy(), self.sn)
+        return Term([a.copy() for a in self.x], self.z.copy(), iutil.copy(self.reg), 
+                    self.sn, self.fcncall, iutil.copy(self.fcnargs))
         
     def copy_noreg(self):
         return Term([a.copy_noreg() for a in self.x], self.z.copy_noreg(), None, 0)
@@ -1504,6 +2038,8 @@ class Term:
         self.z = Comp.empty()
         self.reg = None
         self.sn = 0
+        self.fcncall = None
+        self.fcnargs = None
         
     def iszero(self):
         if self.get_type() == TermType.REGION:
@@ -1531,6 +2067,11 @@ class Term:
     def Ic(x, y, z):
         return Term([x.copy(), y.copy()], z.copy())
         
+    def fcn(fcnname, fcncall, fcnargs):
+        cname = fcnname
+        return Term(Comp.real(cname), Comp.empty(), reg = Region.universe(), 
+                    sn = 0, fcncall = fcncall, fcnargs = fcnargs)
+    
     def allcomp(self):
         r = Comp.empty()
         for a in self.x:
@@ -1545,12 +2086,19 @@ class Term:
         r += self.z
         return Comp([a for a in r.varlist if a.vartype == IVarType.RV])
         
+        
+    def get_name(self):
+        return self.allcomp().get_name()
+    
     def size(self):
         r = self.z.size()
         for a in self.x:
             r += a.size()
         return r
         
+    def complexity(self):
+        return (len(self.z) + sum(len(a) for a in self.x)) * 2 + len(self.x) + (not self.z.isempty())
+    
     def get_type(self):
         if self.reg is not None:
             return TermType.REGION
@@ -1603,14 +2151,102 @@ class Term:
             return True
         return False
         
+    def ish(self):
+        if self.get_type() == TermType.IC:
+            if len(self.x) != 1:
+                return False
+            if not self.z.isempty():
+                return False
+            return True
+        return False
+        
     def record_to(self, index):
         if self.get_type() == TermType.REGION:
             index.record(self.reg.allcomprv_noaux())
+            if self.fcnargs is not None:
+                for a in self.fcnargs:
+                    if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                        a.record_to(index)
             
         for a in self.x:
             a.record_to(index)
         self.z.record_to(index)
         
+        
+    
+    def get_shape(self):
+        r = []
+        for a in itertools.chain(self.z, *(self.x)):
+            t = a.get_card()
+            if t is None:
+                raise ValueError("Cardinality of " + str(a) + " not set. Use " + str(a) + ".set_card(m) to set cardinality.")
+                return
+            r.append(t)
+        return tuple(r)
+    
+    
+    def prob(self, *args):
+        """
+        Returns the conditional probability mass function at *args.
+
+        Parameters
+        ----------
+        *args : int
+            The indices to query. E.g. (X+Y|Z).prob(2,3,4) is P(X=3, Y=4 | Z=2).
+        Returns
+        -------
+        r : Expr
+            The conditional probability as an expression.
+
+        """
+        cx = []
+        for a in self.x:
+            cx += list(a)
+        args = tuple(args)
+        name = "P(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_STANDARD) + "=" + str(b)) for a, b in zip(cx, args[len(self.z):])) + "|"
+        name += ",".join((a.tostring(style = PsiOpts.STR_STYLE_STANDARD) + "=" + str(b)) for a, b in zip(self.z, args[:len(self.z)])) + ")"
+        name += "@@" + str(PsiOpts.STR_STYLE_PSITIP) + "@@"
+        name += "(" + "&".join(repr(a) for a in cx) + "|" + repr(self.z) + ")"
+        name += ".prob(" + ",".join(str(b) for b in args) + ")"
+        name += "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@"
+        name += "P(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(cx, args[len(self.z):])) + "|"
+        name += ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(self.z, args[:len(self.z)])) + ")"
+            
+        def fcncall(xdist):
+            return xdist[args]
+    
+        R = Expr.real(name)
+        
+        return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), Region.universe(), 0, fcncall, [self.copy()]))
+    
+        # def fcncall(P):
+        #     return P[self][args]
+    
+        # R = Expr.real(name)
+        
+        # return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), Region.universe(), 0, fcncall, ["model"]))
+    
+    def pmf(self):
+        """ Returns the probability mass function as ExprArray.
+        """
+        shape = self.get_shape()
+        r = ExprArray.zeros(shape)
+        for xs in itertools.product(*[range(x) for x in shape]):
+            r[xs] = self.prob(*xs)
+        return r
+        
+    def fcneval(fcncall, fcnargs):
+        if fcncall == "*":
+            return fcnargs[0] * fcnargs[1]
+        elif fcncall == "/":
+            return fcnargs[0] / fcnargs[1]
+        elif fcncall == "**":
+            return fcnargs[0] ** fcnargs[1]
+        else:
+            return fcncall(*fcnargs)
+    
+    def get_fcneval(self, fcnargs):
+        return Term.fcneval(self.fcncall, fcnargs)
     
     def value(self, method = "", num_iter = 30, prog = None):
         if self.isone():
@@ -1620,6 +2256,9 @@ class Term:
         if self.isinf():
             return float("inf")
         if self.reg is None:
+            return None
+        
+        if self.sn == 0:
             return None
         
         ms = method.split(",")
@@ -1655,6 +2294,29 @@ class Term:
                 return None
             return r[0] * -self.sn
         
+    def get_reg_sgn_bds(self):
+        if self.get_type() != TermType.REGION:
+            return None
+        if self.sn == 0:
+            return None
+        
+        reg = self.reg.copy()
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple()
+        if reg is None:
+            return None
+        
+        sn = self.sn
+        
+        tbds = reg.get_lb_ub_eq(self)
+        reg.eliminate_term(self)
+        reg.simplify_quick()
+        
+        if sn > 0:
+            return (reg, sn, tbds[1])
+        else:
+            return (reg, sn, tbds[0])
+            
     
     def tostring(self, style = 0, tosort = False):
         """Convert to string
@@ -1699,7 +2361,8 @@ class Term:
     
         
     def __str__(self):
-        return self.tostring(PsiOpts.settings["str_style"])
+        return self.tostring(PsiOpts.settings["str_style"],
+                             tosort = PsiOpts.settings["str_tosort"])
     
     def __repr__(self):
         return self.tostring(PsiOpts.STR_STYLE_PSITIP)
@@ -1708,7 +2371,7 @@ class Term:
         #return hash(self.tostring(tosort = True))
         return hash((frozenset(hash(a) for a in self.x), hash(self.z)))
     
-    def simplify(self):
+    def simplify(self, reg = None, bnet = None):
         if self.get_type() == TermType.IC:
             for i in range(len(self.x)):
                 self.x[i] -= self.z
@@ -1725,11 +2388,34 @@ class Term:
                         self.x[i] = None
                         break
             self.x = [a for a in self.x if a is not None]
+            
+            if bnet is not None:
+                for i in range(len(self.x) + 1):
+                    cc = None
+                    if i == len(self.x):
+                        cc = self.z
+                    else:
+                        if len(self.x) == 1:
+                            continue
+                        cc = self.x[i]
+                    j = 0
+                    while j < len(cc.varlist):
+                        if bnet.check_ic(Expr.Ic(cc[j],
+                            sum((self.x[i2] for i2 in range(len(self.x)) if i2 != i), Comp.empty()),
+                            (Comp.empty() if i == len(self.x) else self.z) + 
+                            sum((cc[j2] for j2 in range(len(cc.varlist)) if j2 != j), Comp.empty()))):
+                            
+                            cc.varlist.pop(j)
+                        else:
+                            j += 1
+                        
+                
+                
         return self
     
-    def simplified(self):
+    def simplified(self, reg = None, bnet = None):
         r = self.copy()
-        r.simplify()
+        r.simplify(reg, bnet)
         return r
     
     def match_x(self, other):
@@ -1843,7 +2529,7 @@ class Term:
         
         
     def __and__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if isinstance(other, Comp):
             other = Term.H(other)
@@ -1851,7 +2537,7 @@ class Term:
         
     
     def __or__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if isinstance(other, Comp):
             other = Term.H(other)
@@ -1872,6 +2558,11 @@ class Term:
         if self.get_type() == TermType.REGION:
             if self.reg.ispresent(x):
                 return True
+            if self.fcnargs is not None:
+                for a in self.fcnargs:
+                    if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                        if a.ispresent(x):
+                            return True
         
         xlist = []
         if isinstance(x, str):
@@ -1890,6 +2581,10 @@ class Term:
     def rename_var(self, name0, name1):
         if self.get_type() == TermType.REGION:
             self.reg.rename_var(name0, name1)
+            if self.fcnargs is not None:
+                for a in self.fcnargs:
+                    if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                        a.rename_var(name0, name1)
         for a in self.x:
             a.rename_var(name0, name1)
         self.z.rename_var(name0, name1)
@@ -1899,6 +2594,10 @@ class Term:
         """
         if self.get_type() == TermType.REGION:
             self.reg.rename_map(namemap)
+            if self.fcnargs is not None:
+                for a in self.fcnargs:
+                    if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                        a.rename_var(name0, name1)
         for a in self.x:
             a.rename_map(namemap)
         self.z.rename_map(namemap)
@@ -1908,6 +2607,10 @@ class Term:
         """Substitute variable v0 by v1 (v1 can be compound)"""
         if self.get_type() == TermType.REGION:
             self.reg.substitute(v0, v1)
+            if self.fcnargs is not None:
+                for a in self.fcnargs:
+                    if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                        a.substitute(v0, v1)
         for a in self.x:
             a.substitute(v0, v1)
         self.z.substitute(v0, v1)
@@ -1941,6 +2644,10 @@ class Expr:
         return Expr([(a.copy(), c) for (a, c) in self.terms], self.mhash)
         
         
+    def copy_(self, other):
+        self.terms = [(a.copy(), c) for (a, c) in other.terms]
+        self.mhash = other.mhash
+        
     def copy_noreg(self):
         return Expr([(a.copy_noreg(), c) for (a, c) in self.terms], None)
     
@@ -1951,6 +2658,20 @@ class Expr:
     def fromterm(x):
         return Expr([(x.copy(), 1.0)])
     
+    def fcn(fcncall, name = None):
+        """Wrap any function mapping a ConcModel to a number as an Expr. 
+        E.g. the Hamming distortion is given by 
+        Expr.fcn(lambda P: P[X+Y].mean(lambda x, y: float(x != y))). 
+        For optimization using PyTorch, the return value should be a scalar 
+        torch.Tensor with gradient information.
+        """
+        if name is None:
+            name = "fcn_" + str(iutil.get_count("fcn"))
+        return Expr.fromterm(Term([Comp.real(name)], Comp.empty(), Region.universe(), 0, fcncall, ["model"]))
+    
+    def find_name(self, *args):
+        return self.allcomp().find_name(*args)
+    
     def get_const(self):
         r = 0.0
         for (a, c) in self.terms:
@@ -1960,8 +2681,14 @@ class Expr:
                 return None
         return r
         
+    def get_name(self):
+        return self.allcomp().get_name()
+    
     def __len__(self):
         return len(self.terms)
+    
+    def __bool__(self):
+        return bool(self.terms)
     
     def __getitem__(self, key):
         r = self.terms[key]
@@ -1969,6 +2696,14 @@ class Expr:
             return Expr(r)
         return Expr([r])
         
+        
+    def allcomprealvar(self):
+        r = Comp.empty()
+        for a, c in self.terms:
+            if a.isrealvar() and a.fcncall is None:
+                r += a.x[0]
+        return r
+    
     def __iadd__(self, other):
         if isinstance(other, Comp):
             other = Expr.fromcomp(other)
@@ -1979,7 +2714,7 @@ class Expr:
         return self
         
     def __add__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if isinstance(other, Comp):
             other = Expr.fromcomp(other)
@@ -2009,7 +2744,7 @@ class Expr:
         return self
         
     def __sub__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if isinstance(other, Comp):
             other = Expr.fromcomp(other)
@@ -2030,33 +2765,66 @@ class Expr:
         if isinstance(other, Expr):
             other = other.get_const()
             if other is None:
-                raise ValueError("Multiplication with non-constant expression is not supported.")
+                return self * other
+                # raise ValueError("Multiplication with non-constant expression is not supported.")
         self.terms = [(a, c * other) for (a, c) in self.terms]
         self.mhash = None
         return self
         
     def __mul__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            if other == 0:
+                return Expr.zero()
+            
         if isinstance(other, Expr):
-            other = other.get_const()
-            if other is None:
-                raise ValueError("Multiplication with non-constant expression is not supported.")
+            tother = other.get_const()
+            if tother is None:
+                # raise ValueError("Multiplication with non-constant expression is not supported.")
+                return Expr.fromterm(Term(Comp.real(
+                    iutil.fcn_name_maker("*", [self, other], lname = "\\cdot", infix = True)
+                    ), reg = Region.universe(), fcncall = "*", fcnargs = [self, other]))
+            else:
+                other = tother
         return Expr([(a.copy(), c * other) for (a, c) in self.terms])
         
     def __rmul__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            if other == 0:
+                return Expr.zero()
+            
         if isinstance(other, Expr):
-            other = other.get_const()
-            if other is None:
-                raise ValueError("Multiplication with non-constant expression is not supported.")
+            tother = other.get_const()
+            if tother is None:
+                # raise ValueError("Multiplication with non-constant expression is not supported.")
+                return Expr.fromterm(Term(Comp.real(
+                    iutil.fcn_name_maker("*", [other, self], lname = "\\cdot", infix = True)
+                    ), reg = Region.universe(), fcncall = "*", fcnargs = [other, self]))
+            else:
+                other = tother
         return Expr([(a.copy(), c * other) for (a, c) in self.terms])
         
     def __itruediv__(self, other):
         if isinstance(other, Expr):
-            other = other.get_const()
-            if other is None:
-                raise ValueError("Division with non-constant expression is not supported.")
+            tother = other.get_const()
+            if tother is None:
+                return self / other
+                # raise ValueError("In-place division with non-constant expression is not supported.")
+            else:
+                other = tother
         self.terms = [(a, c / other) for (a, c) in self.terms]
         self.mhash = None
         return self
+    
+    def __pow__(self, other):
+        return Expr.fromterm(Term(Comp.real(
+            iutil.fcn_name_maker("**", [self, other], lname = "^", infix = True, latex_group = True)
+            ), reg = Region.universe(), fcncall = "**", fcnargs = [self, other]))
+        
+    def __ipow__(self, other):
+        return self ** other
+        
+    def __rpow__(self, other):
+        return Expr.const(other) ** self
         
     def record_to(self, index):
         for (a, c) in self.terms:
@@ -2162,6 +2930,10 @@ class Expr:
         
     def real(name):
         """Real variable."""
+        if isinstance(name, IVar):
+            return Expr([(Term([Comp([name])], Comp.empty()), 1.0)])
+        if isinstance(name, Comp):
+            return Expr([(Term([name], Comp.empty()), 1.0)])
         return Expr([(Term([Comp.real(name)], Comp.empty()), 1.0)])
     
         
@@ -2183,6 +2955,71 @@ class Expr:
             return Expr.zero()
         return Expr([(Term([Comp([IVar.one()])], Comp.empty()), float(c))])
     
+    
+    def commonpart_coeff(self, v):
+        r = 0.0
+        for (a, c) in self.terms:
+            if abs(c) <= PsiOpts.settings["eps"]:
+                continue
+            if a.get_type() == TermType.IC:
+                if not isinstance(v, list) and not isinstance(v, tuple):
+                    if not a.z.ispresent(v) and all(t.ispresent(v) for t in a.x):
+                        r += c
+                else:
+                    if all(not t.ispresent(vt) for t in a.x for vt in v):
+                        continue
+                    
+                    # if len(a.x) > 2:
+                    #     return None
+                    
+                    v2 = [vt for vt in v if not a.z.ispresent(vt)]
+                    if len(v2) == 0:
+                        continue
+                    
+                    if any(all(not t.ispresent(vt) for vt in v2) for t in a.x):
+                        continue
+                    
+                    if len(a.x) > 2:
+                        tr = (Expr.fromterm(Term(a.x[1:], a.z)) 
+                              - Expr.fromterm(Term(a.x[1:], a.z+a.x[0]))).commonpart_coeff(v)
+                        if tr is None:
+                            return None
+                        r += c * tr
+                        
+                    else:
+                        for vt in v2:
+                            tpres = [t.ispresent(vt) for t in a.x]
+                            if all(tpres):
+                                r += c * numpy.inf
+                            elif not any(tpres):
+                                break
+                        else:
+                            r += c
+        return r
+        
+        
+    def get_reg_sgn_bds(self):
+        reg = Region.universe()
+        sn = 0
+        bds = []
+        rest = Expr.zero()
+        for (a, c) in self.terms:
+            if abs(c) <= PsiOpts.settings["eps"]:
+                continue
+            t = a.get_reg_sgn_bds()
+            if t is None:
+                rest.terms.append((a, c))
+            else:
+                if sn != 0:
+                    return None
+                reg, sn, bds = t
+                bds = [b * c for b in bds]
+                if c < 0:
+                    sn = -sn
+        
+        return (reg, sn, [b + rest for b in bds])
+        
+        
     def tostring(self, style = 0, tosort = False):
         """Convert to string
         Parameters:
@@ -2223,7 +3060,8 @@ class Expr:
         return r
         
     def __str__(self):
-        return self.tostring(PsiOpts.settings["str_style"])
+        return self.tostring(PsiOpts.settings["str_style"], 
+                             tosort = PsiOpts.settings["str_tosort"])
     
     def __repr__(self):
         if PsiOpts.settings.get("repr_simplify", False):
@@ -2236,6 +3074,17 @@ class Expr:
             self.mhash = hash(tuple(sorted((hash(a), c) for a, c in self.terms)))
             
         return self.mhash
+        
+    def table(self, *args, **kwargs):
+        """Plot the information diagram as a Gray-coded table.
+        """
+        return universe().table(*args, self, **kwargs)
+        
+    def venn(self, *args, **kwargs):
+        """Plot the information diagram as a Venn diagram.
+        Can handle up to 5 random variables (uses Branko Grunbaum's Venn diagram for n=5).
+        """
+        return universe().venn(*args, self, **kwargs)
         
     def isregtermpresent(self):
         for (a, c) in self.terms:
@@ -2259,46 +3108,54 @@ class Expr:
         self.mhash = None
         
     def __le__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Region([other - self], [], Comp.empty(), Comp.empty(), Comp.empty())
         
     def __lt__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Region([other - self - Expr.eps()], [], Comp.empty(), Comp.empty(), Comp.empty())
             
     def __ge__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Region([self - other], [], Comp.empty(), Comp.empty(), Comp.empty())
             
     def __gt__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Region([self - other - Expr.eps()], [], Comp.empty(), Comp.empty(), Comp.empty())
             
     def __eq__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Region([], [self - other], Comp.empty(), Comp.empty(), Comp.empty())
             
     def __ne__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         #return RegionOp.union([self > other, self < other])
         return ~RegionOp.inter([self == other])
         
+    def complexity(self):
+        max_denom = PsiOpts.settings["max_denom"]
+        r = 0
+        for (a, c) in self.terms:
+            frac = fractions.Fraction(c).limit_denominator(max_denom)
+            r += min(abs(frac.numerator) + abs(frac.denominator), 8)
+            r += a.complexity() * 4
+        return r
     
     def get_coeff(self, b):
         """Get coefficient of Term b"""
@@ -2365,6 +3222,7 @@ class Expr:
         
     def symm_sort(self, terms):
         """Sort the random variables in terms assuming symmetry among those terms."""
+        self.mhash = None
         index = IVarIndex()
         terms.record_to(index)
         terms = index.comprv
@@ -2408,17 +3266,29 @@ class Expr:
                 if mul_allowed >= 2:
                     if self.coeff_sum() < 0:
                         denom = -denom
-                if len([(a, c) for (a, c) in self.terms if abs(c * denom - round(c * denom)) > PsiOpts.settings["eps"]]) == 0:
+                if all(abs(c * denom - round(c * denom)) <= PsiOpts.settings["eps"] for (a, c) in self.terms):
                     self.terms = [(a, iutil.float_snap(c * denom)) for (a, c) in self.terms]
             
+            num = None
+            for (a, c) in self.terms:
+                tnum = abs(fractions.Fraction(c).limit_denominator(max_denom).numerator)
+                if tnum == 0:
+                    continue
+                if num is None:
+                    num = tnum
+                else:
+                    num = iutil.gcd(num, tnum)
+            if num is not None and num > 1:
+                self.terms = [(a, iutil.float_snap(c / num)) for (a, c) in self.terms]
+                
     
-    def simplify(self, reg = None):
+    def simplify(self, reg = None, bnet = None):
         """Simplify the expression in place"""
         
         self.mhash = None
         
         for (a, c) in self.terms:
-            a.simplify()
+            a.simplify(reg, bnet)
             
         did = True
         while did:
@@ -2455,10 +3325,10 @@ class Expr:
         return self
 
     
-    def simplified(self, reg = None):
+    def simplified(self, reg = None, bnet = None):
         """Simplify the expression, return simplified expression"""
         r = self.copy()
-        r.simplify(reg)
+        r.simplify(reg, bnet)
         return r
     
     def get_ratio(self, other, skip_simplify = False):
@@ -2509,7 +3379,13 @@ class Expr:
         if isinstance(other, Expr):
             t = other.get_const()
             if t is None:
-                return self.get_ratio(other)
+                t = self.get_ratio(other)
+                if t is not None:
+                    return t
+                else:
+                    return Expr.fromterm(Term(Comp.real(
+                        iutil.fcn_name_maker("/", [self, other], lname = "/", infix = True)
+                        ), reg = Region.universe(), fcncall = "*", fcnargs = [self, other]))
             other = t
         return Expr([(a.copy(), c / other) for (a, c) in self.terms])
         
@@ -2538,6 +3414,17 @@ class Expr:
         self.mhash = None
         return self
 
+    def substitute_rate(self, v0, v1):
+        self.mhash = None
+        for i, v0c in enumerate(v0):
+            if i > 0:
+                self.substitute(v0c, v0[0])
+        c = self.commonpart_coeff(v0[0])
+        self.substitute(v0[0], Comp.empty())
+        if c != 0:
+            self += v1 * c
+        return self
+        
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), in place"""
         self.mhash = None
@@ -2551,6 +3438,8 @@ class Expr:
                         self += v1 * c
                     else:
                         self.terms.append((a, c))
+        elif isinstance(v1, Expr):
+            self.substitute_rate(v0, v1)
         else:
             for (a, c) in self.terms:
                 a.substitute(v0, v1)
@@ -2672,17 +3561,125 @@ class Expr:
 class BayesNet:
     """Bayesian network"""
     
-    def __init__(self):
+    def __init__(self, edges = None):
         self.index = IVarIndex()
         self.parent = []
         self.child = []
         self.fcn = []
         
+        if edges is not None:
+            self += edges
+        
+    def copy(self):
+        r = BayesNet()
+        r.index = self.index.copy()
+        r.parent = [list(x) for x in self.parent]
+        r.child = [list(x) for x in self.child]
+        r.fcn = list(self.fcn)
+        return r
+    
+    def allcomp(self):
+        return self.index.comprv.copy()
+        
+    def get_parents(self, x):
+        """
+        Get the parents of node x.
+
+        Parameters
+        ----------
+        x : Comp
+
+        Returns
+        -------
+        Comp
+
+        """
+        i = self.index.get_index(x)
+        if i < 0:
+            return None
+        return sum((self.index.comprv[x] for x in self.parent[i]), Comp.empty())
+    
+    def get_children(self, x):
+        """
+        Get the children of node x.
+
+        Parameters
+        ----------
+        x : Comp
+
+        Returns
+        -------
+        Comp
+
+        """
+        i = self.index.get_index(x)
+        if i < 0:
+            return None
+        return sum((self.index.comprv[x] for x in self.child[i]), Comp.empty())
+    
+    def get_ancestors(self, x, descendant = False):
+        """
+        Get the ancestors of node x.
+
+        Parameters
+        ----------
+        x : Comp
+
+        Returns
+        -------
+        Comp
+
+        """
+        n = self.index.comprv.size()
+        vis = [False] * n
+        i = self.index.get_index(x)
+        vis[i] = True
+        cstack = [i]
+        r = Comp.empty()
+        while len(cstack):
+            x = cstack.pop()
+            r += self.index.comprv[x]
+            for y in (self.child[x] if descendant else self.parent[x]):
+                if not vis[y]:
+                    vis[y] = True
+                    cstack.append(y)
+        return r
+        
+    def get_descendants(self, x):
+        """
+        Get the descendants of node x.
+
+        Parameters
+        ----------
+        x : Comp
+
+        Returns
+        -------
+        Comp
+
+        """
+        return self.get_ancestors(x, descendant = True)
+    
+    def edges(self):
+        """
+        Generator over the edges of the network.
+
+        Yields
+        ------
+        Pairs of Comp representing the edges.
+        """
+        n = self.index.comprv.size()
+        for i in range(n):
+            for j in self.child[i]:
+                yield (self.index.comprv[i], self.index.comprv[j])
+    
     def add_edge_id(self, i, j):
         if i < 0 or j < 0 or i == j:
             return
-        self.parent[j].append(i)
-        self.child[i].append(j)
+        if i not in self.parent[j]:
+            self.parent[j].append(i)
+        if j not in self.child[i]:
+            self.child[i].append(j)
         
     def remove_edge_id(self, i, j):
         if i < 0 or j < 0 or i == j:
@@ -2709,6 +3706,15 @@ class BayesNet:
             if i >= 0:
                 self.fcn[i] = v
         
+    def is_fcn(self, x, v = True):
+        """Query whether x is a function of their parents."""
+        for xa in x.varlist:
+            i = self.index.get_index(xa)
+            if i >= 0:
+                if not self.fcn[i]:
+                    return False
+        return True
+                
     @fcn_list_to_list
     def add_edge(self, x, y):
         """Add edges from every variable in x to every variable in y.
@@ -2729,10 +3735,34 @@ class BayesNet:
                 
         return y
     
+    def __iadd__(self, other):
+        if isinstance(other, list):
+            for x in other:
+                self += x
+            return self
+        
+        if isinstance(other, tuple):
+            for i in range(len(other) - 1):
+                self.add_edge(other[i], other[i + 1])
+            return self
+        elif isinstance(other, Term):
+            self.add_edge(other.z, other.x[0])
+            return self
+        elif isinstance(other, Comp):
+            self.add_edge(Comp.empty(), other)
+            return self
+        elif isinstance(other, BayesNet):
+            for x, y in other.edges():
+                self.add_edge(x, y)
+            return self
+                
+        return self
+    
     def tsorted(self):
         n = self.index.comprv.size()
         cstack = []
         cnparent = [0] * n
+        nrec = 0
         
         r = BayesNet()
         
@@ -2744,17 +3774,24 @@ class BayesNet:
         while len(cstack) > 0:
             i = cstack.pop()
             r.record(self.index.comprv[i])
+            nrec += 1
             for j in reversed(self.child[i]):
                 if cnparent[j] > 0:
                     cnparent[j] -= 1
                     if cnparent[j] == 0:
                         cstack.append(j)
                         
+        if nrec < n:
+            return None
+        
         for i in range(n):
             for j in self.parent[i]:
                 r.add_edge(self.index.comprv[j], self.index.comprv[i])
         
         return r
+    
+    def iscyclic(self):
+        return self.tsorted() is None
             
     def check_ic_mask(self, x, y, z):
         if x < 0 or y < 0 or z < 0:
@@ -2813,7 +3850,12 @@ class BayesNet:
                 return False
         return True
     
-    def from_ic_inplace(self, icexpr):
+    def from_ic_inplace(self, icexpr, roots = None):
+        n_root = 0
+        if roots is not None:
+            self.record(roots)
+            n_root = self.index.comprv.size()
+            
         ics = []
         for (a, c) in icexpr.terms:
             if a.isic2():
@@ -2835,27 +3877,41 @@ class BayesNet:
                 x0 &= ~z
                 ics.append((x0, -1, z))
         
+        
         n = self.index.comprv.size()
         ics = [(x0, x1 if x1 >= 0 else (1 << n) - 1 - x0 - z, z) for x0, x1, z in ics]
+        
+        numcond = [0] * n
+        for x0, x1, z in ics:
+            for i in range(n):
+                if z & (1 << i):
+                    numcond[i] += 1
+        
+        ilist = list(range(n_root, n))
+        ilist.sort(key = lambda i: numcond[i])
+        
+        n2 = n - n_root
         
         xk = 0
         zk = 0
         vis = 0
         
-        np2 = (1 << n)
+        np2 = (1 << n2)
         dp = [1000000] * np2
         dpi = [-1] * np2
         dped = [-1] * np2
         dp[np2 - 1] = 0
-        for vis in range(np2 - 2, -1, -1):
+        for tvis in range(np2 - 2, -1, -1):
+            vis = (tvis << n_root) | ((1 << n_root) - 1)
             nvis = iutil.bitcount(vis)
-            for i in range(n):
+            for i in ilist:
                 if vis & (1 << i) == 0:
-                    nedge = nvis + dp[vis | (1 << i)]
-                    if nedge < dp[vis]:
-                        dp[vis] = nedge
-                        dpi[vis] = i
-                        dped[vis] = vis
+                    nedge = nvis * (10000 - numcond[i]) + dp[tvis | (1 << (i - n_root))]
+                    # nedge = nvis + dp[tvis | (1 << (i - n_root))]
+                    if nedge < dp[tvis]:
+                        dp[tvis] = nedge
+                        dpi[tvis] = i
+                        dped[tvis] = vis
                     for (x0, x1, z) in ics:
                         if z & ~vis != 0:
                             continue
@@ -2869,27 +3925,28 @@ class BayesNet:
                             continue
                         if vis & ~(zk | xk) != 0:
                             continue
-                        nedge = iutil.bitcount(zk) + dp[vis | (1 << i)]
-                        if nedge < dp[vis]:
-                            dp[vis] = nedge
-                            dpi[vis] = i
-                            dped[vis] = zk
+                        nedge = iutil.bitcount(zk) * (10000 - numcond[i]) + dp[tvis | (1 << (i - n_root))]
+                        # nedge = iutil.bitcount(zk) + dp[tvis | (1 << (i - n_root))]
+                        if nedge < dp[tvis]:
+                            dp[tvis] = nedge
+                            dpi[tvis] = i
+                            dped[tvis] = zk
         
         #for vis in range(np2):
         #    print("{0:b}".format(vis) + " " + str(dp[vis]) + " " + str(dpi[vis]) + " " + "{0:b}".format(dped[vis]))
         cvis = 0
-        for it in range(n):
+        for it in range(n2):
             i = dpi[cvis]
             ed = dped[cvis]
             for j in range(n):
                 if ed & (1 << j) != 0:
                     self.add_edge_id(j, i)
-            cvis |= (1 << i)
+            cvis |= (1 << (i - n_root))
             
     
-    def from_ic(icexpr):
+    def from_ic(icexpr, roots = None):
         r = BayesNet()
-        r.from_ic_inplace(icexpr)
+        r.from_ic_inplace(icexpr, roots)
         return r
     
     def get_ic_sorted(self):
@@ -2947,6 +4004,2088 @@ class BayesNet:
     def __hash__(self):
         return hash(self.tostring())
         
+    def graph(self, tsort = True, shape = "plaintext", lr = True):
+        """Return the graphviz digraph of the network that can be displayed in the console.
+        """
+        if tsort:
+            return self.tsorted().graph(tsort = False, shape = shape, lr = lr)
+        
+        n = self.index.comprv.size()
+        r = graphviz.Digraph()
+        if lr:
+            r.graph_attr["rankdir"] = "LR"
+            
+        for i in range(n):
+            r.node(self.index.comprv[i].get_name(), str(self.index.comprv[i]), shape = shape)
+        
+        for i in range(n):
+            for j in self.parent[i]:
+                r.edge(self.index.comprv[j].get_name(), self.index.comprv[i].get_name())
+        
+        return r
+    
+class ValIndex:
+    def __init__(self, v = None):
+        if v is None:
+            self.v = None
+            self.vmap = {}
+        else:
+            self.v = v
+            self.vmap = {}
+            for i, x in enumerate(v):
+                self.vmap[x] = i
+    
+    def get_index(self, x):
+        return self.vmap.get(x, -1)
+    
+    
+class ConcDist:
+    """Concrete distributions / conditional distributions of random variables."""
+    
+    def convert_shape(x):
+        if x is None:
+            return tuple()
+        if isinstance(x, Comp):
+            return x.get_shape()
+        if isinstance(x, ConcDist):
+            return x.shape_out
+        return tuple(x)
+    
+    def convert_shape_pair(x):
+        if x is None:
+            return (tuple(), tuple())
+        if isinstance(x, Term):
+            return (x.z.get_shape(), sum((t.get_shape() for t in x.x), tuple()))
+        if isinstance(x, Comp) or isinstance(x, ConcDist):
+            return (tuple(), ConcDist.convert_shape(x))
+        if isinstance(x, tuple) and (len(x) == 0 or isinstance(x[0], int)):
+            return (tuple(), tuple(x))
+        return (ConcDist.convert_shape(x[0]), ConcDist.convert_shape(x[1]))
+        
+        
+    
+    def __init__(self, p = None, num_in = None, shape = None, shape_in = None, shape_out = None, isvar = False, randomize = False):
+        self.isvar = isvar
+        self.iscache = False
+            
+        self.v = None
+        
+        # if p is None and shape_in is None and shape_out is None:
+        #     self.p = None
+        #     return
+        
+        if self.isvar and torch is None:
+            raise ImportError("Requires pytorch. Please install it first.")
+            
+        if shape is not None:
+            shape_in, shape_out = ConcDist.convert_shape_pair(shape)
+        
+        if isinstance(p, ConcDist):
+            if num_in is None and shape is None and shape_in is None:
+                num_in = p.get_num_in()
+            p = p.p
+        
+        self.sublens = []
+        
+        if p is None:
+            self.shape_in = ConcDist.convert_shape(shape_in)
+            self.shape_out = ConcDist.convert_shape(shape_out)
+            self.shape = self.shape_in + self.shape_out
+            
+            if randomize:
+                self.randomize()
+            else:
+                self.set_uniform()
+        else:
+            if isinstance(p, list):
+                p = numpy.array(p)
+            self.p = p
+            if num_in is None:
+                if shape_in is not None:
+                    num_in = len(shape_in)
+                else:
+                    num_in = 0
+            tshape = p.shape
+            self.shape_in = tshape[:num_in]
+            self.shape_out = tshape[num_in:]
+            self.shape = self.shape_in + self.shape_out
+            
+            if self.isvar:
+                self.normalize()
+                
+    def istorch(self):
+        return torch is not None and isinstance(self.p, torch.Tensor)
+        
+    def is_placeholder(self):
+        return self.p is None
+    
+    def get_num_in(self):
+        return len(self.shape_in)
+    
+    def card_out(self):
+        r = 1
+        for a in self.shape_out:
+            r *= a
+        return r
+        
+    def __getitem__(self, key):
+        return self.p[key]
+        
+    def __setitem__(self, key, value):
+        self.p[key] = value
+    
+    def copy_(self, other):
+        """Copy content of other to self.
+        """
+        if isinstance(other, ConcDist):
+            self.p = other.p
+        else:
+            self.p = other
+        self.copy_torch()
+    
+    def flattened_sublen(self):
+        shape_its = []
+        shape_out_sub = []
+        c = 0
+        sublens = list(self.sublens) + [len(self.shape_out) - sum(self.sublens)]
+        for l in sublens:
+            shape_out_sub.append(iutil.product(self.shape_out[c:c+l]))
+            c += l
+        shape_out_sub = tuple(shape_out_sub)
+        
+        r = numpy.zeros(self.shape_in + shape_out_sub)
+        if torch is not None and isinstance(self.p, torch.Tensor):
+            r = torch.tensor(r, dtype=torch.float64)
+            
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                ids = []
+                c = 0
+                for l in sublens:
+                    t = 0
+                    for i in range(c, c + l):
+                        t = t * self.shape_out[i] + zs[i]
+                    ids.append(t)
+                    c += l
+                    
+                r[xs + tuple(ids)] = self.p[xs + zs]
+        
+        r = ConcDist(r, num_in = self.get_num_in())
+        r.sublens = [1] * (len(shape_out_sub) - 1)
+        return r
+        
+    
+    def calc_torch(self):
+        if not self.isvar:
+            return
+        card_out = self.card_out()
+        self.p = torch.zeros(self.shape_in + self.shape_out, dtype=torch.float64)
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            s = 0.0
+            ci = 0
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                if ci < card_out - 1:
+                    self.p[xs + zs] = self.v[xs + (ci,)]
+                    s += self.v[xs + (ci,)]
+                else:
+                    self.p[xs + zs] = 1.0 - s
+                ci += 1
+    
+    def copy_torch(self):
+        if not self.isvar:
+            self.v = None
+            return
+        card_out = self.card_out()
+        # self.p = self.p.numpy()
+        if self.v is None:
+            self.v = numpy.zeros(self.shape_in + (card_out - 1,))
+            self.v = torch.tensor(self.v, dtype=torch.float64, requires_grad = True)
+            
+        with torch.no_grad():
+            for xs in itertools.product(*[range(x) for x in self.shape_in]):
+                ci = 0
+                for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                    if ci < card_out - 1:
+                        self.v[xs + (ci,)] = float(self.p[xs + zs])
+                    ci += 1
+        self.calc_torch()
+        
+    def normalize(self):
+        ceps = PsiOpts.settings["eps"]
+        ceps_d = PsiOpts.settings["opt_eps_denom"]
+        
+        card_out = self.card_out()
+        
+        if self.isvar and torch is not None and isinstance(self.p, torch.Tensor):
+            self.p = self.p.detach().numpy()
+        
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            s = 0.0
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                s += self.p[xs + zs]
+            if s > ceps:
+                for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                    self.p[xs + zs] /= s
+            else:
+                for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                    self.p[xs + zs] = 1.0 / card_out
+            
+        self.copy_torch()
+    
+    def clamp(self):
+        if not self.isvar:
+            return
+        
+        ceps = PsiOpts.settings["eps"]
+        ceps_d = PsiOpts.settings["opt_eps_denom"]
+        
+        card_out = self.card_out()
+        
+        vt = self.v.detach().numpy()
+            
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for z in range(card_out - 1):
+                t = vt[xs + (z,)]
+                if numpy.isnan(t):
+                    self.randomize()
+                    return
+                vt[xs + (z,)] = max(t, 0.0)
+                
+            if card_out > 2:
+                while True:
+                    s = 0.0
+                    minpos = 1e20
+                    numpos = 0
+                    for z in range(card_out - 1):
+                        if vt[xs + (z,)] > 0:
+                            s += vt[xs + (z,)]
+                            minpos = min(minpos, vt[xs + (z,)])
+                            numpos += 1
+                    if s <= 1.0 + ceps:
+                        break
+                    tored = (s - 1.0) / numpos
+                    good = False
+                    if tored <= minpos:
+                        good = True
+                    else:
+                        tored = minpos
+                        
+                    for z in range(card_out - 1):
+                        if vt[xs + (z,)] > 0:
+                            vt[xs + (z,)] -= tored
+                    
+                    if good:
+                        break
+                
+            for z in range(card_out - 1):
+                vt[xs + (z,)] = min(vt[xs + (z,)], 1.0)
+                
+            # for z in range(card_out - 1):
+            #     self.v[xs + (z,)] = vt[xs + (z,)]
+        
+        with torch.no_grad():
+            self.v.copy_(torch.tensor(vt, dtype=torch.float64))
+        # self.v.copy_(torch.tensor(vt))
+            
+        # with torch.no_grad():
+        #     for xs in itertools.product(*[range(x) for x in self.shape_in]):
+        #         for z in range(card_out - 1):
+        #             self.v[xs + (z,)] = vt[xs + (z,)]
+        # self.v = torch.tensor(self.v, requires_grad = True)
+        self.calc_torch()
+    
+    def set_uniform(self):
+        card_out = self.card_out()
+            
+        self.p = numpy.ones(self.shape_in + self.shape_out) * (1.0 / card_out)
+        if self.isvar:
+            self.normalize()
+    
+    def randomize(self):
+        self.p = numpy.random.exponential(size = self.shape)
+        self.normalize()
+    
+    def hop(self, prob):
+        if torch is not None and isinstance(self.p, torch.Tensor):
+            self.p = self.p.detach().numpy()
+            
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            if numpy.random.uniform() >= prob:
+                continue
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                self.p[xs + zs] = numpy.random.exponential()
+                
+        self.normalize()
+    
+    def get_p(self):
+        return self.p
+    
+    def get_v(self):
+        return self.v
+    
+    def numpy(self):
+        """Convert to numpy array."""
+        if iutil.istorch(self.p):
+            return self.p.detach().numpy()
+        return self.p
+    
+    def entropy(self):
+        """Entropy of this distribution."""
+        ceps = PsiOpts.settings["eps"]
+        ceps_d = PsiOpts.settings["opt_eps_denom"]
+        loge = PsiOpts.settings["ent_coeff"]
+        istorch = torch is not None and isinstance(self.p, torch.Tensor)
+        
+        r = 0.0
+        for xs in itertools.product(*[range(m) for m in self.shape]):
+            c = self.p[xs]
+            
+            if istorch:
+                r -= c * torch.log((c + ceps_d) / (1.0 + ceps_d)) * loge
+            else:
+                if c > ceps:
+                    r -= c * numpy.log(c) * loge
+        
+        return ConcReal(r)
+    
+    def items(self):
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                yield self.p[xs + zs]
+        
+    
+    def convert(x):
+        if not isinstance(x, ConcDist):
+            x = ConcDist(x)
+        return x
+    
+    def __add__(self, other):
+        other = ConcDist.convert(other)
+        
+        if (self.shape_in, self.shape_out) != (other.shape_in, other.shape_out):
+            raise ValueError("Shape mismatch.")
+            return
+        
+        return ConcDist(self.p + other.p, num_in = self.get_num_in())
+    
+    def __radd__(self, other):
+        return self + other
+    
+    def __mul__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            return ConcDist(self.p * float(other), num_in = self.get_num_in())
+        
+        other = ConcDist.convert(other)
+        
+        if self.shape_in != other.shape_in:
+            raise ValueError("Shape mismatch.")
+            return
+        
+        r = None
+        if torch is not None and (isinstance(self.p, torch.Tensor) or isinstance(other.p, torch.Tensor)):
+            r = torch.zeros(self.shape_in + self.shape_out + other.shape_out, dtype=torch.float64)
+        else:
+            r = numpy.zeros(self.shape_in + self.shape_out + other.shape_out)
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                for ws in itertools.product(*[range(w) for w in other.shape_out]):
+                    r[xs + zs + ws] += self.p[xs + zs] * other.p[xs + ws]
+        return ConcDist(r, num_in = self.get_num_in())
+    
+    def __rmul__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            return self * other
+        other = ConcDist.convert(other)
+        return other * self
+    
+    def __matmul__(self, other):
+        other = ConcDist.convert(other)
+        
+        if self.shape_out != other.shape_in:
+            raise ValueError("Shape mismatch.")
+            return
+        
+        r = None
+        if torch is not None and (isinstance(self.p, torch.Tensor) or isinstance(other.p, torch.Tensor)):
+            r = torch.zeros(self.shape_in + other.shape_out, dtype=torch.float64)
+        else:
+            r = numpy.zeros(self.shape_in + other.shape_out)
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                for ws in itertools.product(*[range(w) for w in other.shape_out]):
+                    r[xs + ws] += self.p[xs + zs] * other.p[zs + ws]
+        return ConcDist(r, num_in = self.get_num_in())
+    
+    
+    def __truediv__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            return ConcDist(self.p * float(1.0 / other), num_in = self.get_num_in())
+        
+        if self.shape_in != other.shape_in:
+            raise ValueError("Shape mismatch.")
+            return
+        
+        cshape_in = self.shape_out[:len(other.shape_out)]
+        if cshape_in != other.shape_out:
+            raise ValueError("Shape mismatch.")
+            return
+        cshape_out = self.shape_out[len(other.shape_out):]
+        
+        ceps = PsiOpts.settings["eps"]
+        ceps_d = PsiOpts.settings["opt_eps_denom"]
+        
+        zsn = 1
+        for k in cshape_out:
+            zsn *= k
+        cepsdzsn = ceps_d / zsn
+        
+        r = None
+        if torch is not None and (isinstance(self.p, torch.Tensor) or isinstance(other.p, torch.Tensor)):
+            r = torch.zeros(self.shape_in + cshape_in + cshape_out, dtype=torch.float64)
+            for xs in itertools.product(*[range(x) for x in self.shape_in]):
+                for zs in itertools.product(*[range(z) for z in cshape_in]):
+                    for ws in itertools.product(*[range(w) for w in cshape_out]):
+                        r[xs + zs + ws] = (self.p[xs + zs + ws] + cepsdzsn) / (other.p[xs + zs] + ceps_d)
+        else:
+            r = numpy.zeros(self.shape_in + cshape_in + cshape_out)
+            for xs in itertools.product(*[range(x) for x in self.shape_in]):
+                for zs in itertools.product(*[range(z) for z in cshape_in]):
+                    if other.p[xs + zs] > ceps:
+                        for ws in itertools.product(*[range(w) for w in cshape_out]):
+                            r[xs + zs + ws] = self.p[xs + zs + ws] / other.p[xs + zs]
+                    else:
+                        for ws in itertools.product(*[range(w) for w in cshape_out]):
+                            r[xs + zs + ws] = 1.0 / zsn
+            
+        return ConcDist(r, num_in = len(self.shape_in + cshape_in))
+            
+    
+    def semidirect(self, other, ids = None):
+        """Semidirect product.
+        """
+        if ids is None:
+            ids = range(len(other.shape_in))
+        r = None
+        if torch is not None and (isinstance(self.p, torch.Tensor) or isinstance(other.p, torch.Tensor)):
+            r = torch.zeros(self.shape_in + self.shape_out + other.shape_out, dtype=torch.float64)
+        else:
+            r = numpy.zeros(self.shape_in + self.shape_out + other.shape_out)
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                for ws in itertools.product(*[range(w) for w in other.shape_out]):
+                    r[xs + zs + ws] = self.p[xs + zs] * other.p[tuple(zs[i] for i in ids) + ws]
+        return ConcDist(r, num_in = self.get_num_in())
+        
+    
+    def marginal(self, *args):
+        """
+        Marginal distribution.
+
+        Parameters
+        ----------
+        *args : int
+            Indices of the random variables of interest. E.g. for P(Y0,Y1,Y2|X),
+            P.marginal(0,2) gives P(Y0,Y2|X)
+
+        Returns
+        -------
+        ConcDist
+            The marginal distribution.
+
+        """
+        ids = args
+        if isinstance(ids, int):
+            ids = [ids]
+        r = None
+        cshape = tuple(self.shape_out[i] for i in ids)
+        if torch is not None and isinstance(self.p, torch.Tensor):
+            r = torch.zeros(self.shape_in + cshape, dtype=torch.float64)
+        else:
+            r = numpy.zeros(self.shape_in + cshape)
+        
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in cshape]):
+                wrange = [range(w) for w in self.shape_out]
+                for i in range(len(cshape)):
+                    if len(wrange[ids[i]]) == 1 and wrange[ids[i]][0] != zs[i]:
+                        break
+                    wrange[ids[i]] = [zs[i]]
+                else:
+                    for ws in itertools.product(*wrange):
+                        r[xs + zs] += self.p[xs + ws]
+                        
+        return ConcDist(r, num_in = self.get_num_in())
+        
+    
+    def reorder(self, ids):
+        r = None
+        cshape = tuple(self.shape_out[i] for i in ids)
+        if torch is not None and isinstance(self.p, torch.Tensor):
+            r = torch.zeros(self.shape_in + cshape, dtype=torch.float64)
+        else:
+            r = numpy.zeros(self.shape_in + cshape)
+        
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                r[xs + tuple(zs[ids[i]] for i in range(len(ids)))] = self.p[xs + zs]
+                        
+        return ConcDist(r, num_in = self.get_num_in())
+        
+    
+    def given(self, *args):
+        """
+        For a conditional distribution P(Y|X), give the distribution P(Y|X=x).
+
+        Parameters
+        ----------
+        *args : int or None.
+            The values to substitute to X.
+            Must have the same number of arguments as the number of random variables
+            conditioned. Arguments are either int (value of RV) or None if the RV
+            is not substituted.
+
+        Returns
+        -------
+        ConcDist
+            The distribution after substitution.
+
+        """
+        r = None
+        cshape = tuple(self.shape_in[i] for i in range(len(self.shape_in)) if args[i] is None)
+        if torch is not None and isinstance(self.p, torch.Tensor):
+            r = torch.zeros(cshape + self.shape_out, dtype=torch.float64)
+        else:
+            r = numpy.zeros(cshape + self.shape_out)
+        
+        for xs in itertools.product(*[range(x) for x in cshape]):
+            xs2 = [0] * len(self.shape_in)
+            xsi = 0
+            for i in range(len(self.shape_in)):
+                if args[i] is None:
+                    xs2[i] = xs[xsi]
+                    xsi += 1
+                else:
+                    xs2[i] = args[i]
+            xs2 = tuple(xs2)
+            
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                r[xs + zs] = self.p[xs2 + zs]
+                        
+        return ConcDist(r, num_in = len(cshape))
+        
+        
+    
+    def mean(self, f = None):
+        """
+        Returns the expectation of the function f.
+
+        Parameters
+        ----------
+        f : function, numpy.array or torch.Tensor
+            If f is a function, the number of arguments must match the number of
+            dimensions (random variables) of the joint distribution.
+            If f is an array or tensor, shape must match the shape of the 
+            distribution.
+        Returns
+        -------
+        r : float or torch.Tensor
+            The expectation. Type is torch.Tensor if self or f is torch.Tensor.
+
+        """
+        
+        if f is None:
+            f = lambda x: x
+        
+        r = None
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                if callable(f):
+                    t = self.p[xs + zs] * f(*(xs + zs))
+                else:
+                    t = self.p[xs + zs] * f[xs + zs]
+                if r is not None:
+                    r += t
+                else:
+                    r = t
+        return r
+            
+        
+    def __str__(self):
+        return str(self.p)
+    
+    def __repr__(self):
+        r = ""
+        r += "ConcDist("
+        t = repr(self.p)
+        if t.find("\n") >= 0:
+            r += "\n"
+        r += t
+        if self.get_num_in() > 0:
+            r += ", num_in=" + str(self.get_num_in())
+        r += ")"
+        return r
+        
+    def uniform(n, isvar = False):
+        """n-ary uniform distribution."""
+        return ConcDist(numpy.ones(n) / n, isvar = isvar)
+        
+    def bit(isvar = False):
+        """Fair bit."""
+        return ConcDist.uniform(2, isvar = isvar)
+        
+    def bern(a, isvar = False):
+        """Bernoulli distribution."""
+        return ConcDist([1.0 - a, a], isvar = isvar)
+    
+    def random(n, isvar = False):
+        """n-ary random distribution."""
+        r = ConcDist(numpy.ones(n) / n, isvar = isvar)
+        r.randomize()
+        return r
+        
+    def symm_chan(n, crossover, isvar = False):
+        """n-ary symmetric channel."""
+        a = 1.0 - crossover
+        b = crossover / (n - 1)
+        return ConcDist(numpy.ones((n, n)) * b + numpy.eye(n) * (a - b), num_in = 1, isvar = isvar)
+        
+    def bsc(crossover, isvar = False):
+        """Binary symmetric channel."""
+        return ConcDist.symm_chan(2, crossover, isvar = isvar)
+        
+    def bin_chan(cross01, cross10, isvar = False):
+        """Binary channel."""
+        return ConcDist([[1.0 - cross01, cross01], [cross10, 1.0 - cross10]], num_in = 1, isvar = isvar)
+    
+    def erasure_chan(n, er_prob, isvar = False):
+        """n-ary erasure channel."""
+        return ConcDist(numpy.hstack([numpy.eye(n) * (1.0 - er_prob), 
+                                      numpy.ones((n, 1)) * er_prob]), num_in = 1, isvar = isvar)
+        
+    def bec(er_prob, isvar = False):
+        """Binary erasure channel."""
+        return ConcDist.erasure_chan(2, er_prob, isvar = isvar)
+    
+    
+class ConcReal:
+    """Concrete real variable."""
+    
+    def __init__(self, x = None, lbound = None, ubound = None, scale = 1.0, isvar = False, isint = False, randomize = False):
+        self.isvar = isvar
+        self.isint = isint
+        
+        if self.isvar and torch is None:
+            raise ImportError("Requires pytorch. Please install it first.")
+        
+        if x is None:
+            x = 0.0
+        if isinstance(x, int):
+            x = float(x)
+            
+        if isinstance(x, ConcReal):
+            x = x.x
+            
+        if isinstance(lbound, int):
+            lbound = float(lbound)
+        if isinstance(ubound, int):
+            ubound = float(ubound)
+        if isinstance(scale, int):
+            scale = float(scale)
+            
+        self.x = x
+        self.v = None
+        self.lbound = lbound
+        self.ubound = ubound
+        self.scale = scale
+        
+        self.copy_torch()
+        
+        if randomize:
+            self.randomize()
+    
+    def const(x = 0.0):
+        """Constant.
+        """
+        return ConcReal(x, x, x)
+    
+    def convert(x):
+        if isinstance(x, int) or isinstance(x, float):
+            x = ConcReal.const(x)
+        elif not isinstance(x, ConcReal):
+            x = ConcReal(x)
+        return x
+    
+    def calc_torch(self):
+        if self.isvar:
+            self.x = self.v
+        
+    def copy_torch(self):
+        if self.isvar:
+            if self.v is None:
+                self.v = torch.tensor(self.x, dtype=torch.float64, requires_grad = True)
+            with torch.no_grad():
+                self.v.copy_(torch.tensor(self.x, dtype=torch.float64))
+            self.x = self.v
+        
+    def copy_(self, other):
+        """Copy content of other to self.
+        """
+        if isinstance(other, int):
+            other = float(other)
+        if isinstance(other, ConcReal):
+            self.x = other.x
+        else:
+            self.x = other
+        self.copy_torch()
+            
+    def __add__(self, other):
+        other = ConcReal.convert(other)
+        
+        return ConcReal(self.x + other.x, 
+                        None if self.lbound is None or other.lbound is None else self.lbound + other.lbound,
+                        None if self.ubound is None or other.ubound is None else self.ubound + other.ubound,
+                        self.scale + other.scale)
+    
+    def __radd__(self, other):
+        return self + other
+    
+    def __mul__(self, other):
+        other = ConcReal.convert(other)
+        lbound = None
+        ubound = None
+        for a in [self.lbound, self.ubound]:
+            for b in [other.lbound, other.ubound]:
+                if a is not None and b is not None:
+                    t = a * b
+                    if lbound is None or lbound > t:
+                        lbound = t
+                    if ubound is None or ubound < t:
+                        ubound = t
+                    
+        return ConcReal(self.x * other.x, lbound, ubound, self.scale * other.scale)
+    
+    def __rmul__(self, other):
+        return self * other
+    
+    def __sub__(self, other):
+        return self + other * -1
+    
+    def __rsub__(self, other):
+        return other + self * -1
+    
+    def __neg__(self):
+        return self * -1
+    
+    def __truediv__(self, other):
+        return self * (1 / other)
+    
+    def __rtruediv__(self, other):
+        if (isinstance(other, int) or isinstance(other, float)) and other > 0:
+            other = float(other)
+            lbound = None
+            ubound = None
+            if self.lbound is not None and self.lbound > 0:
+                ubound = other / self.lbound
+                if self.ubound is not None:
+                    lbound = other / self.ubound
+            if self.ubound is not None and self.ubound < 0:
+                lbound = other / self.ubound
+                if self.lbound is not None:
+                    ubound = other / self.lbound
+                    
+            return ConcReal(other / self.x, lbound, ubound, other / self.scale)
+        
+        return other * (1 / self)
+    
+    def clamp(self):
+        if not self.isvar:
+            return
+        
+        vt = float(self.v.detach().numpy())
+        
+        if numpy.isnan(vt):
+            self.randomize()
+            return
+        
+        if self.lbound is not None and vt < self.lbound:
+            vt = self.lbound
+        if self.ubound is not None and vt > self.ubound:
+            vt = self.ubound
+        if self.isint:
+            vt = round(vt)
+            
+        with torch.no_grad():
+            self.v.copy_(torch.tensor(vt, dtype=torch.float64))
+    
+    def randomize(self):
+        if self.lbound is None or self.ubound is None:
+            self.x = numpy.random.exponential() * self.scale
+            if self.ubound is not None:
+                self.x = self.ubound - self.x
+            elif self.lbound is not None:
+                self.x = self.lbound + self.x
+            else:
+                if numpy.random.uniform() < 0.5:
+                    self.x *= -1
+        else:
+            self.x = numpy.random.uniform(self.lbound, self.ubound)
+            
+        self.copy_torch()
+        
+    
+    def hop(self, prob):
+        if numpy.random.uniform() < prob:
+            self.randomize()
+    
+    def get_x(self):
+        return self.x
+    
+    def get_v(self):
+        return self.v
+    
+    def __float__(self):
+        return float(self.x)
+    
+    def __int__(self):
+        return int(round(float(self.x)))
+    
+    def __str__(self):
+        return str(self.x)
+    
+    def __repr__(self):
+        r = ""
+        r += "ConcReal("
+        r += str(self.x)
+        if self.lbound is not None:
+            r += ", lbound=" + str(self.lbound)
+        if self.ubound is not None:
+            r += ", ubound=" + str(self.ubound)
+        r += ")"
+        return r
+    
+    
+class RealRV:
+    """Discrete real-valued random variable."""
+    
+    def __init__(self, x, fcn = None, supp = None):
+        self.comp = x
+        self.fcn = fcn
+        self.supp = supp
+    
+    @property
+    def x(self):
+        return self.comp
+    
+    
+class ConcModel:
+    """Concrete distributions of random variables and values of real variables."""
+    
+    def __init__(self, bnet = None, istorch = None):
+        if istorch is None:
+            self.istorch = PsiOpts.settings["istorch"]
+        else:
+            self.istorch = istorch
+            
+        if bnet is None:
+            self.bnet = BayesNet()
+        else:
+            self.bnet = bnet
+        v = self.bnet.index.comprv
+        n = len(v)
+        # self.ps = [None] * n
+        
+        self.psmap = {}
+        self.psmap_cache = {}
+        self.psv = [None] * n
+        self.psmap_mask = {}
+        
+        self.card = [None] * n
+        self.pt = None
+        
+        self.index_real = IVarIndex()
+        self.reals = []
+        
+    def copy_shallow(self):
+        r = ConcModel()
+        r.istorch = self.istorch
+        r.bnet = self.bnet.copy()
+        r.psmap = dict(self.psmap)
+        r.psmap_cache = dict(self.psmap_cache)
+        r.psv = list(self.psv)
+        r.psmap_mask = dict(self.psmap_mask)
+        r.card = list(self.card)
+        r.index_real = self.index_real.copy()
+        r.reals = list(self.reals)
+        return r
+        
+    def set_real(self, x, v):
+        if v == "var":
+            self.set_real(x, ConcReal(isvar = True))
+            return
+        if v == "var_rand":
+            self.set_real(x, ConcReal(isvar = True, randomize = True))
+            return
+        
+        if isinstance(x, Expr):
+            x = x.allcomp()
+        x.record_to(self.index_real)
+        i = self.index_real.get_index(x)
+        
+        while len(self.reals) < len(self.index_real.compreal):
+            self.reals.append(None)
+        self.reals[i] = v
+        
+    def get_real(self, x):
+        if isinstance(x, Expr):
+            x = x.allcomp()
+        i = self.index_real.get_index(x)
+        if i < 0:
+            return None
+        return self.reals[i]
+        
+    def clear_cache(self):
+        self.pt = None
+        # self.psmap = {key: item for key, item in self.psmap.items() if not item.iscache}
+        self.psmap_mask = {}
+        self.psmap_cache = {}
+        
+    def comp_to_tuple(self, x):
+        r = []
+        for a in x:
+            t = self.bnet.index.get_index(a)
+            if t < 0:
+                return None
+            r.append(t)
+        return tuple(r)
+        
+    def comp_to_pair(self, x):
+        if isinstance(x, Term):
+            return (self.comp_to_tuple(x.z), 
+                    sum((self.comp_to_tuple(t) for t in x.x), tuple()))
+        elif isinstance(x, Comp):
+            return (tuple(), self.comp_to_tuple(x))
+        else:
+            return (self.comp_to_tuple(x[0]), self.comp_to_tuple(x[1]))
+        
+        
+    def comp_get_sublens(self, x):
+        if isinstance(x, Term):
+            r = [len(a) for a in x.x]
+            r.pop()
+            return r
+        return []
+        
+    def set_prob(self, x, p):
+        if p == "var":
+            self.set_prob(x, ConcDist(shape = x, isvar = True))
+            return
+        if p == "var_rand":
+            self.set_prob(x, ConcDist(shape = x, isvar = True, randomize = True))
+            return
+        
+        self.bnet += x
+        cin, cout = self.comp_to_pair(x)
+        
+        if isinstance(p, list):
+            p = numpy.array(p)
+            
+        shape = p.shape
+        if len(shape) != len(cin) + len(cout):
+            raise ValueError("Number of dimensions of prob. table = " + str(len(shape)) 
+                              + " does not match number of variables = " + str(len(cin) + len(cout)) + ".")
+            return
+        for j in range(len(cin + cout)):
+            t = self.get_card_id((cin + cout)[j])
+            if t is not None and t != shape[j]:
+                raise ValueError("Length of dimension " + str(self.bnet.index.comprv[(cin + cout)[j]]) + " of prob. table = " + str(shape[j]) 
+                                  + " does not match its cardinality = " + str(t) + ".")
+                return
+            
+        while len(self.card) < len(self.bnet.index.comprv):
+            self.card.append(None)
+        while len(self.psv) < len(self.bnet.index.comprv):
+            self.psv.append(None)
+            
+        for j in range(len(cin + cout)):
+            self.card[(cin + cout)[j]] = shape[j]
+        
+        if not isinstance(p, ConcDist):
+            p = ConcDist(p, num_in = len(cin))
+        
+        self.psmap[(cin, cout)] = p
+        for k in cout:
+            self.psv[k] = (cin, cout)
+        self.clear_cache()
+        
+    def get_prob_mask(self, mask):
+        t = self.psmap_mask.get(mask, None)
+        if t is not None:
+            return t
+        
+        n = len(self.bnet.index.comprv)
+        k = 0
+        while (1 << (k + 1)) <= mask:
+            k += 1
+            
+        if self.psv[k] is None:
+            raise ValueError("Random variable " + str(self.bnet.index.comprv[k]) + " has unspecified distribution.")
+            return
+            
+        tin, tout = self.psv[k]
+        tp = self.psmap[(tin, tout)]
+        
+        tin_mask = 0
+        for a in tin:
+            tin_mask |= 1 << a
+        tout_mask = 0
+        for a in tout:
+            tout_mask |= 1 << a
+        
+        mask1 = (mask | tin_mask) & ~tout_mask
+        
+        p2 = None
+        
+        if mask1 > 0:
+            p1 = self.get_prob_mask(mask1)
+            p2 = p1.semidirect(tp, [iutil.bitcount(mask1 & ((1 << i) - 1)) for i in tin])
+        else:
+            p2 = tp
+        
+        idinv = [None] * n
+        ci = 0
+        for i in range(n):
+            if mask1 & (1 << i):
+                idinv[i] = ci
+                ci += 1
+        for i in tout:
+            idinv[i] = ci
+            ci += 1
+        
+        p3 = p2.marginal(*[idinv[i] for i in range(n) if mask & (1 << i)])
+        self.psmap_mask[mask] = p3
+        return p3
+        
+    def get_prob_pair(self, cin, cout):
+        t = self.psmap.get((cin, cout), None)
+        if t is not None:
+            return t
+        t = self.psmap_cache.get((cin, cout), None)
+        if t is not None:
+            return t
+        
+        istorch = self.istorch
+        
+        cinlen = [self.get_card_id(i) for i in cin]
+        coutlen = [self.get_card_id(i) for i in cout]
+        cin_mask = 0
+        for a in cin:
+            cin_mask |= 1 << a
+        cout_mask = 0
+        for a in cout:
+            cout_mask |= 1 << a
+        
+        
+        p1 = self.get_prob_mask(cin_mask | cout_mask)
+        p1 = p1.reorder([iutil.bitcount((cin_mask | cout_mask) & ((1 << i) - 1)) for i in cin + cout])
+        
+        r = None
+        if cin_mask != 0:
+            p0 = self.get_prob_mask(cin_mask)
+            p0 = p0.reorder([iutil.bitcount(cin_mask & ((1 << i) - 1)) for i in cin])
+            r = p1 / p0
+        else:
+            r = p1
+            
+        self.psmap_cache[(cin, cout)] = r
+        return r
+        
+        
+    def get_prob(self, x):
+        cin, cout = self.comp_to_pair(x)
+        if cin is None or cout is None:
+            raise ValueError("Some random variables are absent in the model.")
+            return
+        r = self.get_prob_pair(cin, cout)
+        if isinstance(r, ConcDist):
+            r.sublens = self.comp_get_sublens(x)
+        return r
+        
+    
+    def get_card_id(self, i):
+        if i >= len(self.card):
+            return None
+        return self.card[i]
+    
+    def get_card(self, x):
+        i = self.bnet.index.get_index(x)
+        if i < 0:
+            return None
+        return self.get_card_id(i)
+        
+                
+    def get_H(self, x):
+        p = self.get_prob(x)
+        return p.entropy().x
+        
+    def get_region(self):
+        return self.bnet.get_region()
+        
+    def allcomprv(self):
+        return self.bnet.index.comprv.copy()
+    
+    def allcompreal(self):
+        return self.index_real.compreal.copy()
+    
+    def allcomp(self):
+        return self.allcomprv() + self.allcompreal()
+    
+    def add_reg(self, reg):
+        varlist = []
+        cons = Region.universe()
+        
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple()
+            if reg is None:
+                raise ValueError("User-defined information quantities with RegionOp constraints cannot be optimized.")
+                return None
+            
+        card0 = PsiOpts.settings["opt_aux_card"]
+        
+        reg.simplify_quick(zero_group = 0)
+        
+        reg.iand_norename(reg.completed_semigraphoid(max_iter = 10000))
+        
+        tbnet = reg.get_bayesnet(roots = self.bnet.index.comprv.inter(reg.allcomprv()), 
+                                 skip_simplify = True)
+        # print(tbnet)
+        
+        for a in tbnet.index.comprv:
+            if self.bnet.index.get_index(a) >= 0:
+                continue
+            ccard = a.get_card()
+            if ccard is None:
+                ccard = card0
+            pa = tbnet.get_parents(a)
+            # print(pa)
+            
+            p = ConcDist(shape = (tuple(self.get_card(t) for t in pa), (ccard,)), isvar = True, randomize = True)
+            self[a | pa] = p
+            varlist.append(p)
+            
+        for a in reg.allcomprealvar_exprlist():
+            if self.get_real(a) is None:
+                t = ConcReal(isvar = True)
+                self[a] = t
+                varlist.append(t)
+            
+        csreg = self.get_region() & cons
+        for ineq in reg:
+            if not csreg.implies(ineq):
+                cons &= ineq
+        
+        return (varlist, cons)
+    
+        
+    def get_val_regterm(self, term, esgn):
+        
+        if term.fcncall is not None:
+            cargs = []
+            for a in term.fcnargs:
+                if isinstance(a, Term) or isinstance(a, Comp):
+                    cargs.append(self.get_prob(a))
+                elif isinstance(a, Expr):
+                    cargs.append(self.get_val(a, 0))
+                elif isinstance(a, Region):
+                    cargs.append(1 if self[a] else 0)
+                elif a == "model":
+                    cargs.append(self)
+                else:
+                    cargs.append(a)
+            return term.get_fcneval(cargs)
+        
+        
+        t = term.get_reg_sgn_bds()
+        
+        if t is None:
+            return None
+        reg, sgn, bds = t
+        
+        if len(bds) == 0:
+            return None
+        
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple()
+            if reg is None:
+                raise ValueError("User-defined information quantities with RegionOp constraints cannot be optimized.")
+                return None
+        
+        rcomp = reg.allcomprv()
+        for b in bds:
+            rcomp += b.allcomprv_shallow()
+            
+        if self.bnet.index.comprv.super_of(rcomp):
+            r = numpy.inf
+            for b in bds:
+                t = self.get_val(b, esgn * sgn) * sgn
+                if float(t) < float(r):
+                    r = t
+            return r * sgn
+        
+        card0 = PsiOpts.settings["opt_aux_card"]
+        
+        reg.simplify_quick(zero_group = 0)
+        
+        cs = self.copy_shallow()
+        
+        varlist, cons = cs.add_reg(reg)
+        
+        tvar = None
+        if len(bds) == 1:
+            tvar = bds[0]
+        else:
+            tvar = Expr.real("#TVAR_" + term.get_name())
+            tvar_r = ConcReal(isvar = True, randomize = True)
+            cs[tvar] = tvar_r
+            varlist.append(tvar_r)
+            for b in bds:
+                cons &= tvar * sgn <= b * sgn
+        
+        return cs.optimize(tvar, varlist, cons, sgn = sgn)
+        
+    
+    def get_val(self, expr, esgn = 0):
+        
+        r = 0.0
+        for (a, c) in expr.terms:
+            
+            termType = a.get_type()
+            if termType == TermType.IC:
+                k = len(a.x)
+                for t in range(1 << k):
+                    csgn = -1;
+                    mask = self.bnet.index.get_mask(a.z)
+                    for i in range(k):
+                        if (t & (1 << i)) != 0:
+                            csgn = -csgn
+                            mask |= self.bnet.index.get_mask(a.x[i])
+                    if mask != 0:
+                        # r += self.get_H_mask(mask) * csgn * c
+                        r += self.get_H(self.bnet.index.from_mask(mask)) * csgn * c
+            elif termType == TermType.REAL or termType == TermType.REGION:
+                if a.isone():
+                    r += c
+                else:
+                    t = self.get_real(a.x[0])
+                    
+                    if t is None:
+                        if termType == TermType.REGION:
+                            t = self.get_val_regterm(a, esgn * (1 if c > 0 else -1))
+                        if t is None:
+                            return None
+                    if isinstance(t, ConcReal):
+                        t = t.x
+                    r += t * c
+        
+        return ConcReal(r)
+        
+    
+    def __call__(self, x):
+        if isinstance(x, Expr):
+            return self.get_val(x)
+        
+        elif isinstance(x, ExprArray):
+            if self.istorch:
+                # r = torch.tensor([self[a] for a in x], dtype=torch.float64)
+                # return torch.reshape(r, x.shape)
+                r = torch.hstack(tuple(iutil.ensure_torch(self[a]) for a in x))
+                return torch.reshape(r, x.shape)
+            else:
+                r = numpy.array([self[a] for a in x])
+                return numpy.reshape(r, x.shape)
+            
+        elif isinstance(x, Region):
+            return x.evalcheck(self)
+        
+        return None
+    
+    def __getitem__(self, x):
+        if isinstance(x, tuple) or isinstance(x, Comp) or isinstance(x, Term):
+            return self.get_prob(x)
+        if isinstance(x, CompArray):
+            return self.get_prob(x.get_term())
+        if isinstance(x, Expr) and len(x) == 1:
+            a, c = x.terms[0]
+            if c == 1:
+                termType = a.get_type()
+                if termType == TermType.REAL or termType == TermType.REGION:
+                    t = self.get_real(a.x[0])
+                    if t is not None:
+                        return t
+        return self(x)
+    
+    def __setitem__(self, key, value):
+        if isinstance(key, Expr):
+            self.set_real(key.allcomp(), value)
+        else:
+            self.set_prob(key, value)
+    
+    def convert_torch_tensors(self, x):
+        r = []
+        r_dist = []
+        if isinstance(x, list):
+            for a in x:
+                tr, tdist = self.convert_torch_tensors(a)
+                r += tr
+                r_dist += tdist
+        elif torch is not None and isinstance(x, torch.Tensor):
+            r.append(x)
+        elif isinstance(x, Comp):
+            for a in x:
+                i = self.bnet.index.get_index(x)
+                if i >= 0:
+                    tr, tdist = self.convert_torch_tensors(self.ps[i])
+                    r += tr
+                    r_dist += tdist
+        elif isinstance(x, Expr):
+            t = self.get_real(x)
+            if t is not None:
+                tr, tdist = self.convert_torch_tensors(t)
+                r += tr
+                r_dist += tdist
+        elif isinstance(x, ConcDist) or isinstance(x, ConcReal):
+            t = x.get_v()
+            if t is not None and torch is not None and isinstance(t, torch.Tensor):
+                r.append(t)
+                r_dist.append(x)
+        return (r, r_dist)
+    
+    def tensor_copy_list(x, y):
+        with torch.no_grad():
+            for i in range(len(y)):
+                if len(x) <= i:
+                    x.append(y[i].detach().clone())
+                else:
+                    x[i].copy_(y[i])
+                    
+    def get_tensor(self, x):
+        r = None
+        if isinstance(x, Expr):
+            r = self.get_val(x)
+        else:
+            r = x(self)
+        if isinstance(r, ConcReal):
+            r = r.x
+        return r
+    
+    def tensor_list_to_array(varlist):
+        r = []
+        for v in varlist:
+            k = functools.reduce(lambda x, y: x*y, v.shape, 1)
+            r += list(numpy.reshape(v.detach().numpy(), (k,)))
+            
+        for i in range(len(r)):
+            if numpy.isnan(r[i]):
+                r[i] = 0.0
+                
+        return numpy.array(r)
+    
+    
+    def tensor_list_grad_to_array(varlist):
+        r = []
+        for v in varlist:
+            k = functools.reduce(lambda x, y: x*y, v.shape, 1)
+            if v.grad is None:
+                r += [0.0 for i in range(k)]
+            else:
+                r += list(numpy.reshape(v.grad.numpy(), (k,)))
+            
+        for i in range(len(r)):
+            if numpy.isnan(r[i]):
+                r[i] = 0.0
+                
+        return numpy.array(r)
+    
+    
+    def tensor_list_from_array(varlist, a):
+        c = 0
+        for v in varlist:
+            k = functools.reduce(lambda x, y: x*y, v.shape, 1)
+            with torch.no_grad():
+                v.copy_(torch.tensor(numpy.reshape(a[c:c+k], v.shape), dtype=torch.float64))
+            if v.grad is not None:
+                v.grad.data.zero_()
+            c += k
+    
+    
+    def tensor_list_get_bds(varlist, distlist, ismat):
+        c = 0
+        cons = []
+        num_cons = 0
+        cons_A_data = []
+        cons_A_r = []
+        cons_A_c = []
+        xsize = 0
+        for v in varlist:
+            k = functools.reduce(lambda x, y: x*y, v.shape, 1)
+            xsize += k
+            
+        bds = [(-numpy.inf, numpy.inf) for i in range(xsize)]
+            
+        for v in varlist:
+            k = functools.reduce(lambda x, y: x*y, v.shape, 1)
+            for d in distlist:
+                if d.get_v() is v:
+                    if isinstance(d, ConcDist):
+                        
+                        stride = functools.reduce(lambda x, y: x*y, d.shape_out, 1) - 1
+                        
+                        if stride >= 2:
+                            for c2 in range(c, c+k, stride):
+                                if ismat:
+                                    cons_A_data += [1.0] * stride
+                                    cons_A_r += [num_cons] * stride
+                                    cons_A_c += list(range(c2, c2+stride))
+                                    num_cons += 1
+                                else:
+                                    def get_fcn(i0, i1):
+                                        def fcn(x):
+                                            return 1.0 - sum(x[i0: i1])
+                                        return fcn
+                                    def get_jac(i0, i1):
+                                        def fcn(x):
+                                            r = numpy.zeros(xsize)
+                                            r[i0:i1] = -numpy.ones(i1-i0)
+                                            return r
+                                        return fcn
+                                    cons.append({
+                                        "type": "ineq",
+                                        "fun": get_fcn(c2, c2+stride),
+                                        "jac": get_jac(c2, c2+stride)
+                                        })
+                            
+                        for i in range(c, c+k):
+                            bds[i] = (0.0, 1.0)
+                            
+                    elif isinstance(d, ConcReal):
+                        if d.lbound is not None or d.ubound is not None:
+                            bds[c] = (-np.inf if d.lbound is None else d.lbound,
+                                      np.inf if d.ubound is None else d.ubound)
+                            
+                    break
+                    
+            c += k
+        
+        if ismat:
+            if num_cons == 0:
+                return (bds, [])
+            # mat = scipy.sparse.csr_matrix((cons_A_data, (cons_A_r, cons_A_c)), shape = (num_cons, xsize))
+            mat = scipy.sparse.coo_matrix((cons_A_data, (cons_A_r, cons_A_c)), shape = (num_cons, xsize)).toarray()
+            lcons = scipy.optimize.LinearConstraint(mat, -numpy.inf, 1.0)
+            return (bds, [lcons])
+        else:
+            return (bds, cons)
+    
+            
+    
+    def optimize(self, expr, vs, reg = None, sgn = 1, optimizer = None, learnrate = None, learnrate2 = None,
+                 momentum = None, num_iter = None, num_iter2 = None, num_points = None, 
+                 num_hop = None, hop_temp = None, hop_prob = None,
+                 alm_rho = None, alm_rho_pow = None, alm_step = None, alm_penalty = None,
+                 eps_converge = None, eps_tol = None):
+        """
+        Minimize/maximize expr with variables in the list vs, constrained in the region reg.
+        Uses a combination of SLSQP, gradient descent, Adam (or any optimizer with the pytorch interface)
+        and basin-hopping. Constraints are handled using augmented Lagrangian method.
+        
+        Kraft, D. A software package for sequential quadratic programming. 1988. Tech. Rep. DFVLR-FB 88-28, 
+        DLR German Aerospace Center - Institute for Flight Mechanics, Koln, Germany.
+        Kingma, Diederik P., and Jimmy Ba. "Adam: A method for stochastic optimization."
+        arXiv preprint arXiv:1412.6980 (2014).
+        Wales, David J.; Doye, Jonathan P. K. (1997). "Global Optimization by Basin-Hopping
+        and the Lowest Energy Structures of Lennard-Jones Clusters Containing up to 110 Atoms".
+        The Journal of Physical Chemistry A. 101 (28): 5111-5116.
+        Hestenes, M. R. (1969). "Multiplier and gradient methods". Journal of Optimization 
+        Theory and Applications. 4 (5): 303-320.
+
+        Parameters
+        ----------
+        expr : Expr
+            The expression to be minimized. Can either be an Expr object or a 
+            callable accepting ConcModel as argument.
+        vs : list
+            The variables to be optimized over (list of ConcDist and/or ConcReal).
+        reg : Region, optional
+            The region where the variables are constrained. The default is None.
+        sgn : int, optional
+            Set to 1 for maximization, -1 for minimization. The default is 1.
+        optimizer : closure, optional
+            The optimizer. Either "sgd", "adam" or any function that returns a pytorch
+            optimizer given the list of variables as argument. The default is None.
+        learnrate : float, optional
+            Learning rate. The default is None.
+        learnrate2 : float, optional
+            Learning rate in phase 2. The default is None.
+        momentum : float, optional
+            Momentum. The default is None.
+        num_iter : int, optional
+            Number of iterations. The default is None.
+        num_iter2 : int, optional
+            Number of iterations in phase 2. The default is None.
+        num_points : int, optional
+            Number of random starting points. The default is None.
+        num_hop : int, optional
+            Number of hops for basin-hopping. The default is None.
+        hop_temp : float, optional
+            Temperature for basin-hopping. The default is None.
+        hop_prob : float, optional
+            Probability of hopping for basin-hopping. The default is None.
+        alm_rho : float, optional
+            Rho in augmented Lagrangian method. The default is None.
+        alm_rho_pow : float, optional
+            Multiply rho by this amount after each iteration. The default is None.
+        eps_converge : float, optional
+            Convergence is declared if the change is smaller than eps_converge. The default is None.
+        eps_tol : float, optional
+            Tolerance for equality and inequality constraints. The default is None.
+
+        Returns
+        -------
+        r : float
+            The minimum value.
+
+        """
+        
+        verbose = PsiOpts.settings.get("verbose_opt", False)
+        verbose_step = PsiOpts.settings.get("verbose_opt_step", False)
+        verbose_step_var = PsiOpts.settings.get("verbose_opt_step_var", False)
+        
+        
+        if optimizer is None:
+            optimizer = PsiOpts.settings["opt_optimizer"]
+        if learnrate is None:
+            learnrate = PsiOpts.settings["opt_learnrate"]
+        if learnrate2 is None:
+            learnrate2 = PsiOpts.settings["opt_learnrate2"]
+        if momentum is None:
+            momentum = PsiOpts.settings["opt_momentum"]
+        if num_iter is None:
+            num_iter = PsiOpts.settings["opt_num_iter"]
+        if num_iter2 is None:
+            num_iter2 = PsiOpts.settings["opt_num_iter2"]
+        if num_points is None:
+            num_points = PsiOpts.settings["opt_num_points"]
+        if num_hop is None:
+            num_hop = PsiOpts.settings["opt_num_hop"]
+        if hop_temp is None:
+            hop_temp = PsiOpts.settings["opt_hop_temp"]
+        if hop_prob is None:
+            hop_prob = PsiOpts.settings["opt_hop_prob"]
+        if alm_rho is None:
+            alm_rho = PsiOpts.settings["opt_alm_rho"]
+        if alm_rho_pow is None:
+            alm_rho_pow = PsiOpts.settings["opt_alm_rho_pow"]
+        if alm_step is None:
+            alm_step = PsiOpts.settings["opt_alm_step"]
+        if alm_penalty is None:
+            alm_penalty = PsiOpts.settings["opt_alm_penalty"]
+        if eps_converge is None:
+            eps_converge = PsiOpts.settings["opt_eps_converge"]
+        if eps_tol is None:
+            eps_tol = PsiOpts.settings["opt_eps_tol"]
+            
+            
+        truth = PsiOpts.settings["truth"]
+        
+        cs = self.copy_shallow()
+        
+        # if reg is not None or expr.isregtermpresent():
+        #     tvaropt = Expr.real("#TMPVAROPT")
+        #     reg = reg & (tvaropt * sgn <= expr * sgn)
+        #     reg = reg.
+        
+        if not isinstance(vs, list):
+            vs = [vs]
+            
+        if reg is None:
+            reg = []
+        elif isinstance(reg, Region) or isinstance(reg, tuple):
+            reg = [reg]
+        elif not isinstance(reg, list):
+            reg = [(reg, ">=")]
+        
+        for i in range(len(reg)):
+            if isinstance(reg[i], RegionOp):
+                reg[i] = reg[i].tosimple()
+            if reg[i] is None:
+                reg[i] = Region.universe()
+            
+        if truth is not None:
+            truth_simple = truth.tosimple()
+            if truth_simple is not None:
+                reg.append(truth_simple)
+        
+        for i in range(len(reg)):
+            if not cs.allcomprv().super_of(reg[i].allcomprv()):
+                tvarlist, tcons = cs.add_reg(reg[i])
+                reg[i] = tcons
+                vs += tvarlist
+            
+            
+        def str_tuple(x):
+            if x[0] == 0:
+                return iutil.tostr_verbose(x[1] * -sgn)
+            return iutil.tostr_verbose((x[0], x[1] * -sgn))
+            
+        def tuple_copy1(x, y):
+            for i in range(len(y)):
+                if len(x) <= i:
+                    x.append([None, y[i][1]])
+                else:
+                    x[i][1] = y[i][1]
+            
+        varlist, distlist = cs.convert_torch_tensors(vs)
+        
+        cons = []
+        cons_init = []
+        
+        scipy_optimizer = None
+        if optimizer == "sgd":
+            pass
+        elif optimizer == "adam":
+            pass
+        elif isinstance(optimizer, str):
+            scipy_optimizer = optimizer
+        
+        for creg in reg:
+            if isinstance(creg, Region):
+                for a in creg.exprs_ge:
+                    if a.isnonpos_ic2():
+                        if self.bnet.check_ic(a):
+                            continue
+                    if scipy_optimizer is None:
+                        slack = torch.tensor(0.0, dtype=torch.float64, requires_grad = True)
+                        cons.append([a, 0.0, slack])
+                        varlist.append(slack)
+                    else:
+                        cons.append([a, 0.0, True])
+                
+                for a in creg.exprs_eq:
+                    if a.isnonpos_ic2() or a.isnonneg_ic2():
+                        if self.bnet.check_ic(a):
+                            continue
+                    cons.append([a, 0.0])
+                    
+            elif isinstance(creg, tuple):
+                if creg[1] == ">=":
+                    if scipy_optimizer is None:
+                        slack = torch.tensor(0.0, dtype=torch.float64, requires_grad = True)
+                        cons.append([creg[0], 0.0, slack])
+                        varlist.append(slack)
+                    else:
+                        cons.append([creg[0], 0.0, True])
+                
+        # if reg.isuniverse():
+        #     reg = None
+            
+        
+        ismat = False
+        bds = None
+        cons_list = None
+        cons_list_fcn = None
+        use_jac = False
+        
+        def get_fcn(cexpr, mul, has_f, has_d):
+            def fcn(x):
+                # print(str(cexpr) + "  " + str(x))
+                cs.clear_cache()
+                
+                ConcModel.tensor_list_from_array(varlist, x)
+                
+                for d in distlist:
+                    d.calc_torch()
+                    
+                cval = cs.get_tensor(cexpr)
+                if mul != 1:
+                    cval *= mul
+                
+                # print("   " + str(float(cval)))
+                if not has_d:
+                    return float(cval)
+                
+                cval.backward()
+                
+                if has_f:
+                    return (float(cval), ConcModel.tensor_list_grad_to_array(varlist))
+                else:
+                    return ConcModel.tensor_list_grad_to_array(varlist)
+            return fcn
+        
+        
+        if scipy_optimizer is not None:
+            
+            ismat = (scipy_optimizer == "trust-constr")
+            
+            use_jac = True
+            
+            for cismat in ([False, True] if ismat else [False]):
+                bds, cons_list = ConcModel.tensor_list_get_bds(varlist, distlist, ismat = cismat)
+                # print(bds)
+                
+                for a in cons:
+                    cons_dict = {}
+                    if len(a) >= 3:
+                        cons_dict["type"] = "ineq"
+                    else:
+                        cons_dict["type"] = "eq"
+                        
+                    cons_dict["fun"] = get_fcn(a[0], 1, True, False)
+                    cons_dict["jac"] = get_fcn(a[0], 1, False, True)
+                    
+                    if cismat:
+                        cons_list.append(scipy.optimize.NonlinearConstraint(
+                            cons_dict["fun"], 0.0, numpy.inf, jac = cons_dict["jac"]
+                            ))
+                    else:
+                        cons_list.append(cons_dict)
+                
+                if not cismat:
+                    cons_list_fcn = cons_list
+            
+        
+            
+        
+        tuple_copy1(cons_init, cons)
+        
+        int_big = 100000000
+        
+        r = (int_big, numpy.inf)
+        r_v = []
+        r_v_d = []
+        t = (int_big, numpy.inf)
+        
+        num_iter_list = [num_iter]
+        if num_iter2 > 0:
+            num_iter_list.append(num_iter2)
+        
+        
+        if verbose:
+            print("========     model      ========")
+            for a in cs.bnet.index.comprv:
+                print(str(cs.bnet.get_parents(a)) + " -> " + str(a) + "  card=" + str(cs.get_card(a)))
+                
+            print("========     probs      ========")
+            for (cin, cout), cp in cs.psmap.items():
+                print(str(sum(cs.bnet.index.comprv[i] for i in cin)) + " -> " 
+                      + str(sum(cs.bnet.index.comprv[i] for i in cout)) 
+                      + (" var" if cp.isvar else ""))
+            if sgn > 0:
+                print("========    maximize    ========")
+            else:
+                print("========    minimize    ========")
+            print(expr)
+            
+            print("========      over      ========")
+            for d in distlist:
+                if isinstance(d, ConcDist):
+                    print("dist shape=" + str((d.shape_in, d.shape_out)))
+                elif isinstance(d, ConcDist):
+                    print("real=" + str(d.x))
+            
+            if len(cons):
+                print("========  constraints   ========")
+                for a in cons:
+                    if len(a) >= 3:
+                        print(str(a[0]) + ">=0")
+                    else:
+                        print(str(a[0]) + "==0")
+                
+                
+        for cpass, cur_num_iter in enumerate(num_iter_list):
+            cur_num_points = 1
+            if cpass == 0:
+                cur_num_points = num_points
+                
+            for ip in range(cur_num_points):
+                
+                if PsiOpts.is_timer_ended():
+                    break
+                
+                if ip > 0:
+                    for d in distlist:
+                        d.randomize()
+                    tuple_copy1(cons, cons_init)
+                    cs.clear_cache()
+                    
+                cur_lr = learnrate
+                cur_num_hop = num_hop
+                if cpass > 0:
+                    cur_lr = learnrate2
+                    cur_num_hop = 1
+                    
+                for ih in range(cur_num_hop):
+                
+                    if PsiOpts.is_timer_ended():
+                        break
+                    
+                    r_start = []
+                    r_start_d = []
+                    v_start = t
+                    if ih > 0:
+                        ConcModel.tensor_copy_list(r_start, varlist)
+                        tuple_copy1(r_start_d, cons)
+                        for d in distlist:
+                            d.hop(hop_prob)
+                        tuple_copy1(cons, cons_init)
+                        cs.clear_cache()
+                        
+                    if scipy_optimizer is None:
+                        if optimizer == "sgd":
+                            cur_optimizer = torch.optim.SGD(varlist, lr = cur_lr, momentum = momentum)
+                        elif optimizer == "adam":
+                            cur_optimizer = torch.optim.Adam(varlist, lr = cur_lr)
+                        else:
+                            cur_optimizer = optimizer(varlist)
+                    
+                    # for a in con_eq:
+                    #     a[1] = 0.0
+                    
+                    # for a in con_ge:
+                    #     a[1] = 0.0
+                    #     a[2].copy_(0.0)
+                        
+                    cr = (int_big, numpy.inf)
+                    # lastval = (int_big, numpy.inf)
+                    lastval = numpy.inf
+                    
+                    
+                    
+                    if scipy_optimizer is not None:
+                        
+                        res = None
+                        
+                        with warnings.catch_warnings():
+                            
+                            warnings.simplefilter("ignore")
+                            
+                            opts = {"maxiter": cur_num_iter, "disp": verbose_step}
+                            if scipy_optimizer == "trust-constr":
+                                opts["initial_tr_radius"] = 0.001
+                                if verbose_step:
+                                    opts["verbose"] = 3
+                            
+                            res = scipy.optimize.minimize(
+                                get_fcn(expr, -sgn, True, use_jac), 
+                                ConcModel.tensor_list_to_array(varlist),
+                                method = scipy_optimizer,
+                                jac = use_jac,
+                                bounds = bds,
+                                constraints = cons_list,
+                                tol = eps_tol,
+                                options = opts
+                                )
+                            
+                        num_violate = 0
+                        sum_violate = 0.0
+                        for a in cons_list_fcn:
+                            t = a["fun"](res.x)
+                            if numpy.isnan(t):
+                                sum_violate = numpy.inf
+                                num_violate += 1
+                                continue
+                            
+                            if a["type"] == "eq":
+                                if abs(t) > eps_tol:
+                                    sum_violate += abs(t)
+                                    num_violate += 1
+                            else:
+                                if t < -eps_tol:
+                                    sum_violate += -t
+                                    num_violate += 1
+                                
+                        penalty = sum_violate * alm_penalty
+                                    
+                        score = res.fun + penalty
+                        if numpy.isnan(score):
+                            score = numpy.inf
+                        t = (0, score)
+                        ConcModel.tensor_list_from_array(varlist, res.x)
+                        
+                        if verbose_step:
+                            print((("pass=" + str(cpass + 1) + " ") if cpass > 0 else "")
+                                  + "#pt=" + str(ip)
+                                  + " val=" + str(res.fun)
+                                  + " violate=" + str((num_violate, sum_violate)) + " opt=" + str_tuple(r))
+                        
+                    else:
+                        for it in range(cur_num_iter + 1):
+                
+                            if PsiOpts.is_timer_ended():
+                                break
+                            
+                            # cur_optimizer.zero_grad()
+                            cval = cs.get_tensor(expr)
+                            if -sgn != 1:
+                                cval *= -sgn
+                            
+                            t_cval = float(cval)
+                            if numpy.isnan(t_cval):
+                                t_cval = numpy.inf
+                            
+                            crho = numpy.power(alm_rho_pow, it // alm_step) * alm_rho
+                            crho0 = numpy.power(alm_rho_pow, (it - 1) // alm_step) * alm_rho
+                            
+                            num_violate = 0
+                            sum_dual_step = 0.0
+                            penalty = 0.0
+                            
+                            for a in cons:
+                                con_val = cs.get_tensor(a[0])
+                                p_con_val = float(con_val)
+                                if len(a) >= 3:
+                                    if p_con_val < -eps_tol:
+                                        num_violate += 1
+                                        penalty += -p_con_val * alm_penalty
+                                else:
+                                    if abs(p_con_val) > eps_tol:
+                                        num_violate += 1
+                                        penalty += abs(p_con_val) * alm_penalty
+                                        
+                                if len(a) >= 3:
+                                    con_val -= a[2]
+                                
+                                t_con_val = float(con_val)
+                                if numpy.isnan(t_con_val):
+                                    t_con_val = 0.0
+                                    
+                                sum_dual_step += abs(t_con_val)
+                                if it > 0 and it % alm_step == 0:
+                                    t = a[1] + crho0 * t_con_val
+                                    if not numpy.isnan(t):
+                                        a[1] = t
+                                cval += con_val * a[1] + torch.square(con_val) * crho * 0.5
+                                
+                                if verbose_step:
+                                    if len(a) >= 3:
+                                        # print(str(a[0]) + ">=0 : val=" + str(p_con_val) + " dual=" + str(a[1]))
+                                        print(str(a[0]) + ">=0 : val=" + iutil.tostr_verbose(p_con_val) 
+                                              + " dual=" + iutil.tostr_verbose(a[1]) + " slack=" + iutil.tostr_verbose(float(a[2])))
+                                    else:
+                                        print(str(a[0]) + "==0 : val=" + iutil.tostr_verbose(p_con_val) 
+                                              + " dual=" + iutil.tostr_verbose(a[1]))
+                                    
+                            
+                            t = (num_violate, t_cval + penalty)
+                            cr = min(cr, t)
+                            if not numpy.isnan(cr[1]) and cr < r:
+                                r = cr
+                                ConcModel.tensor_copy_list(r_v, varlist)
+                                tuple_copy1(r_v_d, cons)
+                            
+                            if verbose_step:
+                                print((("pass=" + str(cpass + 1) + " ") if cpass > 0 else "")
+                                      + "#pt=" + str(ip) + " #iter=" + str(it) 
+                                      + " val=" + str_tuple(t) + " opt=" + str_tuple(min(r, cr)))
+                            
+                            if verbose_step_var:
+                                for d in distlist:
+                                    print(d)
+                                    
+                            # if t[0] == lastval[0] and abs(t[1] - lastval[1]) <= eps_converge:
+                            #     break
+                            if abs(t_cval - lastval) + sum_dual_step <= eps_converge:
+                                break
+                            if it == cur_num_iter:
+                                break
+                            # lastval = t
+                            lastval = t_cval
+                            
+                            cur_optimizer.zero_grad()
+                            cval.backward()
+                            cur_optimizer.step()
+                            
+                            for d in distlist:
+                                d.clamp()
+                            for a in cons:
+                                if len(a) >= 3:
+                                    if numpy.isnan(float(a[2])) or float(a[2]) < 0:
+                                        with torch.no_grad():
+                                            a[2].copy_(torch.tensor(0.0, dtype=torch.float64))
+                                
+                            cs.clear_cache()
+                        
+                    cr = min(cr, t)
+                    if not numpy.isnan(cr[1]) and cr < r:
+                        r = cr
+                        ConcModel.tensor_copy_list(r_v, varlist)
+                        tuple_copy1(r_v_d, cons)
+                    
+                    if ih > 0:
+                        accept_prob = 1.0
+                        if numpy.isnan(t[1]):
+                            accept_prob = 0.0
+                        elif t > v_start:
+                            accept_prob = numpy.exp((v_start[1] - t[1]) / hop_temp)
+                        if verbose_step:
+                            print("HOP #" + str(ih) + " from=" + str_tuple(v_start) 
+                                  + " to=" + str_tuple(t) + " prob=" + iutil.tostr_verbose(accept_prob))
+                        if numpy.random.uniform() >= accept_prob:
+                            if verbose_step:
+                                print("HOP REJECT")
+                            ConcModel.tensor_copy_list(varlist, r_start)
+                            tuple_copy1(cons, r_start_d)
+                            for d in distlist:
+                                d.calc_torch()
+                            t = v_start
+                            cs.clear_cache()
+                        else:
+                            if verbose_step:
+                                print("HOP ACCEPT")
+                        
+            if len(r_v):
+                ConcModel.tensor_copy_list(varlist, r_v)
+                tuple_copy1(cons, r_v_d)
+                for d in distlist:
+                    d.calc_torch()
+                cs.clear_cache()
+            
+        self.clear_cache()
+        return (r[1] if r[0] == 0 else numpy.inf) * -sgn
+
+    def minimize(self, *args, **kwargs):
+        """
+        Maximize expr with variables in the list vs, constrained in the region reg.
+        Refer to optimize for details.
+        """
+        return self.optimize(*args, sgn = -1, **kwargs)
+
+    def maximize(self, *args, **kwargs):
+        """
+        Maximize expr with variables in the list vs, constrained in the region reg.
+        Refer to optimize for details.
+        """
+        return self.optimize(*args, sgn = 1, **kwargs)
+    
+    def get_bayesnet(self):
+        return self.bnet.copy()
+    
+    def table(self, *args, **kwargs):
+        """Plot the information diagram as a Gray-coded table.
+        """
+        return universe().table(*args, self, **kwargs)
+        
+    def venn(self, *args, **kwargs):
+        """Plot the information diagram as a Venn diagram.
+        Can handle up to 5 random variables (uses Branko Grunbaum's Venn diagram for n=5).
+        """
+        return universe().venn(*args, self, **kwargs)
+        
+    def graph(self):
+        """Return the Bayesian network among the random variables as a 
+        graphviz digraph that can be displayed in the console.
+        """
+        return self.get_bayesnet().graph()
+    
+    
 class SparseMat:
     """List of lists sparse matrix. Do NOT use directly"""
     
@@ -3961,7 +7100,7 @@ class LinearProg:
             
             
             if res.status == 0:
-                return (res.fun, [res.x[i] for i in range(self.nxvar)])
+                return (float(res.fun), [float(res.x[i]) for i in range(self.nxvar)])
             return (None, None)
             
             
@@ -4167,20 +7306,20 @@ class LinearProg:
                 return True
             
             if res.status == 0:
-                self.optval = res.fun + c1
+                self.optval = float(res.fun) + c1
                 if optval is not None:
                     optval.append(self.optval)
                     
                 if self.val_enabled:
                     self.val_x = [0.0] * self.nxvar
                     for i in range(self.nxvar):
-                        self.val_x[i] = res.x[i]
+                        self.val_x[i] = float(res.x[i])
                         
                 if self.optval >= zero_cutoff:
                     return True
             
             if res.status == 0 and self.save_res:
-                self.saved_var.append(array.array("d", list(res.x)))
+                self.saved_var.append(array.array("d", [float(a) for a in res.x]))
                 #self.saved_var.append(numpy.array(list(res.x)))
                 if verbose:
                     print("  added : " + str(len(self.saved_var)) + ", " + str(sum(self.saved_var[-1])))
@@ -4439,6 +7578,10 @@ class LinearProg:
         ineqs_tight = []
         did = True
         while did:
+            
+            if PsiOpts.is_timer_ended():
+                break
+            
             #print("MROWSIZE " + str(mat.row_size))
             did = False
             poly = cdd.Polyhedron(mat)
@@ -4456,7 +7599,15 @@ class LinearProg:
                     print("  " + str(toexpr(y[1:n+1])) + (" == " if i in lset else " >= ") + iutil.float_tostr(-y[0]))
                     
             for i in range(ineqs.row_size):
+                    
+                if PsiOpts.is_timer_ended():
+                    break
+                
                 for sgn in ([1, -1] if i in lset else [1]):
+                    
+                    if PsiOpts.is_timer_ended():
+                        break
+                    
                     #print("IROWSIZE " + str(ineqs.row_size))
                     x = [a * sgn for a in ineqs[i]]
                     xnorm = sum(abs(a) for a in x)
@@ -4638,6 +7789,17 @@ class LinearProg:
         return (gsr, fir)
     
     
+    def table(self, *args, **kwargs):
+        """Plot the information diagram as a Gray-coded table.
+        """
+        return universe().table(*args, self, **kwargs)
+        
+    def venn(self, *args, **kwargs):
+        """Plot the information diagram as a Venn diagram.
+        Can handle up to 5 random variables (uses Branko Grunbaum's Venn diagram for n=5).
+        """
+        return universe().venn(*args, self, **kwargs)
+        
         
         
     
@@ -4739,6 +7901,26 @@ class Region:
                         [x.copy() for x in self.exprs_gei],
                         [x.copy() for x in self.exprs_eqi],
                         self.auxi.copy())
+        
+    
+    def copy_noaux(self):
+        return Region([x.copy() for x in self.exprs_ge],
+                      [x.copy() for x in self.exprs_eq], 
+                        Comp.empty(), self.inp.copy(), self.oup.copy(),
+                        [x.copy() for x in self.exprs_gei],
+                        [x.copy() for x in self.exprs_eqi],
+                        Comp.empty())
+        
+    
+    def copy_(self, other):
+        self.exprs_ge = [x.copy() for x in other.exprs_ge]
+        self.exprs_eq = [x.copy() for x in other.exprs_eq]
+        self.aux = other.aux.copy()
+        self.inp = other.inp.copy()
+        self.oup = other.oup.copy()
+        self.exprs_gei = [x.copy() for x in other.exprs_gei]
+        self.exprs_eqi = [x.copy() for x in other.exprs_eqi]
+        self.auxi = other.auxi.copy()
         
     def imp_intersection(self):
         return Region([x.copy() for x in self.exprs_ge] + [x.copy() for x in self.exprs_gei],
@@ -4958,6 +8140,24 @@ class Region:
             self.inp -= v
             self.oup -= v
             self.auxi -= v
+
+    def remove_notpresent(self, v):
+        self.exprs_ge = [x for x in self.exprs_ge if x.ispresent(v)]
+        self.exprs_eq = [x for x in self.exprs_eq if x.ispresent(v)]
+        self.exprs_gei = [x for x in self.exprs_gei if x.ispresent(v)]
+        self.exprs_eqi = [x for x in self.exprs_eqi if x.ispresent(v)]
+        
+        if isinstance(v, Comp):
+            self.aux = self.aux.inter(v)
+            self.inp = self.inp.inter(v)
+            self.oup = self.oup.inter(v)
+            self.auxi = self.auxi.inter(v)
+        
+    
+    def remove_notcontained(self, v):
+        t = self.allcomp() - v
+        if not t.isempty():
+            self.remove_present(t)
         
     def condition(self, b):
         """Condition on random variable b, in place"""
@@ -4984,6 +8184,9 @@ class Region:
         for x in self.exprs_ge + self.exprs_eq + self.exprs_gei + self.exprs_eqi:
             x.symm_sort(terms)
             
+    
+    def find_name(self, *args):
+        return self.allcomp().find_name(*args)
         
     def placeholder(*args):
         r = Expr.zero()
@@ -5175,12 +8378,18 @@ class Region:
         return r
         
     def __or__(self, other):
+        if self.isempty():
+            return other.copy()
         return RegionOp.union([self]) | other
         
     def __ror__(self, other):
+        if self.isempty():
+            return other.copy()
         return RegionOp.union([self]) | other
         
     def __ior__(self, other):
+        if self.isempty():
+            return other.copy()
         return RegionOp.union([self]) | other
     
     def implicate(self, other, skip_simplify = False):
@@ -5232,7 +8441,7 @@ class Region:
         return RegionOp.inter([self.implicated(other), other.implicated(self)])
         
     def __ne__(self, other):
-        return RegionOp.union([~self.implicated(other), ~other.implicated(self)])
+        return ~(RegionOp.inter([self.implicated(other), other.implicated(self)]))
         
     
     def relax_term(self, term, gap):
@@ -5525,6 +8734,11 @@ class Region:
         
         return sn_present
     
+    
+    # def flattened_minmax(self, term, sgn, bds):
+    #     sbds = self.get_lb_ub_eq(term)
+    #     reg.eliminate_term(self)
+            
     def flatten_regterm(self, term):
         self.simplify_quick()
         sn = term.sn
@@ -5567,6 +8781,10 @@ class Region:
         self.exprs_eqi = [x for x in self.exprs_eqi if not x.iszero()]
         
         cs = self
+        
+        if sn == 0:
+            sn_present[1] = False
+            sn_present[0] = True
         
         if sn_present[1]:
             tmpvar = Expr.real("FLAT_TMP_" + str(term))
@@ -5723,7 +8941,7 @@ class Region:
                 cs = cs.flatten_regterm(y, isimp)
         return cs
     
-    def flattened(self, *args):
+    def flattened(self, *args, minmax_elim = False):
         if not self.isregtermpresent() and len(args) == 0:
             return self.copy()
         
@@ -5732,7 +8950,7 @@ class Region:
             cs = RegionOp.inter([self])
         else:
             cs = self.copy()
-        cs.flatten()
+        cs.flatten(minmax_elim = minmax_elim)
         for x in args:
             cs.flatten_term(x)
         return cs
@@ -5829,6 +9047,141 @@ class Region:
         if not self.auxi.isempty():
             return None
         return self.copy()
+    
+    def tosimple_noaux(self):
+        if self.aux_present():
+            return None
+        return self.tosimple()
+    
+    def tosimple_safe(self):
+        return self.tosimple()
+    
+    def commonpart_extend(self, v):
+        ceps = PsiOpts.settings["eps"]
+        tvar = Expr.real("#TVAR")
+        did = False
+        didpos = False
+        toadd = []
+        todel = set()
+        
+        for x in self.exprs_eq:
+            c = x.commonpart_coeff(v)
+            if c is None or numpy.isnan(c):
+                return None
+            if numpy.isinf(c):
+                return None
+            if abs(c) <= ceps:
+                continue
+            if x.isnonneg() and c > 0:
+                return None
+            did = True
+            didpos = True
+            toadd.append((x, c))
+        
+        for x in self.exprs_ge:
+            c = x.commonpart_coeff(v)
+            if c is None or numpy.isnan(c):
+                return None
+            if numpy.isinf(c):
+                if c < 0:
+                    return None
+                todel.add(x)
+                continue
+            
+            if abs(c) <= ceps:
+                continue
+            if x.isnonpos() and c < 0:
+                return None
+            did = True
+            if c > 0:
+                didpos = True
+            toadd.append((x, c))
+        
+        for x in self.exprs_eqi:
+            c = x.commonpart_coeff(v)
+            if c is None or numpy.isnan(c):
+                return None
+            if numpy.isinf(c):
+                return None
+            if abs(c) <= ceps:
+                continue
+            did = True
+            didpos = True
+            toadd.append((x, c))
+        
+        for x in self.exprs_gei:
+            c = x.commonpart_coeff(v)
+            if c is None or numpy.isnan(c):
+                return None
+            if numpy.isinf(c):
+                return None
+            if abs(c) <= ceps:
+                continue
+            did = True
+            didpos = True
+            toadd.append((x, c))
+        
+        if not didpos:
+            return None
+        
+        self.exprs_eq = [x for x in self.exprs_eq if x not in todel]
+        self.exprs_ge = [x for x in self.exprs_ge if x not in todel]
+        self.exprs_eqi = [x for x in self.exprs_eqi if x not in todel]
+        self.exprs_gei = [x for x in self.exprs_gei if x not in todel]
+        
+        for x, c in toadd:
+            x += tvar * c
+            
+        self.exprs_ge.append(tvar)
+        self.eliminate(tvar)
+        
+        return self
+    
+    
+    def simplify_aux_commonpart(self, reg = None, minlen = 1, maxlen = 1):
+        
+        if self.aux.isempty():
+            return self
+        
+        if self.imp_present():
+            return self
+        
+        if reg is None:
+            reg = Region.universe()
+            
+        did = False
+        
+        taux = self.aux.copy()
+        taux2 = taux.copy()
+        tauxi = self.auxi.copy()
+        self.aux = Comp.empty()
+        self.auxi = Comp.empty()
+        
+        for clen in range(minlen, maxlen + 1):
+            if clen == 2:
+                continue
+            if clen > len(taux):
+                break
+            for v in igen.subset(taux, minsize = clen):
+                if PsiOpts.is_timer_ended():
+                    break
+                if clen == 1:
+                    if self.commonpart_extend(v) is not None:
+                        did = True
+                else:
+                    for v2 in igen.partition(v, clen):
+                        if PsiOpts.is_timer_ended():
+                            break
+                        if self.commonpart_extend(v2) is not None:
+                            did = True
+                
+        self.aux = taux2
+        self.auxi = tauxi
+        # if did:
+        #     self.simplify_quick()
+        
+        return self
+        
     
     def optimum(self, v, sn):
         """Return the variable obtained from maximizing (sn=1)
@@ -5984,6 +9337,10 @@ class Region:
         return False
             
     def implies_ineq_prog(self, index, progs, expr, sg, save_res = False, saved = False):
+        if saved == "both":
+            return (self.implies_ineq_prog(index, progs, expr, sg, save_res, saved = True)
+                    and self.implies_ineq_prog(index, progs, expr, sg, save_res, saved = False))
+        
         #print("save_res = " + str(save_res))
         if not saved and self.implies_ineq_quick(expr, sg):
             return True
@@ -6002,14 +9359,12 @@ class Region:
             print(other)
         
         for x in other.exprs_ge:
-            if (not self.implies_ineq_prog(index, progs, x, ">=", save_res = True, saved = True)
-            or not self.implies_ineq_prog(index, progs, x, ">=", save_res = True, saved = False)):
+            if not self.implies_ineq_prog(index, progs, x, ">=", save_res = True, saved = "both"):
                 if verbose_subset:
                     print(str(x) + " >= 0 FAIL")
                 return False
         for x in other.exprs_eq:
-            if (not self.implies_ineq_prog(index, progs, x, "==", save_res = True, saved = True)
-            or not self.implies_ineq_prog(index, progs, x, "==", save_res = True, saved = False)):
+            if not self.implies_ineq_prog(index, progs, x, "==", save_res = True, saved = "both"):
                 if verbose_subset:
                     print(str(x) + " == 0 FAIL")
                 return False
@@ -6084,7 +9439,40 @@ class Region:
         if verbose_subset:
             print("SUCCESS")
         return True
+    
+    def check_dual(self):
+        verbose_subset = PsiOpts.settings.get("verbose_subset", False)
+        ceps = PsiOpts.settings["eps_lp"]
+        # cs = self.imp_flippedonly_noaux()
+        cs = self
+        r = Region.universe()
         
+        index = IVarIndex()
+        
+        cs.record_to(index)
+        
+        progs = []
+        progs.append(self.init_prog(index, dual_enabled = True))
+        
+        for x in self.exprs_ge + self.exprs_eq + [-y for y in self.exprs_eq]:
+            if not cs.implies_ineq_prog(index, progs, x, ">="):
+                if verbose_subset:
+                    print(str(x) + " >= 0 FAIL")
+                return None
+            cdual = progs[0].get_dual_region()
+            if cdual is not None:
+                r.iand_norename(cdual)
+            
+            
+            # v, prog = cs.minimum(x).solve_prog("dual")
+            # if v is None or v < -ceps or prog is None:
+            #     return None
+            # cdual = prog.get_dual_region()
+            # if cdual is not None:
+            #     r &= cdual
+        return r
+    
+    
     def ic_list(self, v):
         r = []
         for x in self.exprs_ge:
@@ -6168,6 +9556,7 @@ class Region:
         if leaveone is None:
             leaveone = PsiOpts.settings["auxsearch_leaveone"]
             
+        leaveone_add_ineq = PsiOpts.settings["auxsearch_leaveone_add_ineq"]
         if self.aux.isempty():
             if len(self.exprs_eq) == 0 and len(self.exprs_ge) == 0:
                 yield []
@@ -6471,6 +9860,8 @@ class Region:
                     if i < n * 2:
                         eqvsnstr = "  " + ("amb" if eqvsns[i][j] == 0
                                 else "inc" if eqvsns[i][j] == 1 else "dec")
+                    if leaveone and eqvleaveok[i][j]:
+                        eqvsnstr += " " + "leaveok"
                     print(iutil.strpad(hs, 8, ": " + str(eqvs[i][j][0]) + " " + str(eqvs[i][j][1]) + " 0" + eqvsnstr))
                     
             print("========= variables =========")
@@ -6553,7 +9944,7 @@ class Region:
                 for tsize in range(sizelb, sizeub + 1):
                     for comb in itertools.combinations(list(reversed(mlefti)), tsize):
                         curcost[0] += 1
-                        if maxcost > 0 and curcost[0] >= maxcost:
+                        if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                             return
                         
                         auxflag[i] = sum(1 << j for j in comb) | auxsetflag[i]
@@ -6598,10 +9989,15 @@ class Region:
         
         leaveone_static = None
         
+        
+        # *********** Check conditions that does not depend on aux ***********
+        
         if n_cond == 0:
             for (x, sg) in eqvs[eqvs_emptyid]:
                 if not cs.implies_ineq_prog(index, progs, x, sg, save_res = save_res):
                     if leaveone and sg == ">=":
+                        if verbose_step:
+                            print("  F LO " + str(x) + " " + sg + " 0")
                         leaveone = False
                         leaveone_static = -x
                     else:
@@ -6626,6 +10022,8 @@ class Region:
         numfail = [0]
         numclear = [0]
         
+        auxavoidflag_orig = list(auxavoidflag)
+        
         def clear_cache(mini, maxi):
             if verbose_cache:
                 print("========= cache clear: " + str(mini) + " - " + str(maxi) + " =========")
@@ -6633,8 +10031,9 @@ class Region:
             auxcache[mini:maxi] = [{} for i in range(mini, maxi)]
             for a in flagcache:
                 a.clear()
+                
             for i in range(mini, maxi):
-                auxavoidflag[i] = 0
+                auxavoidflag[i] = auxavoidflag_orig[i]
                 
             for i in range(mini * 2, eqvs_range):
                 for j in range(len(eqvs[i])):
@@ -6660,7 +10059,7 @@ class Region:
                 if prev_csaddedstr != cs_added.tostring(tosort = True):
                     cs_added_changed = True
                     clist.appendleft(cflag)
-                    if len(clist) > forall_multiuse_numsave:
+                    while len(clist) > forall_multiuse_numsave:
                         clist.pop()
                     if verbose_step:
                         print("========= leave one added =========")
@@ -6688,7 +10087,7 @@ class Region:
                         if prev_csaddedstr != cs_added.tostring(tosort = True):
                             cs_added_changed = True
                             condflagadded_true.appendleft(allflag)
-                            if len(condflagadded_true) > forall_multiuse_numsave:
+                            while len(condflagadded_true) > forall_multiuse_numsave:
                                 condflagadded_true.pop()
                             if verbose_step:
                                 print("========= forall added =========")
@@ -6760,6 +10159,110 @@ class Region:
             return True
         
         
+        # *********** Sandwich procedure ***********
+        
+        dosandwich = True
+        
+        if dosandwich:
+            if verbose:
+                print("========== sandwich =========")
+                
+            for i in range(n * 2 + 1):
+                if i == eqvs_emptyid:
+                    continue
+                for j in range(len(eqvs[i])):
+                    if leaveone and eqvleaveok[i][j]:
+                        continue
+                    
+                    presflag = eqvpresflag[i][j]
+                    for sg in ([1, -1] if eqvs[i][j][1] == "==" else [1]):
+                        x = eqvs[i][j][0] * sg
+                        sns = [0] * n
+                        bad = False
+                        for i2 in range(n):
+                            if presflag & (1 << i2):
+                                sns[i2] = x.get_sign(auxcomp.varlist[i2])
+                                if sns[i2] == 0:
+                                    bad = True
+                                    break
+                        if bad:
+                            continue
+                        
+                        for ix in range(-1, n):
+                            xt = x.copy()
+                            for i2 in range(n):
+                                if i2 == ix:
+                                    continue
+                                cmask = 0
+                                if sns[i2] < 0:
+                                    cmask = (setflag >> (m * i2)) & ((1 << m) - 1)
+                                else:
+                                    cmask = ~(avoidflag >> (m * i2)) & ((1 << m) - 1)
+                                # print(avoidflag)
+                                # print(cmask)
+                                xt.substitute(Comp([auxcomp.varlist[i2]]), ccomp.from_mask(cmask))
+                            
+                            
+                            if ix == -1:
+                                tres = cs.implies_ineq_prog(index, progs, xt, ">=", save_res = save_res, saved = "both")
+                                if verbose_step:
+                                    print(str(x) + "  :  " + str(xt) + " >= 0 " + str(tres))
+                                if not tres:
+                                    return None
+                                continue
+                            
+                            cmask0 = (setflag >> (m * ix)) & ((1 << m) - 1)
+                            cmask1 = ~(avoidflag >> (m * ix)) & ((1 << m) - 1)
+                            cmaskc = cmask1 & ~cmask0
+                            for k in range(m):
+                                if cmaskc & (1 << k):
+                                    cmask = 0
+                                    if sns[ix] < 0:
+                                        cmask = cmask0 | (1 << k)
+                                    else:
+                                        cmask = cmask1 & ~(1 << k)
+                                
+                                    xt2 = xt.copy()
+                                    xt2.substitute(Comp([auxcomp.varlist[ix]]), ccomp.from_mask(cmask))
+                                    
+                                    tres = cs.implies_ineq_prog(index, progs, xt2, ">=", save_res = save_res, saved = "both")
+                                    if verbose_step:
+                                        print(str(x) + "  :  " + str(xt2) + " >= 0 " + str(tres))
+                                    if not tres:
+                                        if sns[ix] < 0:
+                                            avoidflag |= 1 << (m * ix + k)
+                                            auxavoidflag[ix] |= 1 << k
+                                        else:
+                                            setflag |= 1 << (m * ix + k)
+                                            auxsetflag[ix] |= 1 << k
+                                    
+                                    
+            flipflag &= ~avoidflag
+            auxavoidflag_orig = list(auxavoidflag)
+            
+            if verbose:
+                print("======= after sandwich ======")
+                for i in range(n):
+                    cflag = (flipflag >> (m * i)) & ((1 << m) - 1)
+                    csetflag = auxsetflag[i]
+                    cavoidflag = auxavoidflag[i]
+                    ccor = Comp.empty()
+                    cset = Comp.empty()
+                    cavoid = Comp.empty()
+                    for j in range(m):
+                        if cflag & (1 << j) != 0:
+                            ccor += ccomp[j]
+                        if csetflag & (1 << j) != 0:
+                            cset += ccomp[j]
+                        if cavoidflag & (1 << j) != 0:
+                            cavoid += ccomp[j]
+                    print(str(auxcomp.varlist[i]) + "  :  " + str(ccor) 
+                        + ("  Fix: " + str(cset) if not cset.isempty() else "")
+                        + ("  Avoid: " + str(cavoid) if not cavoid.isempty() else ""))
+                print("=============================")
+        
+        
+        
         def check_local(i0, allflag, leave_id = None):
             cflag = ((flipflag | setflag) >> (m * i0)) << (m * i0)
             mleft = [j for j in range(m * i0, m * n) if setflag & (1 << j) == 0]
@@ -6811,7 +10314,7 @@ class Region:
                                 
                                     
                                 curcost[0] += lpcost
-                                if maxcost > 0 and curcost[0] >= maxcost:
+                                if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                                     return False
                                 tres = cs.implies_ineq_prog(index, progs, x2, sg, save_res = save_res)
                                 
@@ -6855,7 +10358,9 @@ class Region:
                             for i3 in range(n):
                                 x2.substitute(Comp([auxcomp.varlist[i3]]), auxlist[i3])
                             #print("BUILD " + str(x2))
-                            build_region(n_cond, allflag, False, cflag = cflag, add_ineq = x2)
+                            
+                            if leaveone_add_ineq:
+                                build_region(n_cond, allflag, False, cflag = cflag, add_ineq = x2)
                             yield ("leaveone", x2.copy())
                         else:
                             yield allflag | cflag
@@ -6884,7 +10389,7 @@ class Region:
                         for comb in itertools.combinations(mlefti, ttsize):
                             
                             curcost[0] += 1
-                            if maxcost > 0 and curcost[0] >= maxcost:
+                            if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                                 return False
                             
                             
@@ -6930,7 +10435,7 @@ class Region:
                                             x2.substitute(Comp([auxcomp.varlist[i3]]), auxlist[i3])
                                     
                                     curcost[0] += lpcost
-                                    if maxcost > 0 and curcost[0] >= maxcost:
+                                    if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                                         return False
                                     tres = cs.implies_ineq_prog(index, progs, x2, sg, save_res = save_res, saved = True)
                                     
@@ -6971,7 +10476,7 @@ class Region:
                                 return True
                             if check_local_recur(i + 1, ckflag, sizelb - len(comb), sizeub - len(comb), ckleave_id):
                                 return True
-                            if maxcost > 0 and curcost[0] >= maxcost:
+                            if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                                 return False
                             
                     return False
@@ -7084,7 +10589,7 @@ class Region:
                         if tres is None:
                             
                             curcost[0] += lpcost
-                            if maxcost > 0 and curcost[0] >= maxcost:
+                            if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                                 return False
                             tres = cs.implies_ineq_prog(index, progs, x2, sg, save_res = save_res)
                             computed = True
@@ -7134,7 +10639,7 @@ class Region:
                     (x, sg) = eqvs[eqvs_emptyid][ieq]
                     
                     curcost[0] += lpcost
-                    if maxcost > 0 and curcost[0] >= maxcost:
+                    if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                         return False
                     if not cs.implies_ineq_prog(index, progs, x, sg, save_res = save_res):
                         if verbose_step:
@@ -7190,7 +10695,7 @@ class Region:
                 for comb in itertools.combinations(mleft, tsize):
                     
                     curcost[0] += 1
-                    if maxcost > 0 and curcost[0] >= maxcost:
+                    if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                         return False
                     #print(tsize, comb)
                     tflag = 0
@@ -7234,7 +10739,7 @@ class Region:
                         if recur:
                             return True
                  
-                    if maxcost > 0 and curcost[0] >= maxcost:
+                    if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
                         return False
             return False
         
@@ -7311,7 +10816,7 @@ class Region:
                     clen = max(flipflaglen, 1)
                     stepsize = (size + clen - 1) // clen
             
-        if maxcost > 0 and curcost[0] >= maxcost:
+        if PsiOpts.is_timer_ended() or (maxcost > 0 and curcost[0] >= maxcost):
             yield ("max_iter_reached", )
         return None
     
@@ -7547,21 +11052,50 @@ class Region:
             with PsiOpts(truth = None):
                 return (truth >> self).evalcheck(f)
         
-        ceps = PsiOpts.settings["eps"]
+        ceps = PsiOpts.settings["eps_check"]
         for x in self.exprs_gei:
-            if not f(x) >= -ceps:
+            if not float(f(x)) >= -ceps:
                 return True
         for x in self.exprs_eqi:
-            if not abs(f(x)) <= ceps:
+            if not abs(float(f(x))) <= ceps:
                 return True
         for x in self.exprs_ge:
-            if not f(x) >= -ceps:
+            if not float(f(x)) >= -ceps:
                 return False
         for x in self.exprs_eq:
-            if not abs(f(x)) <= ceps:
+            if not abs(float(f(x))) <= ceps:
                 return False
         return True
         
+    def eval_max_violate(self, f):
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            with PsiOpts(truth = None):
+                return (truth >> self).eval_max_violate(f)
+        
+        ceps = PsiOpts.settings["eps_check"]
+        for x in self.exprs_gei:
+            t = float(f(x))
+            if not numpy.isnan(t) and not t >= -ceps:
+                return 0.0
+        for x in self.exprs_eqi:
+            t = float(f(x))
+            if not numpy.isnan(t) and not abs(t) <= ceps:
+                return 0.0
+            
+        r = 0.0
+        for x in self.exprs_ge:
+            t = float(f(x))
+            if numpy.isnan(t):
+                return numpy.inf
+            r = max(r, -t)
+        for x in self.exprs_eq:
+            t = float(f(x))
+            if numpy.isnan(t):
+                return numpy.inf
+            r = max(r, abs(t))
+        return r
+    
     def implies(self, other):
         """Whether self implies other"""
         return (self <= other).check()
@@ -7580,6 +11114,11 @@ class Region:
         for rr in (self <= other).check_getaux_gen(hint_pair, hint_aux):
             yield rr
         
+    def allcomp(self):
+        index = IVarIndex()
+        self.record_to(index)
+        return index.comprv + index.compreal
+        
     def allcomprv(self):
         index = IVarIndex()
         self.record_to(index)
@@ -7591,9 +11130,18 @@ class Region:
         return index.compreal
         
     def allcomprealvar(self):
-        index = IVarIndex()
-        self.record_to(index)
-        return index.compreal - Comp([IVar.eps(), IVar.one()])
+        r = Comp.empty()
+        for x in self.exprs_ge + self.exprs_eq + self.exprs_gei + self.exprs_eqi:
+            r += x.allcomprealvar()
+        return r
+    
+        # index = IVarIndex()
+        # self.record_to(index)
+        # return index.compreal - Comp([IVar.eps(), IVar.one()])
+        
+    def allcomprealvar_exprlist(self):
+        t = self.allcomprealvar()
+        return ExprArray.make([Expr.real(v) for v in t])
     
     def allcomprv_noaux(self):
         return self.allcomprv() - self.getauxall()
@@ -7818,6 +11366,62 @@ class Region:
             r &= Expr.Ic(q, allcomp - r.getauxall() - r.inp - r.oup, r.inp) == 0
             return r.exists(q)
         
+            
+    def tounion(self):
+        return RegionOp.pack_type(self, RegionType.UNION)
+    
+    def convexified_diag(self, v = None, cross_only = True, skip_simplify = False):
+        """Convexify with respect to the real variables in v along the diagonal, return result"""
+        if v is None:
+            v = self.allcomprealvar_exprlist()
+            
+        index = IVarIndex()
+        self.record_to(index)
+        for x in v:
+            x.record_to(index)
+        namemap = [dict(), dict()]
+        v_new = [[], []]
+        toelim = Expr.zero()
+        for x in v:
+            cname = x.get_name()
+            for it in range(2):
+                nname = index.name_avoid(cname)
+                namemap[it][cname] = nname
+                v_new[it].append(Expr.real(nname))
+                Expr.real(nname).record_to(index)
+                toelim += Expr.real(nname)
+                
+            
+        r = RegionOp.empty()
+        ru = self.tounion()
+        
+        if cross_only:
+            r = ru.copy()
+            
+        for i, j in itertools.combinations(range(len(v)), 2):
+            v0j = v[i] + v[j] - v_new[0][i]
+            v1j = v[i] + v[j] - v_new[1][i]
+            for k0, a0 in enumerate(ru):
+                a0t = a0.copy()
+                a0t.substitute(v[i], v_new[0][i])
+                a0t.substitute(v[j], v0j)
+                for k1, a1 in enumerate(ru):
+                    if cross_only and k0 == k1:
+                        continue
+                    a1t = a1.copy()
+                    a1t.substitute(v[i], v_new[1][i])
+                    a1t.substitute(v[j], v1j)
+                    t = a0t & a1t
+                    t &= (v[i] >= v_new[0][i]) & (v[i] <= v_new[1][i])
+                    
+                    #print(str(i) + " , " + str(j))
+                    r |= t.exists(v_new[0][i]+v_new[1][i])
+                    
+        if not skip_simplify:
+            return r.simplified()
+        else:
+            return r
+    
     
     def isconvex(self):
         """Check whether region is convex
@@ -7832,12 +11436,15 @@ class Region:
         zero_group = 2: group all nonnegative terms as a single inequality
         """
         
+        if not PsiOpts.settings.get("simplify_enabled", False):
+            return self
         
         write_pf_enabled = (PsiOpts.settings.get("proof_enabled", False) 
                             and PsiOpts.settings.get("proof_step_simplify", False))
         if write_pf_enabled:
             prevself = self.copy()
         
+        #self.remove_missing_aux()
         
         if reg is None:
             reg = Region.universe()
@@ -7985,6 +11592,7 @@ class Region:
                 pf += ProofObj.from_region(self, c = "Simplified as")
                 PsiOpts.set_setting(proof_add = pf)
             
+        return self
             
     
     def iand_simplify_quick(self, other, skip_simplify = True):
@@ -8059,30 +11667,137 @@ class Region:
             self.exprs_gei = t.exprs_ge
             self.exprs_eqi = t.exprs_eq
         
-    def symmetrized(self, symm_set, skip_simplify = False):
+    def symmetrized(self, symm_set, union = False, convexify = False, skip_simplify = False):
         if symm_set is None:
             return self
         
         r = Region.universe()
+        if union:
+            r = RegionOp.empty()
+            
         cs = self.copy()
         n = len(symm_set)
-        tmpvar = Comp.array("#TMPVAR", 0, n)
+        m = min(len(a) for a in symm_set)
+        tmpvar = [[] for i in range(n)]
+        
         for i in range(n):
-            cs.substitute(symm_set[i], tmpvar[i])
+            for j in range(m):
+                if isinstance(symm_set[i][j], Comp):
+                    tmpvar[i].append(Comp.rv("#TMPVAR" + str(i) + "_" + str(j)))
+                else:
+                    tmpvar[i].append(Expr.real("#TMPVAR" + str(i) + "_" + str(j)))
+                cs.substitute(symm_set[i][j], tmpvar[i][j])
+                
         
         for p in itertools.permutations(range(n)):
             tcs = cs.copy()
             for i in range(n):
-                tcs.substitute(tmpvar[i], symm_set[p[i]])
-            r &= tcs
+                for j in range(m):
+                    tcs.substitute(tmpvar[i][j], symm_set[p[i]][j])
+            if union:
+                r |= tcs
+            else:
+                r &= tcs
+        if convexify:
+            r = r.convexified_diag(skip_simplify = True)
         
         if skip_simplify:
             return r
         else:
             return r.simplified()
         
+    def simplify_bayesnet(self, reg = None):
         
-    def simplify_noredundant(self, reg = None, proc = None):
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple_noaux()
+        if reg is None:
+            reg = Region.universe()
+            
+        icexpr = Expr.zero()
+        for x in self.exprs_ge:
+            if x.isnonpos():
+                icexpr += x
+        for x in self.exprs_eq:
+            if x.isnonpos():
+                icexpr += x
+            elif x.isnonneg():
+                icexpr -= x
+        
+        if reg.isuniverse() and icexpr.iszero():
+            return
+        
+        bnet = (reg & (icexpr >= 0)).get_bayesnet(skip_simplify = True)
+        
+        
+        for x in self.exprs_ge:
+            if not x.isnonpos():
+                x.simplify(bnet = bnet)
+        
+        for x in self.exprs_eq:
+            if not (x.isnonpos() or x.isnonneg()):
+                x.simplify(bnet = bnet)
+        
+        return self
+        
+    def zero_exprs(self, avoid = None):
+        for x in self.exprs_ge:
+            if x is avoid:
+                continue
+            if x.isnonpos():
+                for y in x:
+                    yield y
+        
+        for x in self.exprs_eq:
+            if x is avoid:
+                continue
+            if x.isnonpos() or x.isnonneg():
+                for y in x:
+                    yield y
+            else:
+                yield x
+    
+    def empty_rvs(self):
+        r = Comp.empty()
+        for x in self.zero_exprs():
+            if len(x) == 1 and x.terms[0][1] != 0 and x.terms[0][0].ish():
+                r += x.terms[0][0].x[0]
+        return r
+        
+    def simplify_pair(self, reg = None):
+        did = False
+        
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple_noaux()
+        if reg is None:
+            reg = Region.universe()
+    
+        for x, xs in [(a, ">=") for a in self.exprs_ge] + [(a, "==") for a in self.exprs_eq]:
+            xcomp = x.complexity()
+            for y in igen.pm(itertools.chain(self.zero_exprs(avoid = x), reg.zero_exprs())):
+                x2 = (x + y).simplified()
+                x2comp = x2.complexity()
+                if x2comp < xcomp:
+                    did = True
+                    x.copy_(x2)
+                    xcomp = x2comp
+        
+        for z in reg.empty_rvs():
+            did = True
+            self.substitute(z, Comp.empty())
+        
+        for z in self.empty_rvs():
+            did = True
+            self.substitute(z, Comp.empty())
+            self.exprs_eq.append(Expr.H(z))
+        
+        if did:
+            self.simplify_quick()
+        
+        return self
+                    
+            
+        
+    def simplify_redundant(self, reg = None, proc = None, full = True):
         write_pf_enabled = (PsiOpts.settings.get("proof_enabled", False) 
                             and PsiOpts.settings.get("proof_step_simplify", False))
         if write_pf_enabled:
@@ -8096,10 +11811,16 @@ class Region:
         #if self.isregtermpresent():
         #    return self
         
+        allcompreal = self.allcompreal() + reg.allcompreal()
+        
         for i in range(len(self.exprs_ge) - 1, -1, -1):
+            if PsiOpts.is_timer_ended():
+                break
             t = self.exprs_ge[i]
             self.exprs_ge[i] = Expr.zero()
             cs = self.imp_intersection_noaux() & reg
+            if not full:
+                cs.remove_notcontained(t.allcomp() + allcompreal)
             if proc is not None:
                 cs = proc(cs)
             if not (cs <= (t >= 0)).check_plain():
@@ -8110,9 +11831,13 @@ class Region:
         self.exprs_ge = [x for x in self.exprs_ge if not x.iszero()]
         
         for i in range(len(self.exprs_eq) - 1, -1, -1):
+            if PsiOpts.is_timer_ended():
+                break
             t = self.exprs_eq[i]
             self.exprs_eq[i] = Expr.zero()
             cs = self.imp_intersection_noaux() & reg
+            if not full:
+                cs.remove_notcontained(t.allcomp() + allcompreal)
             if proc is not None:
                 cs = proc(cs)
             if not (cs <= (t == 0)).check_plain():
@@ -8123,9 +11848,13 @@ class Region:
         self.exprs_eq = [x for x in self.exprs_eq if not x.iszero()]
         
         for i in range(len(self.exprs_gei) - 1, -1, -1):
+            if PsiOpts.is_timer_ended():
+                break
             t = self.exprs_gei[i]
             self.exprs_gei[i] = Expr.zero()
             cs = self.imp_flippedonly_noaux() & reg
+            if not full:
+                cs.remove_notcontained(t.allcomp() + allcompreal)
             if proc is not None:
                 cs = proc(cs)
             if not (cs <= (t >= 0)).check_plain():
@@ -8136,9 +11865,13 @@ class Region:
         self.exprs_gei = [x for x in self.exprs_gei if not x.iszero()]
         
         for i in range(len(self.exprs_eqi) - 1, -1, -1):
+            if PsiOpts.is_timer_ended():
+                break
             t = self.exprs_eqi[i]
             self.exprs_eqi[i] = Expr.zero()
             cs = self.imp_flippedonly_noaux() & reg
+            if not full:
+                cs.remove_notcontained(t.allcomp() + allcompreal)
             if proc is not None:
                 cs = proc(cs)
             if not (cs <= (t == 0)).check_plain():
@@ -8151,7 +11884,7 @@ class Region:
         if False:
             if self.imp_present():
                 t = self.imp_flippedonly()
-                t.simplify_noredundant(reg)
+                t.simplify_redundant(reg)
                 self.exprs_gei = t.exprs_ge
                 self.exprs_eqi = t.exprs_eq
             
@@ -8170,26 +11903,336 @@ class Region:
         self.symm_sort(symm_set)
         self.simplify_quick()
         if not quick:
-            self.simplify_noredundant(proc = lambda t: t.symmetrized(symm_set, skip_simplify = True))
+            self.simplify_redundant(proc = lambda t: t.symmetrized(symm_set, skip_simplify = True))
         
+    def simplify_aux(self, reg = None, cases = None):
+        
+        if self.aux.isempty():
+            return self
+        
+        if self.imp_present():
+            return self
+        
+        leaveone = None
+        if cases is not None:
+            leaveone = True
+            
+        if reg is None:
+            reg = Region.universe()
+            
+        did = False
+        index = IVarIndex()
+        self.record_to(index)
+        reg.record_to(index)
+        
+        taux = self.aux.copy()
+        taux2 = taux.copy()
+        tauxi = self.auxi.copy()
+        self.aux = Comp.empty()
+        self.auxi = Comp.empty()
+        
+        # print(self)
+        for a in taux:
+            if PsiOpts.is_timer_ended():
+                break
+            a2 = Comp.rv(index.name_avoid(a.get_name()))
+            cs = (self.consonly().substituted(a, a2) & reg) >> self.exists(a)
+            #hint_aux_avoid = self.get_aux_avoid_list()
+            hint_aux_avoid = [(a, a2)]
+            # print(cs)
+            for rr in cs.check_getaux_inplace_gen(hint_aux_avoid = hint_aux_avoid, leaveone = leaveone):
+                stype = iutil.signal_type(rr)
+                if stype == "":
+                    # print(rr)
+                    ar = a.copy()
+                    Comp.substitute_list(ar, rr)
+                    if ar == a:
+                        continue
+                    # print(self)
+                    self.substitute(a, ar)
+                    # print(self)
+                    taux2 -= a
+                    did = True
+                    break
+                elif stype == "leaveone" and cases is not None:
+                    ar = a.copy()
+                    Comp.substitute_list(ar, rr[1])
+                    if ar == a:
+                        continue
+                    tr = self.copy()
+                    # tr.iand_norename(rr[2] <= 0)
+                    tr.substitute(a, ar)
+                    
+                    tr.aux = taux2 - a
+                    tr.auxi = tauxi.copy()
+                    tr.simplify_quick()
+                    tr.simplify_aux(reg, cases)
+                    
+                    cases.append(tr)
+                    self.iand_norename(rr[2] >= 0)
+                    did = True
+                
+        self.aux = taux2
+        self.auxi = tauxi
+        if did:
+            self.simplify_quick()
+        
+        return self
+    
         
     def simplify_imp(self, reg = None):
         if not self.imp_present():
             return
+        
+    def expanded_cases_reduce(self, reg = None, skip_simplify = False):
+        r = self.copy()
+        cases = []
+        r.simplify_aux(reg, cases)
+        if len(cases) == 0:
+            return r
+        else:
+            r2 = RegionOp.union([r] + cases)
+            if not skip_simplify:
+                return r2.simplified()
+            else:
+                return r2
+        
+    def expanded_cases(self, reg = None, leaveone = True, skip_simplify = False):
+        
+        if self.aux.isempty():
+            return None
+        
+        if self.imp_present():
+            return None
+        
+        cases = []
+            
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple()
+        if reg is None:
+            reg = Region.universe()
+            
+        did = False
+        index = IVarIndex()
+        self.record_to(index)
+        reg.record_to(index)
+        
+        # taux = self.aux.copy()
+        # taux2 = taux.copy()
+        # tauxi = self.auxi.copy()
+        # self.aux = Comp.empty()
+        # self.auxi = Comp.empty()
+        
+        rmap = index.calc_rename_map(self.aux)
+        cs2 = self.copy()
+        cs2.rename_map(rmap)
+    
+        s2 = self.consonly()
+        s2.aux = Comp.empty()
+        cs = (s2 & reg) >> cs2
+        hint_aux_avoid = cs.get_aux_avoid_list()
+        
+        with PsiOpts(forall_multiuse_numsave = 0):
+            for rr in cs.check_getaux_inplace_gen(hint_aux_avoid = hint_aux_avoid, leaveone = leaveone):
+                stype = iutil.signal_type(rr)
+                if stype == "":
+                    continue
+                
+                    print(rr)
+                    cs3 = cs2.copy()
+                    Comp.substitute_list(cs3, rr, isaux = True)
+                    cs3.eliminate(self.aux.inter(cs3.allcomp()))
+                    cases.append(cs3)
+                    
+                elif stype == "leaveone":
+                    print(str(rr[1]) + "  " + str(rr[2]))
+                    cs3 = cs2.copy()
+                    Comp.substitute_list(cs3, rr[1], isaux = True)
+                    cs3.eliminate(self.aux.inter(cs3.allcomp()))
+                    cases.append(cs3)
+                    
+                    cs2.iand_norename(rr[2] >= 0)
+                    
+                if PsiOpts.is_timer_ended():
+                    break
+        
+        cs3 = cs2.copy()
+        cs3.rename_map({b: a for a, b in rmap.items()})
+        cases.append(cs3)
+        
+        
+        if len(cases) == 1:
+            return cases[0]
+        else:
+            r2 = RegionOp.union()
+            for a in cases:
+                r2 |= a
+            if not skip_simplify:
+                return r2.simplified()
+            else:
+                return r2
+                
+            
+    def simplify_aux_empty(self, reg = None, skip_simplify = False):
+        
+        if self.aux.isempty():
+            return self
+        
+        if self.imp_present():
+            return self
+        
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple()
+        if reg is None:
+            reg = Region.universe()
+        
+        cs = self.copy()
+        cs.aux = Comp.empty()
+        cs = cs & reg
+        
+        index_self = IVarIndex()
+        cs.record_to(index_self)
+        progs = []
+        
+        for taux in igen.subset(self.aux, minsize = 2):
+            cs2 = self.copy()
+            cs2.aux = Comp.empty()
+            cs2.substitute(taux, Comp.empty())
+            # if cs.implies(cs2):
+            if cs.implies_saved(cs2, index_self, progs):
+                self.substitute_aux(taux, Comp.empty())
+                if not skip_simplify:
+                    self.simplify_quick()
+                self.simplify_aux_empty(reg, skip_simplify)
+                return self
+        
+        return self
+    
+            
+    def simplify_aux_recombine(self, reg = None, skip_simplify = False):
+        
+        if self.aux.isempty():
+            return self
+        
+        if self.imp_present():
+            return self
+        
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple()
+        if reg is None:
+            reg = Region.universe()
+        
+        did = False
+        index = IVarIndex()
+        self.record_to(index)
+        reg.record_to(index)
+        
+        
+        rmap = index.calc_rename_map(self.aux)
+        cs2 = self.copy()
+        cs2.rename_map(rmap)
+    
+        s2 = self.consonly()
+        s2.aux = Comp.empty()
+        cs = (s2 & reg) >> cs2
+        hint_aux_avoid = cs.get_aux_avoid_list()
+        
+        cmin = (len(self.aux), -len(self.aux))
+        minlist = None
+        
+        with PsiOpts(auxsearch_leaveone_add_ineq = False):
+            for rr in cs.check_getaux_inplace_gen(hint_aux_avoid = hint_aux_avoid):
+                stype = iutil.signal_type(rr)
+                if stype == "":
+                    # print(rr)
+                    
+                    cnaux = 0
+                    csize = 0
+                    clist = []
+                    cvar = Comp.empty()
+                    for a in cs2.aux:
+                        b = a.copy()
+                        Comp.substitute_list(b, rr)
+                        csize += len(b)
+                        cvar += b
+                        clist.append(b)
+                    
+                    for a in self.aux:
+                        if cvar.ispresent(a):
+                            cnaux += 1
+                    
+                    t = (cnaux, -csize)
+                    if t < cmin:
+                        cmin = t
+                        minlist = clist
+                    
+                if PsiOpts.is_timer_ended():
+                    break
+                
+                    
+        if minlist is None:
+            return self
+        
+        prevaux = self.aux.copy()
+        self.rename_map(rmap)
+        selfaux = self.aux.copy()
+        for a, b in zip(selfaux, minlist):
+            self.substitute_aux(a, b)
+        self.eliminate(prevaux.inter(self.allcomp()))
+        
+        if not skip_simplify:
+            self.simplify_quick()
+            
+        return self
+    
+                
         
     def simplify(self, reg = None, zero_group = 0):
         """Simplify a region in place
         Optional argument reg with constraints assumed to be true
         zero_group = 2: group all nonnegative terms as a single inequality
         """
+        if not PsiOpts.settings.get("simplify_enabled", False):
+            return self
         
         if reg is None:
             reg = Region.universe()
             
         self.simplify_quick(reg, zero_group)
         
-        self.simplify_noredundant(reg)
+        if not PsiOpts.settings.get("simplify_quick", False):
+            if PsiOpts.settings.get("simplify_remove_missing_aux", False):
+                self.remove_missing_aux()
+            if PsiOpts.settings.get("simplify_aux_commonpart", False):
+                self.simplify_aux_commonpart(reg, 
+                        maxlen = PsiOpts.settings.get("simplify_aux_xor_len", False))
+            
+            
+            if PsiOpts.settings.get("simplify_aux_empty", False):
+                self.simplify_aux_empty()
+            
+            if PsiOpts.settings.get("simplify_aux_recombine", False):
+                self.simplify_aux_recombine()
+            elif PsiOpts.settings.get("simplify_aux", False):
+                self.simplify_aux()
+                
+            if PsiOpts.settings.get("simplify_redundant", False):
+                self.simplify_redundant(reg, full = PsiOpts.settings.get("simplify_redundant_full", False))
+                
+            if PsiOpts.settings.get("simplify_bayesnet", False):
+                self.simplify_bayesnet(reg)
+                
+            if PsiOpts.settings.get("simplify_pair", False):
+                self.simplify_pair(reg)
+                
+            if PsiOpts.settings.get("simplify_remove_missing_aux", False):
+                self.remove_missing_aux()
         
+        return self
+    
+    
+    def simplify_union(self, reg = None):
+        self.simplify(reg)
         return self
     
     
@@ -8230,12 +12273,18 @@ class Region:
                 icexpr -= x
         return icexpr
     
-    def get_bayesnet(self, skip_simplify = False):
+    def get_bayesnet(self, roots = None, skip_simplify = False):
         """Return a Bayesian network containing the conditional independence
         conditions in this region
         """
         icexpr = self.get_ic(skip_simplify)
-        return BayesNet.from_ic(icexpr).tsorted()
+        return BayesNet.from_ic(icexpr, roots = roots).tsorted()
+    
+    def graph(self):
+        """Return the Bayesian network among the random variables as a 
+        graphviz digraph that can be displayed in the console.
+        """
+        return self.get_bayesnet().graph()
     
     def get_bayesnet_imp(self, skip_simplify = False):
         """Return a Bayesian network containing the conditional independence
@@ -8254,11 +12303,140 @@ class Region:
             elif x.isnonneg():
                 icexpr -= x
         return BayesNet.from_ic(icexpr).tsorted()
+    
+    
+    def table(self, *args, skip_cons = False, plot = True, **kwargs):
+        """Plot the information diagram as a Gray-coded table.
+        """
         
+        ceps = PsiOpts.settings["eps"]
+        index = IVarIndex()
+        
+        cmodel = None
+        for a in args:
+            if isinstance(a, ConcModel) or isinstance(a, LinearProg):
+                cmodel = a
+        
+        for a in args:
+            if isinstance(a, Comp):
+                a.record_to(index)
+                
+        self.get_bayesnet().allcomp().record_to(index)
+        if cmodel is not None:
+            if isinstance(cmodel, ConcModel):
+                cmodel.get_bayesnet().allcomp().record_to(index)
+        
+        for a in args:
+            if isinstance(a, Expr) or isinstance(a, Region):
+                a.record_to(index)
+        
+        cs = self
+        if cmodel is not None:
+            if isinstance(cmodel, ConcModel):
+                cs = cs & cmodel.get_bayesnet().get_region()
+        cs = cs.imp_flipped()
+        
+        cs.record_to(index)
+        comprv = index.comprv
+        
+        r = CellTable(comprv)
+        progs = []
+        # progs.append(self.init_prog(index, lptype = LinearProgType.H))
+        progs.append(cs.init_prog(index))
+        
+        creg = Region.universe()
+        
+        for mask in range(1, 1 << len(comprv)):
+            # ch = H(comprv.from_mask(mask) | comprv.from_mask(((1 << len(comprv)) - 1) ^ mask))
+            ch = I(alland(comprv[i] for i in range(len(comprv)) if mask & (1 << i)) 
+                   | comprv.from_mask(((1 << len(comprv)) - 1) ^ mask))
+            ispos = ch.isnonneg() or cs.implies_ineq_prog(index, progs, ch, ">=")
+            isneg = cs.implies_ineq_prog(index, progs, -ch, ">=")
+            # print(str(ch) + "  " + str(ispos) + "  " + str(isneg))
+            if ispos and isneg:
+                r.set_attr(mask, "enabled", False)
+                if not skip_cons:
+                    creg.iand_norename(ch == 0)
+            elif ispos:
+                if cmodel is None:
+                    r.set_attr(mask, "ispos", True)
+                if not skip_cons and not ch.isnonneg():
+                    creg.iand_norename(ch >= 0)
+            elif isneg:
+                if cmodel is None:
+                    r.set_attr(mask, "isneg", True)
+                if not skip_cons:
+                    creg.iand_norename(ch <= 0)
+                    
+            if cmodel is not None:
+                r.set_attr(mask, "cval", cmodel[ch])
+                
+        
+        cnexpr = 0
+        
+        cargs = []
+        if not skip_cons:
+            for cexpr in self.exprs_ge:
+                if not creg.implies(cexpr >= 0):
+                    cargs.append(cexpr >= 0)
+            for cexpr in self.exprs_eq:
+                if not creg.implies(cexpr == 0):
+                    cargs.append(cexpr == 0)
+        
+        cargs += args
+        
+        for a in cargs:
+            exprlist = []
+            if isinstance(a, Expr):
+                exprlist = [(a, None)]
+            elif isinstance(a, Region):
+                exprlist = [(b, ">=") for b in a.exprs_ge] + [(b, "==") for b in a.exprs_eq]
+            for b, sn in exprlist:
+                if sn == ">=":
+                    r.add_expr(b >= 0, None if cmodel is None else cmodel[b >= 0])
+                elif sn == "==":
+                    r.add_expr(b == 0, None if cmodel is None else cmodel[b == 0])
+                else:
+                    r.add_expr(b, None if cmodel is None else cmodel[b])
+                maskvals = [0.0 for mask in range(1 << len(comprv))]
+                for v, c in b.terms:
+                    if v.get_type() == TermType.IC:
+                        xmasks = [comprv.get_mask(x) for x in v.x]
+                        zmask = comprv.get_mask(v.z)
+                        for mask in range(1, 1 << len(comprv)):
+                            if mask & zmask:
+                                continue
+                            if any(not(mask & xmask) for xmask in xmasks):
+                                continue
+                            maskvals[mask] += c
+                            # print(mask)
+                            
+                for mask in range(1, 1 << len(comprv)):
+                    if abs(maskvals[mask]) > ceps:
+                        r.set_expr_val(mask, maskvals[mask])
+                        # r.set_attr(mask, "val_" + str(cnexpr), maskvals[mask])
+                cnexpr += 1
+                
+        # r.nexpr = cnexpr
+        
+        if plot:
+            r.plot(**kwargs)
+            
+        return r
+    
+    
+    def venn(self, *args, style = None, **kwargs):
+        """Plot the information diagram as a Venn diagram.
+        Can handle up to 5 random variables (uses Branko Grunbaum's Venn diagram for n=5).
+        """
+        if style is None:
+            style = ""
+        style = "venn,blend," + style
+        return self.table(*args, style = style, **kwargs)
+    
     
     def eliminate_term_eq(self, w):
-        """Do NOT use this directly. Use eliminate instead
-        """
+        
         ee = None
         
         if ee is None:
@@ -8286,10 +12464,51 @@ class Region:
         return False
         
         
+    def get_lb_ub_eq(self, w):
+        """
+        Get lower bounds, upper bounds and equality constraints about w.
+
+        Parameters
+        ----------
+        w : Expr
+            The real variable of interest.
+
+        Returns
+        -------
+        tuple
+            A tuple of 3 lists of Expr: Lower bounds, upper bounds and 
+            equality constraints about w.
+
+        """
+        
+        if isinstance(w, Expr):
+            w = Term.fromcomp(w.allcomp())
+        
+        el = []
+        er = []
+        ee = []
+        
+        for x in self.exprs_ge:
+            c = x.get_coeff(w)
+            if abs(c) <= PsiOpts.settings["eps"]:
+                pass
+            elif c > 0:
+                er.append((x * (-1.0 / c)).removed_term(w))
+            else:
+                el.append((x * (-1.0 / c)).removed_term(w))
+                
+        for x in self.exprs_eq:
+            c = x.get_coeff(w)
+            if abs(c) <= PsiOpts.settings["eps"]:
+                pass
+            else:
+                ee.append((x * (-1.0 / c)).removed_term(w))
+        
+        return (er, el, ee)
+        
+        
         
     def eliminate_term(self, w, forall = False):
-        """Do NOT use this directly. Use eliminate instead
-        """
         el = []
         er = []
         ee = []
@@ -8317,9 +12536,9 @@ class Region:
         erni = len(er)
         eeni = len(ee)
         
-        #if not forall and elni + erni + eeni > 0:
-        #    self.setuniverse()
-        #    return self
+        if not forall and elni + erni + eeni > 0:
+            self.setuniverse()
+            return self
         
         for x in self.exprs_ge:
             c = x.get_coeff(w)
@@ -8431,49 +12650,88 @@ class Region:
         self.aux -= w
         self.auxi -= w
         
-    def eliminate(self, w, reg = None, toreal = False, forall = False):
+    def remove_missing_aux(self):
+        #return
+        taux = self.aux
+        self.aux = Comp.empty()
+        tauxi = self.auxi
+        self.auxi = Comp.empty()
+        allcomp = self.allcomprv()
+        self.aux = taux.inter(allcomp)
+        self.auxi = tauxi.inter(allcomp)
+        
+        
+    def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False):
         """Fourier-Motzkin elimination, in place. 
         w is the Expr object with the real variables to eliminate. 
         If w contains random variables, they will be treated as auxiliary RV.
         """
         
-        if isinstance(w, CompList):
+        if isinstance(w, CompArray):
             w = w.get_comp()
         
-        if isinstance(w, Comp):
-            w = Expr.H(w)
+        if isinstance(w, list):
+            w = sum((a.allcomp() for a in w), Comp.empty())
         
-        if not toreal and not forall and not self.auxi.isempty() and any(a.get_type() == TermType.IC for a, c in w.terms):
+        # if isinstance(w, Comp):
+        #     w = Expr.H(w)
+        
+        if not toreal and not forall and not self.auxi.isempty() and any(v.get_type() == IVarType.RV for v in w.allcomp()):
             return RegionOp.inter([self]).eliminate(w, reg, toreal, forall)
         
-        self.simplify_quick(reg)
+        #self.simplify_quick(reg)
         
         if toreal and PsiOpts.settings["eliminate_rays"]:
             w2 = w
-            w = Expr.zero()
+            w = Comp.empty()
             toelim = Comp.empty()
-            for (a, c) in w2.terms:
-                if a.get_type() == TermType.IC:
-                    toelim += a.allcomp()
-                else:
-                    w.terms.append((a, c))
+            
+            
+            for v in w2.allcomp():
+                if toreal or v.get_type() == IVarType.REAL:
+                    w += v
+                elif v.get_type() == IVarType.RV:
+                    toelim += v
+                    
             if not toelim.isempty():
                 self.eliminate_toreal_rays(toelim)
         
-        for (a, c) in w.terms:
-            if a.get_type() == TermType.REAL:
-                self.eliminate_term(a, forall = forall)
-                self.simplify(reg)
-            elif a.get_type() == TermType.IC:
-                if toreal:
-                    self.eliminate_toreal(a.allcomp(), forall = forall)
-                    self.simplify(reg)
-                else:
-                    if forall:
-                        self.auxi += a.allcomp()
+        toelim = Comp.empty()
+        
+        simplify_needed = False
+        for v in w.allcomp():
+            if v.get_type() == IVarType.REAL or toreal:
+                if simplify_needed:
+                    if quick:
+                        self.simplify_quick(reg)
                     else:
-                        self.aux += a.allcomp()
+                        with PsiOpts(simplify_redundant_full = False, 
+                                     simplify_aux_commonpart = False, 
+                                     simplify_aux = False,
+                                     simplify_bayesnet = False):
+                            self.simplify(reg)
+                            
+                if v.get_type() == IVarType.REAL:
+                    self.eliminate_term(Term.fromcomp(v), forall = forall)
+                else:
+                    self.eliminate_toreal(v, forall = forall)
+                    
+                simplify_needed = True
                 
+            else:
+                if forall:
+                    self.auxi += v
+                else:
+                    self.aux += v
+        
+        
+        if simplify_needed:
+            if quick:
+                self.simplify_quick(reg)
+            else:
+                self.simplify(reg)
+        
+        
         return self
         
     def eliminate_quick(self, w, reg = None, toreal = False, forall = False):
@@ -8482,32 +12740,7 @@ class Region:
         If w contains random variables, they will be treated as auxiliary RV.
         """
         
-        if isinstance(w, CompList):
-            w = w.get_comp()
-        
-        if isinstance(w, Comp):
-            w = Expr.H(w)
-        
-        if not toreal and not forall and not self.auxi.isempty() and any(a.get_type() == TermType.IC for a, c in w.terms):
-            return RegionOp.inter([self]).eliminate(w, reg, toreal, forall)
-        
-        self.simplify_quick(reg)
-        
-        for (a, c) in w.terms:
-            if a.get_type() == TermType.REAL:
-                self.eliminate_term(a, forall = forall)
-                self.simplify_quick(reg)
-            elif a.get_type() == TermType.IC:
-                if toreal:
-                    self.eliminate_toreal(a.allcomp(), forall = forall)
-                    self.simplify_quick(reg)
-                else:
-                    if forall:
-                        self.auxi += a.allcomp()
-                    else:
-                        self.aux += a.allcomp()
-                
-        return self
+        return self.eliminate(w, reg = reg, toreal = toreal, forall = forall, quick = True)
         
     def eliminated(self, w, reg = None, toreal = False, forall = False):
         """Fourier-Motzkin elimination, return region after elimination. 
@@ -8528,7 +12761,7 @@ class Region:
         return r
         
     def exists(self, w = None, reg = None, toreal = False):
-        """Alias of eliminated
+        """Alias of eliminated.
         """
         if w is None:
             w = self.allcomprv_noaux()
@@ -8537,7 +12770,7 @@ class Region:
         return r
         
     def exists_quick(self, w = None, reg = None, toreal = False):
-        """Alias of eliminated_quick
+        """Alias of eliminated_quick.
         """
         if w is None:
             w = self.allcomprv_noaux()
@@ -8546,7 +12779,7 @@ class Region:
         return r
         
     def forall(self, w = None, reg = None, toreal = False):
-        """Region of intersection for all variable w
+        """Region of intersection for all variable w.
         """
         if w is None:
             w = self.allcomprv_noaux()
@@ -8555,7 +12788,7 @@ class Region:
         return r
         
     def forall_quick(self, w = None, reg = None, toreal = False):
-        """Region of intersection for all variable w
+        """Region of intersection for all variable w.
         """
         if w is None:
             w = self.allcomprv_noaux()
@@ -8563,6 +12796,40 @@ class Region:
         r = r.eliminate_quick(w, reg, toreal, forall = True)
         return r
         
+    def projected(self, w = None, reg = None, quick = False):
+        """Project the region to real variables in the list w by eliminating all
+        other real variables. E.g. for a Region r with 3 real variables R1,R2,R3,
+        r.projected([R1, R2]) keeps R1,R2 and eliminates R3, and 
+        r.projected(S == R1+R2+R3) projects the region to the diagonal S == R1+R2+R3
+        (i.e., introduces S and eliminates R1,R2,R3).
+        """
+        if w is None:
+            w = []
+        if isinstance(w, Expr):
+            w = list(w)
+        if isinstance(w, Region):
+            w = [w]
+        compreal = self.allcompreal()
+        
+        r = self.copy()
+        for a in w:
+            if isinstance(a, Expr):
+                compreal -= a.allcomp()
+            elif isinstance(a, Region):
+                if r.get_type() == RegionType.NORMAL and a.get_type() == RegionType.NORMAL:
+                    r.iand_norename(a)
+                else:
+                    r &= a
+        
+        # print(r)
+        
+        if quick:
+            r = r.eliminate_quick(compreal, reg)
+        else:
+            r = r.eliminate(compreal, reg)
+        return r
+        
+    
     def marginal_eliminate(self, w):
         """Set input, in place. 
         Denote the RV's in w (type Comp) as input variables, and the region
@@ -8664,6 +12931,9 @@ class Region:
         r = self.copy()
         r *= 1.0 / other
         return r
+    
+    def distribute(self):
+        return self
     
     def sum_minkowski(self, other):
         """Minkowski sum of two regions with respect to their real variables.
@@ -8999,7 +13269,7 @@ class Region:
                 else:
                     a2 = (a, None)
                     
-            if isinstance(a2[1], ExprList) or isinstance(a2[1], CompList):
+            if isinstance(a2[1], ExprArray) or isinstance(a2[1], CompArray):
                 maxlen = max(maxlen, len(a2[1]))
             
             a2[0].record_to(index_r)
@@ -9060,7 +13330,7 @@ class Region:
                 tex = ex.copy()
                 for a in entries:
                     if isinstance(a, tuple):
-                        if isinstance(a[1], ExprList) or isinstance(a[1], CompList):
+                        if isinstance(a[1], ExprArray) or isinstance(a[1], CompArray):
                             if i < len(a[1]):
                                 tex.substitute(a[0], a[1][i])
                             else:
@@ -9126,6 +13396,8 @@ class Region:
                             
         
         for ex in exgen():
+            if PsiOpts.is_timer_ended():
+                break
             
             if skipto_ex is not None:
                 
@@ -9197,19 +13469,26 @@ class Region:
         if style & PsiOpts.STR_STYLE_LATEX:
             nlstr = "\\\\\n"
             
-        if self.imp_present():
-            r += self.imp_flippedonly().tostring(style = style, tosort = tosort, lhsvar = lhsvar, inden = inden)
+        imp_pres = False
+        if self.exprs_gei or self.exprs_eqi:
+            imp_pres = True
+            r += " " * inden + "("
+            r += self.imp_flippedonly_noaux().tostring(style = style, tosort = tosort, lhsvar = lhsvar, inden = inden).lstrip()
             if style == PsiOpts.STR_STYLE_PSITIP:
                 r += " >>" + nlstr
             elif style & PsiOpts.STR_STYLE_LATEX:
                 r += "\to" + nlstr
             else:
                 r += " ->" + nlstr
+            
         
         eqnlist = ([x.tostring_eqn(">=", style = style, tosort = tosort, lhsvar = lhsvar) for x in self.exprs_ge]
         + [x.tostring_eqn("==", style = style, tosort = tosort, lhsvar = lhsvar) for x in self.exprs_eq])
         if tosort:
-            eqnlist = sorted(eqnlist, key=lambda a: (len(a), a))
+            eqnlist = zip(eqnlist, [lhsvar is not None and any(x.ispresent(t) for t in lhsvar) for x in self.exprs_ge]
+                          + [lhsvar is not None and any(x.ispresent(t) for t in lhsvar) for x in self.exprs_eq])
+            eqnlist = sorted(eqnlist, key=lambda a: (not a[1], len(a[0]), a[0]))
+            eqnlist = [x for x, t in eqnlist]
         
         first = True
         isplu = not self.aux.isempty() or len(eqnlist) > 1
@@ -9263,14 +13542,6 @@ class Region:
             if style == PsiOpts.STR_STYLE_PSITIP:
                 r += " universe()"
         
-        if not self.aux.isempty():
-            if style == PsiOpts.STR_STYLE_PSITIP:
-                r += " ^ "
-            elif style & PsiOpts.STR_STYLE_LATEX:
-                r += " , \\exists "
-            else:
-                r += " | "
-            r += self.aux.tostring(style = style, tosort = tosort)
             
         if style == PsiOpts.STR_STYLE_PSITIP:
             r += " )"
@@ -9281,6 +13552,41 @@ class Region:
                 r += " \\}"
         else:
             r += " }"
+            
+            
+        if not self.aux.isempty():
+            if style == PsiOpts.STR_STYLE_PSITIP:
+                pass
+            else:
+                if style & PsiOpts.STR_STYLE_LATEX:
+                    r += " , \\exists "
+                else:
+                    r += " , exists "
+                r += self.aux.tostring(style = style, tosort = tosort)
+        
+        if not self.auxi.isempty():
+            if style == PsiOpts.STR_STYLE_PSITIP:
+                pass
+            else:
+                if style & PsiOpts.STR_STYLE_LATEX:
+                    r += " , \\forall "
+                else:
+                    r += " , forall "
+                r += self.auxi.tostring(style = style, tosort = tosort)
+                
+        if imp_pres:
+            r += ")"
+            
+        
+        if not self.aux.isempty():
+            if style == PsiOpts.STR_STYLE_PSITIP:
+                r += ".exists(" + self.aux.tostring(style = style, tosort = tosort) + ")"
+        
+        if not self.auxi.isempty():
+            if style == PsiOpts.STR_STYLE_PSITIP:
+                r += ".forall(" + self.auxi.tostring(style = style, tosort = tosort) + ")"
+            
+            
         return r
     
         
@@ -9288,7 +13594,8 @@ class Region:
         lhsvar = None
         if PsiOpts.settings.get("str_lhsreal", False):
             lhsvar = "real"
-        return self.tostring(PsiOpts.settings["str_style"], lhsvar = lhsvar)
+        return self.tostring(PsiOpts.settings["str_style"], 
+                             tosort = PsiOpts.settings["str_tosort"], lhsvar = lhsvar)
     
     def __repr__(self):
         if PsiOpts.settings.get("repr_check", False):
@@ -9301,9 +13608,11 @@ class Region:
             lhsvar = "real"
             
         if PsiOpts.settings.get("repr_simplify", False):
-            return self.simplified_quick().tostring(PsiOpts.STR_STYLE_PSITIP, lhsvar = lhsvar)
+            return self.simplified_quick().tostring(PsiOpts.STR_STYLE_PSITIP, 
+                                                    tosort = PsiOpts.settings["str_tosort"], lhsvar = lhsvar)
         
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP, lhsvar = lhsvar)
+        return self.tostring(PsiOpts.STR_STYLE_PSITIP, 
+                             tosort = PsiOpts.settings["str_tosort"], lhsvar = lhsvar)
     
         
     def __hash__(self):
@@ -9360,6 +13669,17 @@ class RegionOp(Region):
         return RegionOp(self.rtype, [(x.copy(), c) for x, c in self.regs],
                         [(x.copy(), c) for x, c in self.auxs], self.inp.copy(), self.oup.copy())
     
+    def copy_noaux(self):
+        return RegionOp(self.rtype, [(x.copy_noaux(), c) for x, c in self.regs],
+                        [], self.inp.copy(), self.oup.copy())
+        
+    def copy_(self, other):
+        self.rtype = other.rtype
+        self.regs = [(x.copy(), c) for x, c in other.regs]
+        self.auxs = [(x.copy(), c) for x, c in other.auxs]
+        self.inp = other.inp.copy()
+        self.oup = other.oup.copy()
+    
     def imp_flip(self):
         if self.get_type() == RegionType.INTER:
             self.rtype = RegionType.UNION
@@ -9377,10 +13697,14 @@ class RegionOp(Region):
     def universe_type(rtype):
         return RegionOp(rtype, [(Region.universe(), True)], [])
     
-    def union(xs):
+    def union(xs = None):
+        if xs is None:
+            xs = []
         return RegionOp(RegionType.UNION, [(x.copy(), True) for x in xs], [])
     
-    def inter(xs):
+    def inter(xs = None):
+        if xs is None:
+            xs = []
         return RegionOp(RegionType.INTER, [(x.copy(), True) for x in xs], [])
     
         
@@ -9407,6 +13731,13 @@ class RegionOp(Region):
             if z.ispresent(x):
                 return True
         return False
+    
+        
+    def allcomprealvar(self):
+        r = Comp.empty()
+        for z, c in self.regs:
+            r += z.allcomprealvar()
+        return r
     
     def rename_var(self, name0, name1):
         for x, c in self.regs:
@@ -9477,6 +13808,11 @@ class RegionOp(Region):
             x.remove_present(v)
         self.auxs = [(x, c) for x, c in self.auxs if not x.ispresent(v)]
     
+    def remove_notpresent(self, v):
+        for x, c in self.regs:
+            x.remove_notpresent(v)
+        self.auxs = [(x, c) for x, c in self.auxs if x.ispresent(v)]
+        
     def condition(self, b):
         """Condition on random variable b, in place."""
         for x, c in self.regs:
@@ -9568,6 +13904,9 @@ class RegionOp(Region):
                 return Region.empty()
             return self
         
+        if other.isuniverse(canon = True):
+            return self
+        
         self.pack_type_self(RegionType.INTER)
         other = RegionOp.pack_type(other, RegionType.INTER)
         self.aux_avoid(other)
@@ -9593,6 +13932,9 @@ class RegionOp(Region):
         if isinstance(other, bool):
             if other:
                 return Region.universe()
+            return self
+        
+        if other.isuniverse(sgn = False, canon = True):
             return self
         
         other = RegionOp.pack_type(other, RegionType.UNION)
@@ -9680,20 +14022,25 @@ class RegionOp(Region):
         #return ~Region.universe()
     
     def sum_minkowski(self, other):
-        warnings.warn("Minkowski sum of union or intersection regions is unsupported.", RuntimeWarning)
+        cs = self.copy()
+        cs.distribute()
+        other = other.copy()
+        other.distribute()
         
-        auxs = [(x.copy(), c) for x, c in self.getauxs() + other.getauxs()]
-        if self.get_type() == RegionType.UNION:
-            return RegionOp(RegionType.UNION, [(x.sum_minkowski(other), c) for x, c in self.regs], auxs)
+        # warnings.warn("Minkowski sum of union or intersection regions is unsupported.", RuntimeWarning)
+        
+        auxs = [(x.copy(), c) for x, c in cs.getauxs() + other.getauxs()]
+        if cs.get_type() == RegionType.UNION:
+            return RegionOp(RegionType.UNION, [(x.sum_minkowski(other), c) for x, c in cs.regs], auxs)
         if other.get_type() == RegionType.UNION:
-            return RegionOp(RegionType.UNION, [(self.sum_minkowski(x), c) for x, c in other.regs], auxs)
+            return RegionOp(RegionType.UNION, [(cs.sum_minkowski(x), c) for x, c in other.regs], auxs)
         
         # The following are technically wrong
-        if self.get_type() == RegionType.INTER:
-            return RegionOp(RegionType.INTER, [(x.sum_minkowski(other), c) for x, c in self.regs], auxs)
+        if cs.get_type() == RegionType.INTER:
+            return RegionOp(RegionType.INTER, [(x.sum_minkowski(other), c) for x, c in cs.regs], auxs)
         if other.get_type() == RegionType.INTER:
-            return RegionOp(RegionType.INTER, [(self.sum_minkowski(x), c) for x, c in other.regs], auxs)
-        return self.copy()
+            return RegionOp(RegionType.INTER, [(cs.sum_minkowski(x), c) for x, c in other.regs], auxs)
+        return cs.copy()
     
     
     def implicate(self, other, skip_simplify = False):
@@ -9786,9 +14133,53 @@ class RegionOp(Region):
             r[1] |= t[1]
         return r
     
-    def flatten_regterm(self, term, isimp = True):
+    def flatten_minmax(self, term, sn, bds):
+        # for x, c in self.regs:
+        #     x.flatten_minmax(term, sgn, bds)
+        
+        v1s = [Expr.real(self.name_avoid(str(term) + "_L")), 
+               Expr.real(self.name_avoid(str(term) + "_U"))]
+        sn_present = self.substitute_sign(Expr.fromterm(term), v1s)
+        if sn < 0:
+            sn_present.reverse()
+            v1s.reverse()
+        
+        if sn_present[1]:
+            treg = Region.universe()
+            for b in bds:
+                treg &= v1s[1] * sn <= b * sn
+            self &= treg
+            # print(self)
+            # print(v1s[1])
+            self.eliminate(v1s[1])
+        
+        if sn_present[0]:
+            tself = RegionOp.pack_type(self.copy(), RegionType.UNION)
+            if any(not c for x, c in tself.regs):
+                tself = RegionOp.union([tself])
+            self.copy_(RegionOp.union([]))
+            for t2 in tself:
+                if t2.ispresent(v1s[0]):
+                    for b in bds:
+                        t3 = t2.copy()
+                        t3.substitute(v1s[0], b)
+                        self |= t3
+                else:
+                    self |= t2
+        
+        return self
+        
+    
+    def flatten_regterm(self, term, isimp = True, minmax_elim = False):
         if term.reg is None:
             return
+        
+        if minmax_elim:
+            treg, tsgn, tbds = term.get_reg_sgn_bds()
+            
+            if treg.isuniverse() and tsgn != 0:
+                self.flatten_minmax(term, tsgn, tbds)
+                return
         
         self.simplify_quick()
         sn = term.sn
@@ -9799,6 +14190,11 @@ class RegionOp(Region):
         if sn < 0:
             sn_present.reverse()
             v1s.reverse()
+        
+        if sn == 0:
+            sn_present[1] = False
+            sn_present[0] = True
+            
         
         if sn_present[1]:
             reg2 = term.reg.broken_present(Expr.fromterm(term), flipped = True)
@@ -9861,7 +14257,7 @@ class RegionOp(Region):
             aux += x
         (H(aux) >= 0).regtermmap(cmap, recur)
         
-    def flatten(self):
+    def flatten(self, minmax_elim = False):
         
         verbose = PsiOpts.settings.get("verbose_flatten", False)
         
@@ -9876,11 +14272,20 @@ class RegionOp(Region):
         while did:
             did = False
             regterms = {}
-            self.regtermmap(regterms, True)
+            
+            # self.regtermmap(regterms, True)
+            # for (name, term) in regterms.items():
+            #     regterms_in = {}
+            #     term.reg.regtermmap(regterms_in, False)
+            #     if not regterms_in:
+            
+            regterms_exc = {}
+            self.regtermmap(regterms, False)
             for (name, term) in regterms.items():
-                regterms_in = {}
-                term.reg.regtermmap(regterms_in, False)
-                if not regterms_in:
+                term.reg.regtermmap(regterms_exc, True)
+            
+            for (name, term) in regterms.items():
+                if name not in regterms_exc:
                     if verbose:
                         print("========= flatten op ========")
                         print(self)
@@ -9892,7 +14297,7 @@ class RegionOp(Region):
                     if isinstance(term, IVar):
                         self.flatten_ivar(term)
                     else:
-                        self.flatten_regterm(term)
+                        self.flatten_regterm(term, minmax_elim = minmax_elim)
                     did = True
                     didall = True
                     
@@ -9928,7 +14333,7 @@ class RegionOp(Region):
                 if not c:
                     return None
                 t = x.tosimple()
-                if t is None:
+                if t is None or t.imp_present():
                     return None
                 r.iand_norename(t)
             
@@ -9939,6 +14344,19 @@ class RegionOp(Region):
             
         return r
     
+    
+    def tosimple_safe(self):
+        if not self.getauxi().isempty():
+            return None
+        for x, c in self.regs:
+            if x.aux_present():
+                return None
+        return self.tosimple()
+    
+    
+    def one_flipped(self):
+        return None
+        
     def distribute(self):
         """Expand to a single union layer.
         """
@@ -9981,6 +14399,11 @@ class RegionOp(Region):
             return self
         
         return self
+    
+    def tounion(self):
+        r = self.copy()
+        r = r.distribute()
+        return RegionOp.pack_type(r, RegionType.UNION)
     
     def aux_appearance(self, curc):
         allcomprv = self.allcomprv() - self.getauxall()
@@ -10298,6 +14721,8 @@ class RegionOp(Region):
         xcforall = []
         xauxs_incomp = []
         xreqcomprv = []
+        xconsonly = []
+        xconsonly_init = []
         
         init_reg = Region.universe()
         
@@ -10394,6 +14819,11 @@ class RegionOp(Region):
                     if ofl is not None:
                         init_reg &= ofl
             
+            cur_consonly = req.isuniverse() and aux.isempty()
+            cur_consonly_init = cur_consonly and len(cons) == 1 and csnonaux.super_of(auxi)
+            # if cur_consonly_init:
+            #     init_reg &= cons[0]
+                
             xallcomprv.append(allcomprv)
             xconscomprv.append(conscomprv)
             xreq.append(req)
@@ -10407,6 +14837,8 @@ class RegionOp(Region):
             xcforall.append(cforall)
             xauxs_incomp.append(cur_auxs_incomp)
             xreqcomprv.append(req.allcomprv())
+            xconsonly.append(cur_consonly)
+            xconsonly_init.append(cur_consonly_init)
             
             if verbose_op:
                 print("========= #" + iutil.strpad(str(i), 3, " requires ========"))
@@ -10418,6 +14850,7 @@ class RegionOp(Region):
                     print("=========   auxiliary   ========")
                     print(" ".join(("|" if c else "&") + str(a) for a, c in cur_auxs_incomp))
                 print("Multiuse = " + str(cur_multiuse), ", Leave one = " + str(cur_leaveone))
+                print("Cons only = " + str(cur_consonly))
                 
                 
         hint_aux_avoid = hint_aux_avoid + self.get_aux_avoid_list()
@@ -10440,13 +14873,17 @@ class RegionOp(Region):
         
         rcases_hashset = set()
         
+        #rcases_hashset.add(hash(rcases))
+        
         oneuse_set = MHashSet()
         oneuse_set.add(([None] * len(csaux), []))
         
         max_iter_pow = 4
+        #cur_max_iter = 200
         cur_max_iter = 800
         
         max_yield_pow = 3
+        #cur_max_yield = 5
         cur_max_yield = 16
         
         if nreqcheck <= 1:
@@ -10475,7 +14912,10 @@ class RegionOp(Region):
         
         cnstep = 0
         
-        while did and (max_iter <= 0 or cur_max_iter < max_iter):
+        #while did and (max_iter <= 0 or cur_max_iter < max_iter):
+        while (did or cnstep <= 1) and (max_iter <= 0 or cur_max_iter < max_iter):
+            if PsiOpts.is_timer_ended():
+                break
             cnstep += 1
             prev_did = did
             did = False
@@ -10485,6 +14925,14 @@ class RegionOp(Region):
             for i in range(n):
                 if len(rcases) == 0:
                     break
+                
+                cur_consonly = xconsonly[i]
+                cur_consonly_init = xconsonly_init[i]
+                
+                if cnstep > 1 and cur_consonly:
+                    continue
+                if cnstep == 1 and not cur_consonly:
+                    continue
                 
                 x, c = self.regs[i]
                 
@@ -10502,9 +14950,6 @@ class RegionOp(Region):
                 cur_auxs_incomp = xauxs_incomp[i]
                 reqcomprv = xreqcomprv[i]
                 
-                cur_consonly = req.isuniverse() and aux.isempty()
-                if cnstep > 1 and cur_consonly:
-                    continue
                 
                 if not cur_consonly:
                     if not aux.isempty() or len(cons) > 0:
@@ -10801,8 +15246,10 @@ class RegionOp(Region):
                     print("=========     cases     ========")
                     print("\nOR\n".join(str(rcase[0]) for rcase in rcases))
                 
-            if not nonsimple_did:
+            if cnstep != 1 and not nonsimple_did:
                 break
+            # if not nonsimple_did:
+            #     break
             
             rcases_hash = hash(rcases)
             if rcases_hash not in rcases_hashset:
@@ -10908,7 +15355,7 @@ class RegionOp(Region):
             with PsiOpts(truth = None):
                 return (truth >> self).evalcheck(f)
         
-        ceps = PsiOpts.settings["eps"]
+        ceps = PsiOpts.settings["eps_check"]
         
         isunion = (self.get_type() == RegionType.UNION)
         for x, c in self.regs:
@@ -10916,6 +15363,39 @@ class RegionOp(Region):
                 return isunion
         return not isunion
     
+    def eval_max_violate(self, f):
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            with PsiOpts(truth = None):
+                return (truth >> self).eval_max_violate(f)
+        
+        ceps = PsiOpts.settings["eps_check"]
+        
+        if self.get_type() == RegionType.INTER:
+            r = 0.0
+            for x, c in self.regs:
+                t = x.eval_max_violate(f)
+                
+                if c:
+                    r = max(r, t)
+                else:
+                    if t <= ceps:
+                        return numpy.inf
+            return r
+        
+        elif self.get_type() == RegionType.UNION:
+            r = numpy.inf
+            for x, c in self.regs:
+                t = x.eval_max_violate(f)
+                
+                if c:
+                    r = min(r, t)
+                else:
+                    if t > ceps:
+                        return 0.0
+            return r
+        
+        return 0.0
     
     def implies_getaux(self, other, hint_pair = None, hint_aux = None):
         """Whether self implies other, with auxiliary search result."""
@@ -10954,25 +15434,136 @@ class RegionOp(Region):
         Optional argument reg with constraints assumed to be true. 
         zero_group = 2: group all nonnegative terms as a single inequality.
         """
+        
+        if not PsiOpts.settings.get("simplify_enabled", False):
+            return self
+        
         #self.distribute()
-            
+        #self.remove_missing_aux()
+        
         for x, c in self.regs:
             x.simplify_quick(reg, zero_group)
         
         self.simplify_op()
         return self
     
+    def aux_push(self):
+        for i in range(len(self.regs)):
+            for x, c in self.auxs:
+                if c:
+                    self.regs[i] = (self.regs[i][0].exists(x), self.regs[i][1])
+                else:
+                    self.regs[i] = (self.regs[i][0].forall(x), self.regs[i][1])
+        self.auxs = []
+        return self
+    
+    def simplify_union(self, reg = None):
+        """Simplify a union region in place. May take much longer than Region.simplify().
+        Optional argument reg with constraints assumed to be true. 
+        """
+        if reg is None:
+            reg = Region.universe()
+            
+        # print("simplify_union pre distribute")
+        # print(self)
+        
+        self.distribute()
+        
+        # print("simplify_union post distribute")
+        # print(self)
+        
+        if not self.get_type() == RegionType.UNION:
+            return
+        if any(not c for x, c in self.auxs):
+            return
+        #self.aux_push()
+        aux = Comp.empty()
+        for x, c in self.auxs:
+            aux += x
+        
+        regc = [i for i in range(len(self.regs)) if self.regs[i][1]]
+        for i in regc:
+            self.regs[i][0].eliminate(aux)
+            self.regs[i][0].simplify()
+            self.regs[i][0].remove_aux(aux)
+            
+        
+        regs_rem = [False for x, c in self.regs]
+        for i, j in itertools.permutations(regc, 2):
+            if regs_rem[i] or regs_rem[j]:
+                continue
+            #print("###")
+            if (self.regs[i][0].exists(aux.inter(self.regs[i][0].allcomprv())) 
+                & reg).implies(self.regs[j][0].exists(aux.inter(self.regs[j][0].allcomprv()))):
+                regs_rem[i] = True
+        self.regs = [(x, c) for i, (x, c) in enumerate(self.regs) if not regs_rem[i]]
+        
+        # print("simplify_union output")
+        # print(self)
+        
+        return self
+        
         
     def simplify(self, reg = None, zero_group = 0):
         """Simplify a region in place. 
         Optional argument reg with constraints assumed to be true. 
         zero_group = 2: group all nonnegative terms as a single inequality.
         """
+        
+        if not PsiOpts.settings.get("simplify_enabled", False):
+            return self
+        
+        simplify_redundant_op = (PsiOpts.settings.get("simplify_redundant_op", False) 
+                                 and not PsiOpts.settings.get("simplify_quick", False))
+                
         #self.distribute()
-        for x, c in self.regs:
-            x.simplify(reg, zero_group)
+        self.remove_missing_aux()
+        
+        r_assumed = None
+        if reg is None:
+            r_assumed = Region.universe()
+        else:
+            r_assumed = reg.copy()
+            
+        if self.get_type() == RegionType.INTER or self.get_type() == RegionType.UNION:
+            isunion = (self.get_type() == RegionType.UNION)
+            for c_pass in [not isunion, isunion]:
+                for x, c in self.regs:
+                    if c == c_pass:
+                        x.simplify(r_assumed, zero_group)
+                        if c ^ isunion:
+                            t = x.tosimple_noaux()
+                            if t is not None:
+                                r_assumed &= t
+                                
+            if simplify_redundant_op:
+                regs_s = [(x.tosimple_noaux() if not c ^ isunion else None) for x, c in self.regs]
+                regs_rem = [False for x, c in self.regs]
+                for i, j in itertools.permutations([i for i in range(len(self.regs)) if regs_s[i] is not None], 2):
+                    
+                    if PsiOpts.is_timer_ended():
+                        break
+                    if regs_rem[i] or regs_rem[j]:
+                        continue
+                    #print("###")
+                    
+                    t_assumed = r_assumed.copy()
+                    for k in range(len(self.regs)):
+                        if k != i and not regs_rem[k] and not self.regs[k][1] ^ isunion:
+                            tf = self.regs[k][0].one_flipped()
+                            if tf is not None:
+                                t_assumed &= tf
+                                
+                    if (regs_s[i] & t_assumed).implies(regs_s[j]):
+                        regs_rem[i] = True
+                self.regs = [(x, c) for i, (x, c) in enumerate(self.regs) if not regs_rem[i]]
+            
         
         self.simplify_op()
+        
+        if PsiOpts.settings.get("simplify_union", False):
+            self.simplify_union(reg)
+            
         return self
     
     
@@ -10985,10 +15576,9 @@ class RegionOp(Region):
             reg = Region.universe()
         r = self.copy()
         r.simplify_quick(reg, zero_group)
-        if not r.aux_present():
-            t = r.tosimple()
-            if t is not None:
-                return t
+        t = r.tosimple_safe()
+        if t is not None:
+            return t
         return r
     
     def simplified(self, reg = None, zero_group = 0):
@@ -11000,10 +15590,9 @@ class RegionOp(Region):
             reg = Region.universe()
         r = self.copy()
         r.simplify(reg, zero_group)
-        if not r.aux_present():
-            t = r.tosimple()
-            if t is not None:
-                return t
+        t = r.tosimple_safe()
+        if t is not None:
+            return t
         return r
     
         
@@ -11022,31 +15611,52 @@ class RegionOp(Region):
             if not y.isempty():
                 self.auxs.append((y, c))
         
-    def eliminate(self, w, reg = None, toreal = False, forall = False):
         
-        if isinstance(w, CompList):
+    def remove_missing_aux(self):
+        #return
+        t = self.auxs
+        self.auxs = []
+        allcomp = self.allcomprv()
+        for x, c in t:
+            y = x.inter(allcomp)
+            if not y.isempty():
+                self.auxs.append((y, c))
+        
+    def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False):
+        
+        if isinstance(w, CompArray):
             w = w.get_comp()
             
+        toelim = Comp.empty()
         for v in w.allcomp():
             if toreal or v.get_type() == IVarType.REAL:
-                for x, c in self.regs:
-                    x.eliminate(w, reg, toreal, forall ^ (not c))
+                toelim += v
             elif v.get_type() == IVarType.RV:
                 self.add_aux(v, not forall)
+        
+        if not toelim.isempty():
+            if forall:
+                self.negate()
+            # print(self)
+            self.distribute()
+            # print(self)
+            for x, c in self.regs:
+                x.simplify_quick()
+                if not c and x.ispresent(toelim):
+                    self.setuniverse()
+                    return self
+            for x, c in self.regs:
+                if x.ispresent(toelim):
+                    x.eliminate(toelim, reg = reg, toreal = toreal, forall = not c, quick = quick)
+                
+            if forall:
+                self.negate()
+            
+        
         return self
         
     def eliminate_quick(self, w, reg = None, toreal = False, forall = False):
-        
-        if isinstance(w, CompList):
-            w = w.get_comp()
-            
-        for v in w.allcomp():
-            if toreal or v.get_type() == IVarType.REAL:
-                for x, c in self.regs:
-                    x.eliminate_quick(w, reg, toreal, forall ^ (not c))
-            elif v.get_type() == IVarType.RV:
-                self.add_aux(v, not forall)
-        return self
+        return self.eliminate(w, reg = reg, toreal = toreal, forall = forall, quick = True)
         
     def marginal_eliminate(self, w):
         for x in self.regs:
@@ -11056,7 +15666,7 @@ class RegionOp(Region):
         for x in self.regs:
             x.kernel_eliminate(w)
           
-    def tostring(self, style = 0, tosort = False, lhsvar = None, inden = 0):
+    def tostring(self, style = 0, tosort = False, lhsvar = "real", inden = 0):
         """Convert to string. 
         Parameters:
             style   : Style of string conversion
@@ -11065,6 +15675,10 @@ class RegionOp(Region):
         """
         
         style = iutil.convert_str_style(style)
+        
+        if isinstance(lhsvar, str) and lhsvar == "real":
+            lhsvar = self.allcomprealvar()
+            
         r = ""
         interstr = ""
         nlstr = "\n"
@@ -11120,33 +15734,44 @@ class RegionOp(Region):
                 x.tostring(style = style, tosort = tosort, lhsvar = lhsvar, inden = inden + 2)[inden:] 
                 for x, c in self.regs]
         if tosort:
-            rlist = sorted(rlist, key=lambda a: (len(a), a))
+            rlist = zip(rlist, [any(x.ispresent(t) for t in lhsvar) for x, c in self.regs])
+            rlist = sorted(rlist, key=lambda a: (not a[1], len(a[0]), a[0]))
+            rlist = [x for x, t in rlist]
             
         r += (nlstr + " " * inden + " " + interstr + nlstr).join(rlist)
         
-        r += nlstr + " " * inden
-        for x, c in self.auxs:
-            if c:
-                if style & PsiOpts.STR_STYLE_LATEX:
-                    r += " , \\exists "
-                else:
-                    r += " | "
-            else:
-                if style & PsiOpts.STR_STYLE_LATEX:
-                    r += " \\forall "
-                else:
-                    r += " & "
-            r += x.tostring(style = style, tosort = tosort)
                 
+        r += nlstr + " " * inden
         if style == PsiOpts.STR_STYLE_PSITIP:
             r += ")"
         elif style & PsiOpts.STR_STYLE_LATEX:
             if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += nlstr + " " * inden + "\\end{array}\\right\\}"
+                r += "\\end{array}\\right\\}"
             else:
                 r += "\\}"
         else:
             r += "}"
+            
+        for x, c in self.auxs:
+            if c:
+                if style == PsiOpts.STR_STYLE_PSITIP:
+                    r += ".exists("
+                elif style & PsiOpts.STR_STYLE_LATEX:
+                    r += " , \\exists "
+                else:
+                    r += " , exists "
+            else:
+                if style == PsiOpts.STR_STYLE_PSITIP:
+                    r += ".forall("
+                elif style & PsiOpts.STR_STYLE_LATEX:
+                    r += " , \\forall "
+                else:
+                    r += " , forall "
+            r += x.tostring(style = style, tosort = tosort)
+            
+            if style == PsiOpts.STR_STYLE_PSITIP:
+                r += ")"
+            
         return r
             
         
@@ -11190,36 +15815,498 @@ class MonotoneSet:
         return self.cache[key]
         
     
-class CompList:
-    def __init__(self, x):
-        self.x = list(x)
     
-    def empty(n = 0):
-        return CompList([Comp.empty() for i in range(n)])
+class IBaseArray:
+    def __init__(self, x, shape = None):
+        cshape = None
+        if isinstance(x, type(self).entry_cls):
+            self.x = [x]
+            cshape = tuple()
+        elif iutil.istensor(x):
+            cshape = tuple(x.shape)
+            for xs in itertools.product(*[range(t) for t in cshape]):
+                self.x.append(self.entry_convert(x[xs]))
+        else:
+            
+            self.x = []
+            tshape = []
+            def recur(i, y):
+                if not isinstance(y, (list, tuple)):
+                    self.x.append(self.entry_convert(y))
+                    return
+                if len(tshape) <= i:
+                    tshape.append(len(y))
+                else:
+                    if len(y) != tshape[i]:
+                        raise ValueError("Shape mismatch.")
+                        return
+                for z in y:
+                    recur(i + 1, z)
+                
+            recur(0, x)
+            cshape = tuple(tshape)
+            
+        if shape is not None:
+            self.shape = shape
+        else:
+            self.shape = cshape
     
-    def make(*args):
-        r = CompList.empty()
+    @property
+    def shape(self):
+        return self._shape
+        # if len(self._shape) == 0:
+        #     return self._shape
+        # return self._shape + (len(self.x) // iutil.product(self._shape),)
+    
+    @shape.setter
+    def shape(self, value):
+        if isinstance(value, int):
+            value = (value,)
+        for i in range(len(value)):
+            if value[i] < 0:
+                tvalue = list(value)
+                tvalue[i] = len(self.x) // (iutil.product(value[:i]) * iutil.product(value[i+1:]))
+                value = tuple(tvalue)
+                break
+        self._shape = tuple(value)
+    
+    def reshaped(self, newshape):
+        r = self.copy()
+        r.shape = newshape
+        return r
+    
+    def copy(self):
+        return type(self)([a.copy() for a in self.x], shape = self.shape)
+    
+    @classmethod
+    def empty(cls, shape = 0):
+        if isinstance(shape, int):
+            shape = (shape,)
+        n = iutil.product(shape)
+        return cls([cls.entry_cls_zero() for i in range(n)], shape = shape)
+    
+    @classmethod
+    def zeros(cls, shape = 0):
+        return cls.empty(shape = shape)
+    
+    @classmethod
+    def ones(cls, shape = 0, x = None):
+        if isinstance(shape, int):
+            shape = (shape,)
+        n = iutil.product(shape)
+        if x is None:
+            return cls([cls.entry_cls_one() for i in range(n)], shape = shape)
+        else:
+            return cls([x.copy() for i in range(n)], shape = shape)
+    
+    @classmethod
+    def eye(cls, n, x = None):
+        r = cls.zeros((n, n))
+        for i in range(n):
+            if x is None:
+                r[i, i] = cls.entry_cls_one()
+            else:
+                r[i, i] = x.copy()
+        return r
+    
+    @classmethod
+    def make(cls, *args):
+        r = cls.empty()
         for a in args:
-            if isinstance(a, Comp):
-                r.x.append(a.copy())
+            t = cls.entry_convert(a)
+            if t is not None:
+                r.x.append(t)
             else:
                 for b in a:
                     r.x.append(b.copy())
         return r
     
+    @classmethod
+    def isthis(cls, x):
+        if isinstance(x, cls):
+            return True
+        if isinstance(x, list) and len(x) > 0 and isinstance(x[0], cls.entry_cls):
+            return True
+        return False
+    
+    
+    def allcomp(self):
+        return sum([a.allcomp() for a in self.x], Comp.empty())
+    
+    
+    def find_name(self, *args):
+        return self.allcomp().find_name(*args)
+    
+    def append(self, a):
+        if len(self.shape) != 1:
+            raise ValueError("Can only append 1D array.")
+            return
+        self.x.append(a)
+        self.shape = (self.shape[0] + 1,)
+    
+    def swapped_id(self, i, j):
+        if i >= len(self.x) or j >= len(self.x):
+            return self.copy()
+        r = self.copy()
+        r.x[i], r.x[j] = r.x[j], r.x[i]
+        return r
+    
+    def transpose(self):
+        r = type(self).zeros(tuple(reversed(self.shape)))
+        for xs in itertools.product(*[range(t) for t in self.shape]):
+            r[tuple(reversed(xs))] = self[xs]
+        return r
+    
+    def set_len(self, n):
+        if n < len(self.x):
+            self.x = self.x[:n]
+            return
+        while n > len(self.x):
+            self.x.append(type(self).entry_cls_zero())
+    
+    def __neg__(self):
+        return type(self)([-a for a in self.x])
+    
+    def __iadd__(self, other):
+        if iutil.istensor(other):
+            if self.shape != other.shape:
+                raise ValueError("Shape mismatch.")
+                return
+            for xs in itertools.product(*[range(t) for t in self.shape]):
+                self[xs] += other[xs]
+            return self
+            
+        # if isinstance(other, IBaseArray):
+        #     r = []
+        #     for i in range(len(other.x)):
+        #         if i < len(self.x):
+        #             self.x[i] += other.x[i]
+        #         else:
+        #             self.x.append(other.x[i].copy())
+        #     return self
+        
+        for i in range(len(self.x)):
+            self.x[i] += other
+        return self
+    
+    def __imul__(self, other):
+        if iutil.istensor(other):
+            if self.shape != other.shape:
+                raise ValueError("Shape mismatch.")
+                return
+            for xs in itertools.product(*[range(t) for t in self.shape]):
+                self[xs] *= other[xs]
+            return self
+        
+        for i in range(len(self.x)):
+            self.x[i] *= other
+        return self
+    
+    def __itruediv__(self, other):
+        if iutil.istensor(other):
+            if self.shape != other.shape:
+                raise ValueError("Shape mismatch.")
+                return
+            for xs in itertools.product(*[range(t) for t in self.shape]):
+                self[xs] /= other[xs]
+            return self
+        
+        for i in range(len(self.x)):
+            self.x[i] /= other
+        return self
+    
+    def __ipow__(self, other):
+        if iutil.istensor(other):
+            if self.shape != other.shape:
+                raise ValueError("Shape mismatch.")
+                return
+            for xs in itertools.product(*[range(t) for t in self.shape]):
+                self[xs] **= other[xs]
+            return self
+        
+        for i in range(len(self.x)):
+            self.x[i] **= other
+        return self
+    
+    
+    def __mul__(self, other):
+        r = self.copy()
+        r *= other
+        return r
+    
+    def __rmul__(self, other):
+        r = self.copy()
+        r *= other
+        return r
+    
+    def __truediv__(self, other):
+        r = self.copy()
+        r /= other
+        return r
+    
+    def __rtruediv__(self, other):
+        r = type(self).ones(len(self.x))
+        r *= other
+        r /= self
+        return r
+    
+    def __pow__(self, other):
+        r = self.copy()
+        r **= other
+        return r
+    
+    def __rpow__(self, other):
+        r = type(self).ones(len(self.x))
+        r *= other
+        r **= self
+        return r
+    
+    def __add__(self, other):
+        if isinstance(other, int) and other == 0:
+            return self.copy()
+        r = self.copy()
+        r += other
+        return r
+    
+    def __radd__(self, other):
+        if isinstance(other, int) and other == 0:
+            return self.copy()
+        r = self.copy()
+        r += other
+        return r
+    
+    def __isub__(self, other):
+        self += -other
+        return self
+    
+    def __sub__(self, other):
+        r = self.copy()
+        r += -other
+        return r
+    
+    def __rsub__(self, other):
+        r = -self
+        r += other
+        return r
+    
+    def __len__(self):
+        return len(self.x)
+    
+    def key_to_id(self, key):
+        if isinstance(key, int):
+            key = (key,)
+        if isinstance(key, tuple) and all(isinstance(xs, int) for xs in key):
+            shape = self.shape
+            if len(key) != len(shape):
+                raise IndexError("Dimension mismatch.")
+                return
+            i = 0
+            for s, k in zip(shape, key):
+                if k < 0 or k >= s:
+                    raise IndexError("Index out of bound.")
+                    return
+                i = i * s + k
+            return i
+        return 0
+    
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self.x[key]
+        if isinstance(key, slice):
+            r = self.x[key]
+            if isinstance(r, list):
+                return type(self)(r)
+            return r
+        return self.x[self.key_to_id(key)]
+    
+    def __setitem__(self, key, item):
+        if isinstance(key, int):
+            self.x[key] = self.entry_convert(item)
+        self.x[self.key_to_id(key)] = self.entry_convert(item)
+    
+    
+    def dot(self, other):
+        """ Dot product like numpy.dot.
+        """
+        if isinstance(other, list):
+            other = type(self)(other)
+        if not iutil.istensor(other):
+            return self * other
+        selfshape = self.shape
+        othershape = other.shape
+        self_np = max(len(selfshape) - 1, 0)
+        other_np = max(len(othershape) - 2, 0)
+        if selfshape[self_np] != othershape[other_np]:
+            raise ValueError("Shape mismatch.")
+            return
+        
+        r = type(self).zeros(selfshape[:self_np] + othershape[:other_np] + othershape[other_np+1:])
+        for xs in itertools.product(*[range(t) for t in selfshape[:self_np]]):
+            for ys in itertools.product(*[range(t) for t in othershape[:other_np]]):
+                for i in range(selfshape[self_np]):
+                    for zs in itertools.product(*[range(t) for t in othershape[other_np+1:]]):
+                        r[xs + ys + zs] += self[xs + (i,)] * other[ys + (i,) + zs]
+                        
+        if len(r.shape) == 0:
+            return r[tuple()]
+        return r
+    
+    def __matmul__(self, other):
+        return self.dot(other)
+    
+    def __imatmul__(self, other):
+        return (type(self)(other)).dot(self)
+                    
+    def trace_mat(self):
+        """Trace of matrix.
+        """
+        selfshape = self.shape
+        r = type(self).zeros(selfshape[2:])
+        for i in range(min(selfshape[0], selfshape[1])):
+            for xs in itertools.product(*[range(t) for t in selfshape[2:]]):
+                r[xs] += self[(i, i) + xs]
+                
+        if len(r.shape) == 0:
+            return r[tuple()]
+        return r
+    
+    def trace(self):
+        """Trace.
+        """
+        selfshape = self.shape
+        n = min(selfshape)
+        return sum((self[(i,) * len(selfshape)] for i in range(n)), type(self).entry_cls_zero())
+    
+    def diag(self):
+        """Return diagonal.
+        """
+        selfshape = self.shape
+        n = min(selfshape)
+        r = []
+        for i in range(n):
+            r.append(self[(i,) * len(selfshape)])
+        return type(self)(r)
+    
+    def record_to(self, index):
+        for a in self.x:
+            a.record_to(index)
+            
+    def isregtermpresent(self):
+        for a in self.x:
+            if a.isregtermpresent():
+                return True
+        return False
+    
+    
+    def get_sum(self):
+        """Sum of all entries.
+        """
+        return sum(self.x, type(self).entry_cls_zero())
+    
+    def tostring(self, style = 0, tosort = False):
+        """Convert to string
+        Parameters:
+            style   : Style of string conversion
+                      STR_STYLE_STANDARD : I(X,Y;Z|W)
+                      STR_STYLE_PSITIP : I(X+Y&Z|W)
+        """
+        style = iutil.convert_str_style(style)
+        nlstr = "\n"
+        if style & PsiOpts.STR_STYLE_LATEX:
+            nlstr = "\\\\\n"
+            
+        shape = self.shape
+        r = ""
+        add_braket = True
+        list_bracket0 = "["
+        list_bracket1 = "]"
+        if style & PsiOpts.STR_STYLE_LATEX:
+            list_bracket0 = "\\["
+            list_bracket1 = "\\]"
+        
+        if style == PsiOpts.STR_STYLE_PSITIP:
+            r += type(self).cls_name + "("
+            if len(shape) > 1:
+                r += nlstr
+            add_braket = False
+        
+        # if style == PsiOpts.STR_STYLE_PSITIP:
+        #     r += type(self).cls_name + "([ "
+        #     add_braket = False
+        # elif style & PsiOpts.STR_STYLE_LATEX:
+        #     if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
+        #         r += "\\left\\[\\begin{array}{l}\n"
+        #         add_braket = False
+        #     else:
+        #         r += "\\[ "
+        # else:
+        #     r += "[ "
+        
+        for xs in itertools.product(*[range(t) for t in shape]):
+            si0 = len(shape)
+            while si0 > 0 and xs[si0 - 1] == 0:
+                si0 -= 1
+            si1 = len(shape)
+            while si1 > 0 and xs[si1 - 1] == shape[si1 - 1] - 1:
+                si1 -= 1
+            if si0 < len(shape):
+                r += " " * si0 + list_bracket0 * (len(shape) - si0)
+            
+            if type(self).tostring_bracket_needed:
+                r += self[xs].tostring(style = style, tosort = tosort, add_braket = add_braket)
+            else:
+                r += self[xs].tostring(style = style, tosort = tosort)
+            
+            if si1 < len(shape):
+                r += list_bracket1 * (len(shape) - si1)
+            
+            if si1 > 0:
+                r += ","
+                if si1 == len(shape):
+                    r += " "
+                else:
+                    r += nlstr * (len(shape) - si1)
+            
+            
+        if style == PsiOpts.STR_STYLE_PSITIP:
+            r += ")"
+        
+        return r
+    
+    
+    def __str__(self):
+        return self.tostring(PsiOpts.settings["str_style"], PsiOpts.settings["str_tosort"])
+    
+    def __repr__(self):
+        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
+    
+
+class CompArray(IBaseArray):
+    cls_name = "CompArray"
+    entry_cls = Comp
+    entry_cls_zero = Comp.empty
+    entry_cls_one = None
+    tostring_bracket_needed = True
+    
+    @staticmethod
+    def entry_convert(a):
+        if isinstance(a, Comp):
+            return a.copy()
+        return None
+    
     def arg_convert(b):
         if isinstance(b, list) or isinstance(b, Comp):
-            return CompList.make(*b)
+            return CompArray.make(*b)
         return b
     
-    def copy(self):
-        return CompList([a.copy() for a in self.x])
     
     def get_comp(self):
         return sum(self.x, Comp.empty())
     
-    def append(self, a):
-        self.x.append(a)
+    def get_term(self):
+        return Term([a.copy() for a in self.x])
+    
+    
     
     def series(self, vdir):
         """Get past or future sequence.
@@ -11228,13 +16315,13 @@ class CompList:
                     -1: past non-strict, -2: past strict
         """
         if vdir == 1:
-            return CompList([sum(self.x[i:], Comp.empty()) for i in range(len(self.x))])
+            return CompArray([sum(self.x[i:], Comp.empty()) for i in range(len(self.x))])
         elif vdir == 2:
-            return CompList([sum(self.x[i+1:], Comp.empty()) for i in range(len(self.x))])
+            return CompArray([sum(self.x[i+1:], Comp.empty()) for i in range(len(self.x))])
         elif vdir == -1:
-            return CompList([sum(self.x[:i+1], Comp.empty()) for i in range(len(self.x))])
+            return CompArray([sum(self.x[:i+1], Comp.empty()) for i in range(len(self.x))])
         elif vdir == -2:
-            return CompList([sum(self.x[:i], Comp.empty()) for i in range(len(self.x))])
+            return CompArray([sum(self.x[:i], Comp.empty()) for i in range(len(self.x))])
         return self.copy()
         
     def past_ns(self):
@@ -11269,171 +16356,63 @@ class CompList:
             r.append((Comp.rv(name + suff), self.future()))
         return r
     
-    
-    def set_len(self, n):
-        if n < len(self.x):
-            self.x = self.x[:n]
-            return
-        while n > len(self.x):
-            self.x.append(Comp.empty())
-    
-    def __iadd__(self, other):
-        if isinstance(other, CompList):
-            r = []
-            for i in range(len(other.x)):
-                if i < len(self.x):
-                    self.x[i] += other.x[i]
-                else:
-                    self.x.append(other.x[i].copy())
-            return self
-        
-        for i in range(len(self.x)):
-            self.x[i] += other
-        return self
-    
-    def __add__(self, other):
-        r = self.copy()
-        r += other
-        return r
-        
-    def __radd__(self, other):
-        if isinstance(other, Comp) or isinstance(other, CompList):
-            return self + other
-        return self.copy()
-    
-    def __len__(self):
-        return len(self.x)
-    
-    def __getitem__(self, key):
-        r = self.x[key]
-        if isinstance(r, list):
-            return CompList(r)
+    def series_sym(x, sufp = "P", suff = "F"):
+        if isinstance(x, str):
+            x = Comp.rv(x)
+        r = CompArray.empty()
+        r.append(x)
+        rename_char = PsiOpts.settings["rename_char"]
+        if sufp is not None:
+            r.append(Comp.rv(iutil.set_suffix_num(x.get_name(), sufp, rename_char)))
+        if suff is not None:
+            r.append(Comp.rv(iutil.set_suffix_num(x.get_name(), suff, rename_char)))
         return r
     
-    def __setitem__(self, key, item):
-        self.x[key] = item
     
     def __and__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([a & b for a, b in zip(self.x, other.x)])
-        return ExprList([a & other for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([a & b for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([a & other for a in self.x], shape = self.shape)
     
     def __or__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([a | b for a, b in zip(self.x, other.x)])
-        return ExprList([a | other for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([a | b for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([a | other for a in self.x], shape = self.shape)
     
     def __rand__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([b & a for a, b in zip(self.x, other.x)])
-        return ExprList([other & a for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([b & a for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([other & a for a in self.x], shape = self.shape)
     
     def __ror__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([b | a for a, b in zip(self.x, other.x)])
-        return ExprList([other | a for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([b | a for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([other | a for a in self.x], shape = self.shape)
+        
         
     
-    def record_to(self, index):
-        for a in self.x:
-            a.record_to(index)
-            
-    def isregtermpresent(self):
-        for a in self.x:
-            if a.isregtermpresent():
-                return True
-        return False
-    
-    def tostring(self, style = 0, tosort = False):
-        """Convert to string
-        Parameters:
-            style   : Style of string conversion
-                      STR_STYLE_STANDARD : I(X,Y;Z|W)
-                      STR_STYLE_PSITIP : I(X+Y&Z|W)
-        """
-        style = iutil.convert_str_style(style)
-        nlstr = "\n"
-        if style & PsiOpts.STR_STYLE_LATEX:
-            nlstr = "\\\\\n"
-            
-        r = ""
-        add_braket = True
-        if style == PsiOpts.STR_STYLE_PSITIP:
-            r += "CompList([ "
-            add_braket = False
-        elif style & PsiOpts.STR_STYLE_LATEX:
-            if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += "\\left\\[\\begin{array}{l}\n"
-                add_braket = False
-            else:
-                r += "\\[ "
-        else:
-            r += "[ "
-        
-        for i, a in enumerate(self.x):
-            if i:
-                if style & PsiOpts.STR_STYLE_LATEX:
-                    if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                        r += nlstr
-                    else:
-                        r += ", "
-                else:
-                    r += ", "
-            r += a.tostring(style = style, tosort = tosort, add_braket = add_braket)
-            
-        if style == PsiOpts.STR_STYLE_PSITIP:
-            r += " ])"
-        elif style & PsiOpts.STR_STYLE_LATEX:
-            if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += "\\end{array}\\right\\]"
-            else:
-                r += " \\]"
-        else:
-            r += " ]"
-        
-        return r
+class ExprArray(IBaseArray):
+    cls_name = "ExprArray"
+    entry_cls = Expr
+    entry_cls_zero = Expr.zero
+    entry_cls_one = Expr.one
+    tostring_bracket_needed = False
     
     
-    def __str__(self):
-        return self.tostring(PsiOpts.settings["str_style"])
-    
-    def __repr__(self):
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
-        
-    
-class ExprList:
-    def __init__(self, x):
-        self.x = list(x)
-    
-    def empty():
-        return ExprList([])
-    
-    def zeros(n):
-        return ExprList([Expr.zero() for i in range(n)])
-    
-    def ones(n):
-        return ExprList([Expr.one() for i in range(n)])
-    
-    def make(*args):
-        r = ExprList.empty()
-        for a in args:
-            if isinstance(a, Expr):
-                r.x.append(a.copy())
-            else:
-                for b in a:
-                    r.x.append(b.copy())
-        return r
-    
-    def copy(self):
-        return ExprList([a.copy() for a in self.x])
-    
-    def get_expr():
-        return sum(self.x, Expr.empty())
+    @staticmethod
+    def entry_convert(a):
+        if isinstance(a, Expr):
+            return a.copy()
+        elif isinstance(a, (int, float)):
+            return Expr.const(a)
+        return None
     
     
-    def append(self, a):
-        self.x.append(a)
-        
+    def get_expr(self):
+        return sum(self.x, Expr.zero())
+    
+    
+    
     def series(self, vdir):
         """Get past or future sequence.
         Parameters:
@@ -11441,13 +16420,13 @@ class ExprList:
                     -1: past non-strict, -2: past strict
         """
         if vdir == 1:
-            return ExprList([sum(self.x[i:], Expr.zero()) for i in range(len(self.x))])
+            return ExprArray([sum(self.x[i:], Expr.zero()) for i in range(len(self.x))])
         elif vdir == 2:
-            return ExprList([sum(self.x[i+1:], Expr.zero()) for i in range(len(self.x))])
+            return ExprArray([sum(self.x[i+1:], Expr.zero()) for i in range(len(self.x))])
         elif vdir == -1:
-            return ExprList([sum(self.x[:i+1], Expr.zero()) for i in range(len(self.x))])
+            return ExprArray([sum(self.x[:i+1], Expr.zero()) for i in range(len(self.x))])
         elif vdir == -2:
-            return ExprList([sum(self.x[:i], Expr.zero()) for i in range(len(self.x))])
+            return ExprArray([sum(self.x[:i], Expr.zero()) for i in range(len(self.x))])
         return self.copy()
         
         
@@ -11464,109 +16443,29 @@ class ExprList:
         return self.series(2)
     
     
-    def set_len(self, n):
-        if n < len(self.x):
-            self.x = self.x[:n]
-            return
-        while n > len(self.x):
-            self.x.append(Expr.zero())
-            
-    
-    def __neg__(self):
-        return ExprList([-a for a in self.x])
-    
-    def __imul__(self, other):
-        for i in range(len(self.x)):
-            self.x[i] *= other
-        return self
-    
-    def __mul__(self, other):
-        r = self.copy()
-        r *= other
-        return r
-    
-    def __itruediv__(self, other):
-        for i in range(len(self.x)):
-            self.x[i] /= other
-        return self
-    
-    def __truediv__(self, other):
-        r = self.copy()
-        r /= other
-        return r
-    
-    def __iadd__(self, other):
-        if isinstance(other, ExprList):
-            r = []
-            for i in range(len(other.x)):
-                if i < len(self.x):
-                    self.x[i] += other.x[i]
-                else:
-                    self.x.append(other.x[i].copy())
-            return self
-        
-        for i in range(len(self.x)):
-            self.x[i] += other
-        return self
-    
-    def __add__(self, other):
-        r = self.copy()
-        r += other
-        return r
-    
-    def __radd__(self, other):
-        r = self.copy()
-        r += other
-        return r
-    
-    def __isub__(self, other):
-        self += -other
-        return self
-    
-    def __sub__(self, other):
-        r = self.copy()
-        r += -other
-        return r
-    
-    def __rsub__(self, other):
-        r = -self
-        r += other
-        return r
     
     def __abs__(self):
         return eabs(self)
     
-    def __len__(self):
-        return len(self.x)
-    
-    def __getitem__(self, key):
-        r = self.x[key]
-        if isinstance(r, list):
-            return ExprList(r)
-        return r
-    
-    def __setitem__(self, key, item):
-        self.x[key] = item
-    
     def __and__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([a & b for a, b in zip(self.x, other.x)])
-        return ExprList([a & other for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([a & b for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([a & other for a in self.x], shape = self.shape)
     
     def __or__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([a | b for a, b in zip(self.x, other.x)])
-        return ExprList([a | other for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([a | b for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([a | other for a in self.x], shape = self.shape)
     
     def __rand__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([b & a for a, b in zip(self.x, other.x)])
-        return ExprList([other & a for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([b & a for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([other & a for a in self.x], shape = self.shape)
     
     def __ror__(self, other):
-        if isinstance(other, CompList) or isinstance(other, ExprList):
-            return ExprList([b | a for a, b in zip(self.x, other.x)])
-        return ExprList([other | a for a in self.x])
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return ExprArray([b | a for a, b in zip(self.x, other.x)], shape = self.shape)
+        return ExprArray([other | a for a in self.x], shape = self.shape)
     
     def ge_region(self):
         r = Region.universe()
@@ -11590,72 +16489,994 @@ class ExprList:
         return (self - other).eq_region()
     
     
-    def record_to(self, index):
-        for a in self.x:
-            a.record_to(index)
-            
-    def isregtermpresent(self):
-        for a in self.x:
-            if a.isregtermpresent():
-                return True
-        return False
     
-    def tostring(self, style = 0, tosort = False):
-        """Convert to string
-        Parameters:
-            style   : Style of string conversion
-                      STR_STYLE_STANDARD : I(X,Y;Z|W)
-                      STR_STYLE_PSITIP : I(X+Y&Z|W)
-        """
-        style = iutil.convert_str_style(style)
-        nlstr = "\n"
-        if style & PsiOpts.STR_STYLE_LATEX:
-            nlstr = "\\\\\n"
+    # def tostring(self, style = 0, tosort = False):
+    #     """Convert to string
+    #     Parameters:
+    #         style   : Style of string conversion
+    #                   STR_STYLE_STANDARD : I(X,Y;Z|W)
+    #                   STR_STYLE_PSITIP : I(X+Y&Z|W)
+    #     """
+    #     style = iutil.convert_str_style(style)
+    #     nlstr = "\n"
+    #     if style & PsiOpts.STR_STYLE_LATEX:
+    #         nlstr = "\\\\\n"
             
-        r = ""
-        add_braket = True
-        if style == PsiOpts.STR_STYLE_PSITIP:
-            r += "ExprList([ "
-            add_braket = False
-        elif style & PsiOpts.STR_STYLE_LATEX:
-            if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += "\\left\\[\\begin{array}{l}\n"
-                add_braket = False
-            else:
-                r += "\\[ "
-        else:
-            r += "[ "
+    #     r = ""
+    #     add_braket = True
+    #     if style == PsiOpts.STR_STYLE_PSITIP:
+    #         r += "ExprArray([ "
+    #         add_braket = False
+    #     elif style & PsiOpts.STR_STYLE_LATEX:
+    #         if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
+    #             r += "\\left\\[\\begin{array}{l}\n"
+    #             add_braket = False
+    #         else:
+    #             r += "\\[ "
+    #     else:
+    #         r += "[ "
         
-        for i, a in enumerate(self.x):
-            if i:
-                if style & PsiOpts.STR_STYLE_LATEX:
-                    if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                        r += nlstr
-                    else:
-                        r += ", "
+    #     for i, a in enumerate(self.x):
+    #         if i:
+    #             if style & PsiOpts.STR_STYLE_LATEX:
+    #                 if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
+    #                     r += nlstr
+    #                 else:
+    #                     r += ", "
+    #             else:
+    #                 r += ", "
+    #         r += a.tostring(style = style, tosort = tosort)
+            
+    #     if style == PsiOpts.STR_STYLE_PSITIP:
+    #         r += " ])"
+    #     elif style & PsiOpts.STR_STYLE_LATEX:
+    #         if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
+    #             r += "\\end{array}\\right\\]"
+    #         else:
+    #             r += " \\]"
+    #     else:
+    #         r += " ]"
+        
+    #     return r
+    
+    
+    # def __str__(self):
+    #     return self.tostring(PsiOpts.settings["str_style"], PsiOpts.settings["str_tosort"])
+    
+    # def __repr__(self):
+    #     return self.tostring(PsiOpts.STR_STYLE_PSITIP)
+        
+
+class ivenn:
+    
+    def ellipse_contains(el, p):
+        if len(el) < 4:
+            el = (el[0], el[1], numpy.linalg.inv(el[1]), True)
+        elcen, elm, elmi, elinc = el
+        return not elinc ^ (numpy.linalg.norm(elmi.dot(p - elcen)) <= 1.0)
+        
+    def ellipse_angle(el, p):
+        if len(el) < 4:
+            el = (el[0], el[1], numpy.linalg.inv(el[1]), True)
+        elcen, elm, elmi, elinc = el
+        t = elmi.dot(p - elcen)
+        return numpy.arctan2(t[1], t[0])
+    
+    def ellipse_clamp(el, p, border, inc, is_it):
+        if len(el) < 4:
+            el = (el[0], el[1], numpy.linalg.inv(el[1]), True)
+        elcen, elm, elmi, elinc = el
+        pme = p - elcen
+        
+        
+        t = elmi.dot(pme)
+        tn = numpy.linalg.norm(t)
+        if tn <= 1e-9:
+            return None
+        if is_it:
+            ndiv = 600
+            md = 1e20
+            mg = numpy.array([0.0, 0.0])
+            for i in range(ndiv + 1):
+                ia = i * numpy.pi * 2 / ndiv
+                g = elm.dot(numpy.array([numpy.cos(ia), numpy.sin(ia)]))
+                cd = numpy.linalg.norm(g - pme)
+                if cd < md:
+                    md = cd
+                    mg = g
+            if md < 1e-9:
+                return None
+            if (inc ^ (tn > 1.0)) and md >= border:
+                return None
+            if inc ^ (tn > 1.0):
+                return (pme - mg) * (border / md) + mg + elcen
+            else:
+                return -(pme - mg) * (border / md) + mg + elcen
+            
+        else:
+            border /= numpy.linalg.norm(pme) / tn
+            if inc:
+                if tn <= 1.0 - border:
+                    return None
+                t = t * (1.0 - border) / tn
+            else:
+                if tn >= 1.0 + border:
+                    return None
+                t = t * (1.0 + border) / tn
+            return elm.dot(t) + elcen
+    
+    def ellipse_intersect_it(els, r, ndiv = 500, maxnp = 10000, cp = None, stop0 = None, stop1 = None, stopp = None):
+        elcen, elm, elmi, elinc = els[0]
+        
+        started = False
+        pcontain = True
+        pcontainxi = -1
+        
+        angle0 = 0.0
+        anglesn = 1.0 if elinc else -1.0
+        if cp is not None:
+            angle0 = ivenn.ellipse_angle(els[0], cp)
+        
+        for i in range(ndiv + 1):
+            ia = anglesn * i * numpy.pi * 2 / ndiv + angle0
+            p = elm.dot(numpy.array([numpy.cos(ia), numpy.sin(ia)])) + elcen
+            ccontains = [e is els[0] or ivenn.ellipse_contains(e, p) for e in els]
+            ccontain = all(ccontains)
+            ccontainxi = -1
+            for ei in range(len(els)):
+                if not ccontains[ei]:
+                    ccontainxi = ei
+            if cp is None:
+                if ccontain and not pcontain:
+                    ivenn.ellipse_intersect_it(els, r, ndiv, maxnp, p, els[pcontainxi], els[0], p)
+                    return
+            else:
+                if started and not ccontain:
+                    for ei in range(len(els)):
+                        if not ccontains[ei]:
+                            if els[0] is stop0 and els[ei] is stop1 and numpy.linalg.norm(p - stopp) <= 0.02:
+                                return
+                            cels = [els[ei]] + [e for e in els if e is not els[ei]]
+                            ivenn.ellipse_intersect_it(cels, r, ndiv, maxnp, p, stop0, stop1, stopp)
+                            return
+                    return
+                if ccontain:
+                    started = True
+                if started:
+                    r.append(p)
+                    if len(r) >= maxnp:
+                        print("Venn diagram intersection failure!")
+                        return
+            pcontain = ccontain
+            pcontainxi = ccontainxi
+            
+        if cp is None:
+            if len(els) >= 2:
+                cels = els[1:] + [els[0]]
+                ivenn.ellipse_intersect_it(cels, r, ndiv, maxnp, cp, stop0, stop1, stopp)
+                return
+                # print("Venn diagram includes all!")
+            for i in range(ndiv):
+                ia = anglesn * i * numpy.pi * 2 / ndiv + angle0
+                p = elm.dot(numpy.array([numpy.cos(ia), numpy.sin(ia)])) + elcen
+                r.append(p)
+            return
+    
+    def ellipse_intersect(els, ndiv = 700):
+        cels = [(e[0], e[1], numpy.linalg.inv(e[1]), e[2] if len(e) >= 3 else True) for e in els]
+        r = []
+        ivenn.ellipse_intersect_it(cels, r, ndiv)
+        return r
+        
+    
+    def ellipses(n):
+        if n == 1:
+            return [(numpy.array([0.0, 0.0]), numpy.eye(2))]
+        elif n == 2:
+            ratio = 0.68
+            return [(numpy.array([ratio - 1.0, 0.0]), numpy.eye(2) * ratio),
+                    (numpy.array([-ratio + 1.0, 0.0]), numpy.eye(2) * ratio)]
+        elif n == 3:
+            ratio = 0.65
+            rad = -ratio + 1.0
+            return [(numpy.array([-numpy.sin(i * numpy.pi * 2 / 3) * rad, 
+                                  numpy.cos(i * numpy.pi * 2 / 3) * rad]), 
+                     numpy.eye(2) * ratio) for i in range(3)]
+        elif n == 4:
+            mtilt0 = numpy.array([[1.0, 0.0], [-0.7, 1.0]])
+            mtilt1 = numpy.array([[1.0, 0.0], [-0.8, 1.0]])
+            mtilt2 = numpy.array([[1.0, 0.0], [0.8, 1.0]])
+            mtilt3 = numpy.array([[1.0, 0.0], [0.7, 1.0]])
+            return [(numpy.array([-0.4 * 1.011, -0.17]), mtilt0 * 0.7),
+                    (numpy.array([-0.1, 0.15]), mtilt1 * 0.62),
+                    (numpy.array([0.1, 0.15]), mtilt2 * 0.62),
+                    (numpy.array([0.4 * 1.011, -0.17]), mtilt3 * 0.7)]
+        elif n == 5:
+            # 5-set Venn diagram by Branko Grunbaum
+            ratio = 0.85
+            r = []
+            for i in range(5):
+                a = -i * numpy.pi * 2 / 5 + 0.2
+                cosa = numpy.cos(a)
+                sina = numpy.sin(a)
+                rmat = numpy.array([[cosa, -sina], [sina, cosa]])
+                r.append((rmat.dot(numpy.array([0.04 * 2, 0.087 * 2])) * ratio, 
+                     rmat.dot(numpy.array([[0.63, 0.0], [0.0, 1.0]])) * ratio))
+            return r
+    
+    def intersect(n, inc):
+        els = ivenn.ellipses(n)
+        # ndiv = 500
+        # if n >= 4:
+        #     ndiv = 700
+        # return ivenn.ellipse_intersect([e for i, e in enumerate(els) if inc[i]], ndiv = ndiv)
+        return ivenn.ellipse_intersect([e for i, e in enumerate(els) if inc[i]])
+    
+    
+    def calc_ellipses(n):
+        els = ivenn.ellipses(n)
+        elsi = [(el[0], el[1], numpy.linalg.inv(el[1]), True) for el in els]
+        r = [[None, None, None] for i in range(1 << n)]
+        
+        tpolys = [None] * (1 << n)
+        
+        for mask in range((1 << n) - 1, 0, -1):
+            maskbc = iutil.bitcount(mask)
+            # r[mask][0] = ivenn.ellipse_intersect([e for i, e in enumerate(els) if mask & (1 << i)])
+            r[mask][0] = ivenn.ellipse_intersect(
+                [(e[0], e[1], bool(mask & (1 << i))) for i, e in enumerate(els)])
+            if len(r[mask][0]) == 0:
+                print("Venn diagram intersection empty!")
+                
+            
+            if False:
+                cen = sum(r[mask][0], numpy.array([0.0, 0.0])) / len(r[mask][0])
+                # print(cen)
+                subcen = numpy.array([0.0, 0.0])
+                mask_other = ((1 << n) - 1) ^ mask
+                for mask2 in igen.subset_mask(mask_other):
+                    if mask2 == 0:
+                        continue
+                    mask3 = mask | mask2
+                    subcen += r[mask3][1]
+                
+                # cborder = 0.55
+                # if n == 3:
+                #     if maskbc == 2:
+                #         cborder = 0.7
+                # elif n == 4:
+                #     cborder = 0.8
+                #cborder = 0.4 * 3.0 / (n + 2.0)
+                cborder_max = 0.4
+                nit = 500
+                cborder_shrink = 0.05
+                walk_ratio = 1.0
+                # if n == 4:
+                #     nit += 400
+                #     # nit = 3
+                #     cborder_shrink = 0.975
+                
+                cborder_step_init = 0.02
+                cborder_step_shrink = 0.1
+                    
+                if n == 5:
+                    # nit += 400
+                    # nit = 3
+                    cborder_shrink = 0.005
+                
+                if mask_other != 0:
+                    subcen /= ((1 << iutil.bitcount(mask_other)) - 1)
+                    # r[mask][1] = cen * 5 - subcen * 4
+                    r[mask][1] = cen
+                    
+                    
+                    # tpoly = ivenn.ellipse_intersect([(e[0], e[1], bool(mask & (1 << i))) for i, e in enumerate(els)], ndiv = 2000)
+                    # r[mask][1] = sum(tpoly, numpy.array([0.0, 0.0])) / len(tpoly)
+                    # tpolys[mask] = tpoly
+                    
+                    cborder = 0.0
+                    for it in range(nit):
+                        # cborder = cborder_max * (cborder_shrink ** (it * 1.0 / nit))
+                        cborder_step = cborder_step_init * (cborder_step_shrink ** (it * 1.0 / nit))
+                        tgts = []
+                        for i, e in enumerate(elsi):
+                            t = ivenn.ellipse_clamp(e, r[mask][1], cborder, bool(mask & (1 << i)), n >= 4)
+                            if t is not None:
+                                tgts.append(t)
+                        if len(tgts):
+                            r[mask][1] = (sum(tgts, numpy.array([0.0, 0.0])) / len(tgts)) * walk_ratio + r[mask][1] * (1.0 - walk_ratio)
+                            cborder = max(cborder - cborder_step, 0.0)
+                            # print("  " + str(it) + ": " + str(cborder) + "  " + str(r[mask][1]))
+                        else:
+                            cborder += cborder_step
                 else:
-                    r += ", "
-            r += a.tostring(style = style, tosort = tosort)
+                    r[mask][1] = cen
+                # r[mask][1] = cen * (1 << iutil.bitcount(mask_other)) - subcen
+                # print(r[mask][1])
+                print("r[" + str(mask) + "][1] = numpy." + repr(r[mask][1]))
+                
+                for i, e in enumerate(elsi):
+                    # if ivenn.ellipse_contains(e, r[mask][1]) ^ bool(mask & (1 << i)):
+                    #     print("FAIL " + str(i))
+                    if ivenn.ellipse_clamp(e, r[mask][1], 0.0, bool(mask & (1 << i)), n >= 4) is not None:
+                        print("FAIL " + str(i))
             
-        if style == PsiOpts.STR_STYLE_PSITIP:
-            r += " ])"
-        elif style & PsiOpts.STR_STYLE_LATEX:
-            if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += "\\end{array}\\right\\]"
-            else:
-                r += " \\]"
-        else:
-            r += " ]"
+            
+            
+            r[mask][2] = numpy.array([0.0, 0.0])
+            
         
+        
+        textps = []
+        if n == 1:
+            textps = [(0.0, 1.1)]
+        elif n == 2:
+            textps = [(-0.45, 0.8), (0.45, 0.8)]
+        elif n == 3:
+            textps = [(0.0, 1.1), (-1.0, -0.6), (1.0, -0.6)]
+        elif n == 4:
+            textps = [(-0.95, 0.85), (-0.4, 1.1), (0.4, 1.1), (0.95, 0.85)]
+        elif n == 5:
+            textps = [(-numpy.sin(-i * numpy.pi * 2 / 5 + 0.12) * 1.1, 
+                       numpy.cos(-i * numpy.pi * 2 / 5 + 0.12) * 1.1) for i in range(5)]
+            
+        
+        
+        if True:
+            if n == 1:
+                r[1][1] = numpy.array([0.0, 0.0])
+            elif n == 2:
+                r[3][1] = numpy.array([-5.19979865e-06, 0.0])
+                r[2][1] = numpy.array([6.39999982e-01, 0.0])
+                r[1][1] = numpy.array([-6.39999982e-01, 0.0])
+            elif n == 3:
+                r[7][1] = numpy.array([-0.00011776,  0.00020427])
+                r[6][1] = numpy.array([ 8.10570556e-05, -4.61882452e-01])
+                r[5][1] = numpy.array([0.40013006, 0.2308303 ])
+                r[4][1] = numpy.array([ 0.60932452, -0.35185475])
+                r[3][1] = numpy.array([-0.40005325,  0.23087825])
+                r[2][1] = numpy.array([-0.6093162 , -0.35186916])
+                r[1][1] = numpy.array([1.71157142e-05, 7.03617892e-01])
+            elif n == 4:
+                r[15][1] = numpy.array([ 0.0, -0.24960125])
+                r[14][1] = numpy.array([0.24123917, 0.14045396 - 0.04])
+                r[13][1] = numpy.array([-0.18729334, -0.53280546])
+                r[12][1] = numpy.array([0.51662578, 0.40616016])
+                r[11][1] = numpy.array([ 0.19303297, -0.51624427])
+                r[10][1] = numpy.array([ 0.41826399 + 0.01, -0.41951261])
+                r[9][1] = numpy.array([ 0.0, -0.78949216])
+                r[8][1] = numpy.array([0.85559034,  0.22166595 - 0.02])
+                r[7][1] = numpy.array([-0.24252916,  0.14045396 - 0.04])
+                r[6][1] = numpy.array([0.0, 0.36160384 + 0.04])
+                r[5][1] = numpy.array([-0.41826399 - 0.01, -0.41951261])
+                r[4][1] = numpy.array([0.40438341, 0.74829018])
+                r[3][1] = numpy.array([-0.51706528,  0.40634087])
+                r[2][1] = numpy.array([-0.4085948 ,  0.74881886])
+                r[1][1] = numpy.array([-0.85559034,  0.22166595 - 0.02])
+            elif n == 5:
+                r[31][1] = numpy.array([ 0.00123121, -0.00035098])
+                r[30][1] = numpy.array([-0.50522841, -0.15738005])
+                r[29][1] = numpy.array([-0.30334848,  0.43405041])
+                r[28][1] = numpy.array([-0.5759732 ,  0.08623396])
+                r[27][1] = numpy.array([0.31906663, 0.42263051])
+                r[26][1] = numpy.array([-0.56718932, -0.29605626])
+                r[25][1] = numpy.array([-0.09599438,  0.57443462])
+                r[24][1] = numpy.array([-0.66609369, -0.20490312])
+                r[23][1] = numpy.array([ 0.49741082, -0.18604116])
+                r[22][1] = numpy.array([ 0.63288148, -0.09387176])
+                r[21][1] = numpy.array([-0.45683543,  0.44794225])
+                r[20][1] = numpy.array([-0.57279059,  0.30624   ])
+                r[19][1] = numpy.array([0.51664827, 0.26884256])
+                r[18][1] = numpy.array([0.64339464, 0.0889563 ])
+                r[17][1] = numpy.array([-0.36041924,  0.57743233])
+                r[16][1] = numpy.array([-0.8230906 ,  0.14612619])
+                r[15][1] = numpy.array([-0.00456696, -0.52900733])
+                r[14][1] = numpy.array([-0.25995857, -0.52117389])
+                r[13][1] = numpy.array([ 0.10629509, -0.63091551])
+                r[12][1] = numpy.array([-0.01095303, -0.69681429])
+                r[11][1] = numpy.array([0.28484849, 0.57289808])
+                r[10][1] = numpy.array([-0.46825182, -0.45012615])
+                r[9][1] = numpy.array([0.11424952, 0.63938959])
+                r[8][1] = numpy.array([-0.39334952, -0.73764132])
+                r[7][1] = numpy.array([ 0.41524152, -0.40832889])
+                r[6][1] = numpy.array([ 0.63606   , -0.25034334])
+                r[5][1] = numpy.array([ 0.28339764, -0.58443058])
+                r[4][1] = numpy.array([ 0.5799869 , -0.60204133])
+                r[3][1] = numpy.array([0.43456033, 0.52772247])
+                r[2][1] = numpy.array([0.75179328, 0.36557041])
+                r[1][1] = numpy.array([-0.11537642,  0.82796063])
+                
+                if False:
+                    for mask in range(1, (1 << n) - 1):
+                        maski = mask
+                        for i in range(1, 5):
+                            maski = maski << 1
+                            if maski & (1 << n):
+                                maski -= 1 << n
+                                maski += 1
+                            a = i * numpy.pi * 2 / 5
+                            cosa = numpy.cos(a)
+                            sina = numpy.sin(a)
+                            r[maski][1] = numpy.array([[cosa, -sina], [sina, cosa]]).dot(r[mask][1])
+                    
+                
+        for mask in range((1 << n) - 1, 0, -1):
+            mdist = 1e10
+            for x in r[mask][0]:
+                cdist = x[1]
+                cdist += numpy.linalg.norm(r[mask][1] - x)
+                if cdist < mdist:
+                    mdist = cdist
+                    r[mask][2] = x
+            
+        return (r, textps)
+        
+    
+    def patch(n, inc, **kwargs):
+        return matplotlib.patches.Polygon(ivenn.intersect(n, inc), True, **kwargs)
+
+class CellTable:
+    def __init__(self, x):
+        self.x = x
+        self.cells = [{} for i in range(1 << len(self.x))]
+        self.fontsize = 22
+        self.linewidth = 1.5
+        self.exprs = []
+    
+    def set_enabled(self, mask, enabled = True):
+        self.cells[mask]["enabled"] = enabled
+    
+    def get_enabled(self, mask):
+        return self.cells[mask].get("enabled", True)
+    
+    def set_attr(self, mask, key, val):
+        self.cells[mask][key] = val
+    
+    def get_attr(self, mask, key, default_val = None):
+        return self.cells[mask].get(key, default_val)
+    
+    def add_expr(self, expr, cval):
+        self.exprs.append({"expr": expr, "cval": cval})
+    
+    def set_expr_val(self, mask, val):
+        self.cells[mask]["val_" + str(len(self.exprs) - 1)] = val
+    
+    def get_pos(self, mask):
+        n = len(self.x)
+        nv = n // 2
+        maskv = mask & ((1 << nv) - 1)
+        maskh = mask >> nv
+        return (iutil.gray_to_bin(maskh), iutil.gray_to_bin(iutil.bit_reverse(maskv, nv)))
+        
+        # nh = (n + 1) // 2
+        # maskh = mask & ((1 << nh) - 1)
+        # maskv = mask >> nh
+        # return (iutil.gray_to_bin(iutil.bit_reverse(maskh, nh)), iutil.gray_to_bin(maskv))
+        
+    def get_x_poss(self, xi):
+        n = len(self.x)
+        nv = n // 2
+        cn = nv
+        ax = 1
+        if xi >= nv:
+            xi -= nv
+            ax = 0
+            cn = n - nv
+        else:
+            xi = nv - 1 - xi
+        
+        r = []
+        for mask in range(1, 1 << cn):
+            if iutil.bin_to_gray(mask) & (1 << xi):
+                r.append(mask)
+        return (ax, r)
+        # nh = (n + 1) // 2
+        # cn = nh
+        # ax = 0
+        # if xi >= nh:
+        #     xi -= nh
+        #     ax = 1
+        #     cn = n - nh
+        # else:
+        #     xi = nh - 1 - xi
+        
+        # r = []
+        # for mask in range(1, 1 << cn):
+        #     if iutil.bin_to_gray(mask) & (1 << xi):
+        #         r.append(mask)
+        # return (ax, r)
+    
+    def get_expr_color(self, i, color_shift):
+        r = None
+        if i is not None:
+            r = self.exprs[i].get("color", None)
+        if r is None:
+            # return [(1, 0.5, 0.5), (0.5, 1, 0.5), (0.5, 0.5, 1), (1, 1, 0.2), (1, 0.3, 1), (0.3, 1, 1), 
+            #         (1, 0.8, 0.3), (0.6, 0.6, 0.6)][i]
+            return [(1, 0.5, 0.5), (0.5, 0.5, 1), (0.5, 1, 0.5), (0.6, 0.6, 0.6), (1, 0.3, 1), (1, 1, 0.2), (0.3, 1, 1), 
+                    (1, 0.8, 0.3)][(0 if i is None else i) + color_shift]
         return r
     
-    
-    def __str__(self):
-        return self.tostring(PsiOpts.settings["str_style"])
-    
-    def __repr__(self):
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
+    def plot(self, style = "hsplit", legend = True):
+        label_interval = 0.32
+        label_width = 0.29
+        fontsize = self.fontsize
+        fontsize_in_mul = 1.0
+        linewidth = self.linewidth
         
+        fig, ax = plt.subplots(figsize = [10, 8])
+        # patches = []
+        xlim = [0, 0]
+        ylim = [0, 0]
+        
+        expr_hatch = [None] * len(self.exprs)
+        mask_nexpr = [0] * (1 << len(self.x))
+        hatches = ['//', '\\\\', '||', '--', '+', 'x', 'o', 'O', '.', '*']
+        
+        cval_present = False
+        cval_min = 0.0 # 1e20
+        cval_max = 0.0 # -1e20
+        for mask in range(1, 1 << len(self.x)):
+            cval = self.get_attr(mask, "cval")
+            if cval is not None:
+                cval = float(cval)
+                cval_present = True
+                cval_min = min(cval_min, cval)
+                cval_max = max(cval_max, cval)
+        
+        rect_draw = True
+        pm = False
+        text_draw = True
+        val_outline = None
+        neg_hatch = None
+        is_blend = None
+        is_venn = False
+        is_venn_overlap = False
+        text_sub_draw = True
+        neg_hatch_style = "//"
+        color_shift = 0
+        numdp = 4
+        cval_color_enabled = True
+        
+        cval_ignore = False
+        
+        style_split = style.split(",")
+        style = None
+        
+        for cstyle2 in style_split:
+            cstyle = cstyle2.strip()
+            if len(cstyle) == 0:
+                continue
+            if cstyle == "nofill":
+                rect_draw = False
+            elif cstyle == "pm":
+                pm = True
+            elif cstyle == "num":
+                pm = False
+            elif cstyle == "text":
+                text_draw = True
+            elif cstyle == "notext":
+                text_draw = False
+            elif cstyle == "sign":
+                text_sub_draw = False
+            elif cstyle == "nosign":
+                text_sub_draw = False
+            elif cstyle == "signhatch":
+                neg_hatch = True
+            elif cstyle == "nosignhatch":
+                neg_hatch = False
+            elif cstyle == "legend":
+                legend = True
+            elif cstyle == "nolegend":
+                legend = False
+            elif cstyle == "val_outline":
+                val_outline = True
+            elif cstyle == "val_nooutline":
+                val_outline = False
+            elif cstyle == "nocval":
+                cval_ignore = True
+            elif cstyle == "nocval_color":
+                cval_color_enabled = False
+            elif cstyle == "dp0":
+                numdp = 0
+            elif cstyle == "dp1":
+                numdp = 1
+            elif cstyle == "dp2":
+                numdp = 2
+            elif cstyle == "dp3":
+                numdp = 3
+            elif cstyle == "dp4":
+                numdp = 4
+            elif cstyle == "dp5":
+                numdp = 5
+            elif cstyle == "dp6":
+                numdp = 6
+            elif cstyle == "dp7":
+                numdp = 7
+            elif cstyle == "dp8":
+                numdp = 8
+            elif cstyle == "dp9":
+                numdp = 9
+            elif cstyle == "venn":
+                is_venn = True
+            else:
+                style = cstyle
+        
+        if style is None:
+            style = "hsplit"
+        
+        if cval_ignore:
+            cval_present = False
+        
+        cval_color = None
+        if cval_min >= cval_max:
+            cval_color_enabled = False
+        if cval_present:
+            if cval_color_enabled:
+                cval_color = self.get_expr_color(None, color_shift)
+                color_shift += 1
+        else:
+            cval_color_enabled = False
+        
+        if cval_color_enabled:
+            style = "hatch"
+        
+        if len(self.x) > 5:
+            is_venn = False
+        if is_venn:
+            if len(self.x) == 4:
+                fontsize_in_mul = 0.9
+            if len(self.x) == 5:
+                fontsize_in_mul = 0.8
+            
+        if val_outline is None:
+            val_outline = style == "hatch" or style == "text" or style == "blend"
+        if neg_hatch is None:
+            neg_hatch = style == "hsplit_fixed" or style == "hsplit" or style == "blend"
+        if is_blend is None:
+            is_blend = style == "blend"
+        
+        for mask in range(1, 1 << len(self.x)):
+            expr_pres = [ei for ei in range(len(self.exprs)) 
+                         if self.get_attr(mask, "val_" + str(ei)) is not None]
+            mask_nexpr[mask] = len(expr_pres)
+            if style == "hatch":
+                if len(expr_pres) >= 2:
+                    for ei in expr_pres:
+                        expr_hatch[ei] = True
+                    
+        if style == "hatch":
+            nover = 0
+            for ei in range(len(self.exprs)):
+                if expr_hatch[ei]:
+                    expr_hatch[ei] = hatches[nover]
+                    nover += 1
+                
+        
+        n = len(self.x)
+        axlen = [0, 0]
+        axslen = [0, 0]
+        
+        polys = [None] * (1 << n)
+        poly_els = [None] * n
+        textps = [None] * n
+        if is_venn:
+            polys, textps = ivenn.calc_ellipses(n)
+            poly_els = [ivenn.intersect(n, [i == j for j in range(n)]) for i in range(n)]
+            for xi in range(n):
+                ax.text(textps[xi][0], textps[xi][1], str(self.x[xi]), 
+                        horizontalalignment="center", verticalalignment="center", fontsize = fontsize)
+                
+            
+        if not is_venn:
+            for xi in range(n):
+                cax, clist = self.get_x_poss(xi)
+                axslen[cax] += 1
+            for xi in range(n):
+                cax, clist = self.get_x_poss(xi)
+                avgpos = [0.0, 0.0]
+                caxlen = axlen[cax]
+                if cax:
+                    caxlen = axslen[cax] - 1 - caxlen
+                for v in clist:
+                    pos = (v, -(caxlen + 1) * label_interval)
+                    size = (1, label_width)
+                    if cax:
+                        pos = (pos[1], pos[0])
+                        size = (size[1], size[0])
+                    
+                    pos = (pos[0], -pos[1] - size[1])
+                    avgpos[0] += pos[0] + size[0] * 0.5
+                    avgpos[1] += pos[1] + size[1] * 0.5
+                    
+                    xlim[0] = min(xlim[0], pos[0])
+                    xlim[1] = max(xlim[1], pos[0] + size[0])
+                    ylim[0] = min(ylim[0], pos[1])
+                    ylim[1] = max(ylim[1], pos[1] + size[1])
+                    
+                    ax.add_patch(matplotlib.patches.Rectangle(
+                        pos, size[0], size[1], facecolor = "lightgray"))
+                
+                avgpos[0] /= len(clist)
+                avgpos[1] /= len(clist)
+                ax.text(avgpos[0], avgpos[1], str(self.x[xi]), 
+                        horizontalalignment="center", verticalalignment="center", fontsize = fontsize)
+                
+                axlen[cax] += 1
+                
+        # passes = [0, 4]
+        # if is_venn:
+        passes = [0, 2, 4]
+        
+        for cpass in passes:
+            for mask in range(1, 1 << len(self.x)):
+                if cpass == 2:
+                    if is_venn and iutil.bitcount(mask) != 1:
+                        continue
+                
+                pos = None
+                size = None
+                if is_venn:
+                    pos = polys[mask][1]
+                    size = 1.2 / n
+                    if n == 4:
+                        size *= 0.95
+                    elif n == 5:
+                        nbit = iutil.bitcount(mask)
+                        if nbit >= 2 and nbit <= 4:
+                            size *= 0.55
+                        elif nbit == 5:
+                            size *= 1.5
+                        else:
+                            size *= 1.2
+                            
+                    size = (size, size)
+                    pos = (pos[0] - size[0] * 0.5, pos[1] - size[1] * 0.5)
+                else:
+                    pos = self.get_pos(mask)
+                    pos = (pos[0], -pos[1] - 1)
+                    size = (1, 1)
+                xlim[0] = min(xlim[0], pos[0])
+                xlim[1] = max(xlim[1], pos[0] + size[0])
+                ylim[0] = min(ylim[0], pos[1])
+                ylim[1] = max(ylim[1], pos[1] + size[1])
+                
+                isenabled = self.get_enabled(mask)
+                
+                cval = None
+                if cval_present:
+                    cval = self.get_attr(mask, "cval")
+                    if cval is not None:
+                        cval = float(cval)
+                
+                color = "none"
+                if not isenabled:
+                    color = "k"
+                elif (cval is not None) and cval_color_enabled:
+                    cval_scaled = (cval - cval_min) / (cval_max - cval_min)
+                    color = tuple(cval_color[i] * cval_scaled + 1.0 - cval_scaled for i in range(3))
+                
+                
+                if cpass == 0 and color != "none":
+                    params = {
+                        "facecolor": color
+                        }
+                    if is_venn:
+                        ax.add_patch(matplotlib.patches.Polygon(
+                            polys[mask][0], True, **params))
+                    else:
+                        ax.add_patch(matplotlib.patches.Rectangle(
+                            pos, size[0], size[1], **params))
+                
+                if cpass == 0:
+                    params = {
+                        "facecolor": "white", 
+                        "edgecolor": "none"
+                        }
+                    if is_venn and is_venn_overlap:
+                        ax.add_patch(matplotlib.patches.Polygon(
+                            polys[mask][0], True, **params))
+                
+                if cpass == 2:
+                    params = {
+                        "facecolor": "none", 
+                        "linestyle": "-", 
+                        "linewidth": linewidth, 
+                        "edgecolor": "k"
+                        }
+                    if is_venn:
+                        # ax.add_patch(matplotlib.patches.Polygon(
+                        #     polys[mask][0], True, **params))
+                        for i in range(n):
+                            if mask & (1 << i):
+                                ax.add_patch(matplotlib.patches.Polygon(
+                                    poly_els[i], True, **params))
+                                break
+                    else:
+                        ax.add_patch(matplotlib.patches.Rectangle(
+                            pos, size[0], size[1], **params))
+                    continue
+                
+                if isenabled:
+                    cnexpr = 0
+                    snexpr = mask_nexpr[mask]
+                    colsum = [0.0, 0.0, 0.0]
+                    colsumsol = [0.0, 0.0, 0.0]
+                    nsol = 0
+                    
+                    if cval is not None:
+                        if cpass == 4:
+                            if text_draw:
+                                text_y = 0.7
+                                if len(self.exprs) == 0:
+                                    text_y = 0.5
+                                ctext = ("{:." + str(numdp) + "f}").format(cval)
+                                ax.text(pos[0] + 0.5 * size[0], pos[1] + size[1] * text_y, ctext, 
+                                    horizontalalignment="center", verticalalignment="center", fontsize = fontsize * fontsize_in_mul,
+                                    color = "k")
+                        
+                    
+                    for ei in range(len(self.exprs)):
+                        v = self.get_attr(mask, "val_" + str(ei))
+                        if v is None:
+                            continue
+                        
+                        if pm:
+                            ctext = iutil.float_tostr(abs(v), bracket = False)
+                            if ctext == "1":
+                                ctext = ""
+                            if v >= 0:
+                                ctext = "+" + ctext
+                            else:
+                                ctext = "-" + ctext
+                        else:
+                            ctext = iutil.float_tostr(v, bracket = False)
+                            
+                        ccolor = self.get_expr_color(ei, color_shift)
+                        chatch = expr_hatch[ei]
+                        hatch_invert = False
+                        if chatch is not None:
+                            hatch_invert = True
+                        if neg_hatch and v < 0:
+                            chatch = neg_hatch_style
+                        
+                        rect_x = 0.0
+                        rect_w = 1.0
+                        text_x = (cnexpr + 0.5) * 1.0 / snexpr
+                        text_y = 0.5
+                        if cval is not None:
+                            text_y = 0.3
+                        
+                        if style == "hsplit_fixed":
+                            rect_x = ei * 1.0 / len(self.exprs)
+                            rect_w = 1.0 / len(self.exprs)
+                            text_x = (ei + 0.5) * 1.0 / len(self.exprs)
+                        elif style == "hsplit":
+                            rect_x = cnexpr * 1.0 / snexpr
+                            rect_w = 1.0 / snexpr
+                        
+                        if isinstance(ccolor, tuple):
+                            colsum[0] += ccolor[0]
+                            colsum[1] += ccolor[1]
+                            colsum[2] += ccolor[2]
+                            if not (neg_hatch and v < 0):
+                                colsumsol[0] += ccolor[0]
+                                colsumsol[1] += ccolor[1]
+                                colsumsol[2] += ccolor[2]
+                                nsol += 1
+                                
+                        
+                        
+                        if cpass == 0:
+                            if rect_draw and (not is_blend or cnexpr == snexpr - 1):
+                                hatch_col = (1.0, 1.0, 1.0)
+                                if is_blend and cnexpr == snexpr - 1:
+                                    ccolor = (colsum[0] / snexpr, colsum[1] / snexpr, colsum[2] / snexpr)
+                                    if nsol > 0:
+                                        hatch_col = (colsumsol[0] / nsol, colsumsol[1] / nsol, colsumsol[2] / nsol)
+                                    if abs(ccolor[0] - hatch_col[0]) + abs(ccolor[1] - hatch_col[1]) + abs(ccolor[2] - hatch_col[2]) <= 0.001:
+                                        chatch = None
+                                    else:
+                                        chatch = neg_hatch_style
+                                
+                                params = {
+                                    "facecolor": "none" if hatch_invert else ccolor, 
+                                    "hatch": chatch,
+                                    "edgecolor": ccolor if hatch_invert else hatch_col if chatch else "none", 
+                                    "linewidth": 0
+                                    }
+                                
+                                if is_venn:
+                                    # print(mask)
+                                    # print(polys[mask])
+                                    ax.add_patch(matplotlib.patches.Polygon(
+                                        polys[mask][0], True, **params))
+                                else:
+                                    ax.add_patch(matplotlib.patches.Rectangle(
+                                        (pos[0] + rect_x * size[0], pos[1]), 
+                                        size[0] * rect_w, size[1], **params))
+                                    
+                                # ax.add_patch(matplotlib.patches.Rectangle(
+                                #     (pos[0] + rect_x * size[0], pos[1]), 
+                                #     size[0] * rect_w, size[1], 
+                                #     facecolor = "none" if hatch_invert else ccolor, hatch = chatch,
+                                #     edgecolor = ccolor if hatch_invert else "white" if chatch else "none", 
+                                #     linewidth = 0))
+                        elif cpass == 4:
+                            if text_draw:
+                                ax.text(pos[0] + text_x * size[0], pos[1] + size[1] * text_y, ctext, 
+                                    horizontalalignment="center", verticalalignment="center", fontsize = fontsize * fontsize_in_mul,
+                                    color = ccolor if val_outline else "k",
+                                    path_effects = [matplotlib.patheffects.withStroke(linewidth = 3.5, foreground = "k")] if val_outline else None)
+                        
+                        cnexpr += 1
+                        
+                if cpass == 0:
+                    
+                    remtext = ""
+                    if self.get_attr(mask, "ispos"):
+                        remtext += "+"
+                    if self.get_attr(mask, "isneg"):
+                        remtext += "-"
+                    if text_sub_draw and len(remtext):
+                        rempos = None
+                        if is_venn:
+                            # vpos = -0.08
+                            # if n == 5:
+                            #     vpos = 0.05
+                            # rempos = (pos[0] + size[0] * 0.5, pos[1] + size[1] * vpos)
+                            rempos = polys[mask][2]
+                            rempos = (rempos[0], rempos[1] + size[1] * 0.02)
+                        else:
+                            rempos = (pos[0] + size[0] * 0.015, pos[1] + size[1] * 0.015)
+                        ax.text(rempos[0], rempos[1], remtext, 
+                            horizontalalignment="center" if is_venn else "left", verticalalignment="bottom", 
+                            fontsize = fontsize * fontsize_in_mul * 0.85)
+        
+        if is_venn:
+            xlim = [-1.1, 1.1]
+            ylim = [-1.1, 1.1]
+        
+        if legend and len(self.exprs):
+            legends = []
+            for ei in range(len(self.exprs)):
+                ccolor = self.get_expr_color(ei, color_shift)
+                clabel = ""
+                cexpr = self.exprs[ei].get("expr")
+                if cexpr is not None:
+                    with PsiOpts(str_lhsreal = False):
+                        clabel = str(cexpr)
+                    # if isinstance(cexpr, Region):
+                    #     clabel = cexpr.tostring(lhsvar = None)
+                    # else:
+                    #     clabel = str(cexpr)
+                    
+                cval = self.exprs[ei].get("cval")
+                if cval_present and (cval is not None):
+                    if not isinstance(cval, bool):
+                        cval = float(cval)
+                    if isinstance(cval, float):
+                        clabel += " = " + ("{:." + str(numdp) + "f}").format(cval)
+                    else:
+                        clabel += " = " + str(cval)
+                        
+                if not len(clabel):
+                    continue
+                # legends.append(matplotlib.lines.Line2D([0], [0], color=ccolor, lw=4, label=clabel))
+                legends.append(matplotlib.patches.Patch(facecolor=ccolor, label=clabel))
+                
+            ax.legend(handles = legends, fontsize = fontsize, bbox_to_anchor=(0.5, -0.03), 
+                      loc="upper center", frameon=False)
+                
+        if is_venn:
+            ax.set_aspect("equal")
+            
+        # ax.add_collection(PatchCollection(patches))
+        plt.axis("off")
+        plt.xlim([xlim[0] - 0.011, xlim[1] + 0.011])
+        plt.ylim([ylim[0] - 0.011, ylim[1] + 0.011])
+        plt.show()
+        plt.tight_layout()
 
 class ProofObj:
     def __init__(self, steps):
@@ -11717,10 +17538,1365 @@ class ProofObj:
         return self.tostring(PsiOpts.settings["str_style"])
     
 
+class CodingNode:
+    
+    def __init__(self, rv_out, aux_out = None, aux_dec = None, aux_ndec = None, rv_in_causal = None, ndec_mode = "all"):
+        
+        self.rv_out = rv_out
+        
+        if isinstance(aux_out, tuple):
+            aux_out = [aux_out]
+        if isinstance(aux_out, list):
+            self.aux_out_sublist = aux_out
+            self.aux_out = Comp.empty()
+            for v0, v1 in self.aux_out_sublist:
+                self.aux_out += v0
+        else:
+            self.aux_out_sublist = []
+            self.aux_out = aux_out
+            
+        self.aux_dec = aux_dec
+        self.aux_ndec = aux_ndec
+        
+        if rv_in_causal is None:
+            self.rv_in_causal = Comp.empty()
+        else:
+            self.rv_in_causal = rv_in_causal
+        
+        self.aux_ndec_try = Comp.empty()
+        self.ndec_mode = ndec_mode
+            
+    def copy(self):
+        r = CodingNode(self.rv_out.copy())
+        r.aux_out = iutil.copy(self.aux_out)
+        r.aux_out_sublist = [(a.copy(), b.copy()) for a, b in self.aux_out_sublist]
+        r.aux_dec = iutil.copy(self.aux_dec)
+        r.aux_ndec = iutil.copy(self.aux_ndec)
+        r.rv_in_causal = iutil.copy(self.rv_in_causal)
+        r.aux_ndec_try = iutil.copy(self.aux_ndec_try)
+        r.ndec_mode = self.ndec_mode
+        return r
+    
+    def clear(self):
+        self.aux_out = None
+        self.aux_out_sublist = []
+        self.aux_dec = None
+        self.aux_ndec = None
+        self.aux_ndec_try = Comp.empty()
+    
+    def record_to(self, index, skip_msg = False):
+        self.rv_out.record_to(index)
+        if self.aux_out is not None:
+            self.aux_out.record_to(index)
+        if self.aux_dec is not None:
+            self.aux_dec.record_to(index)
+        if self.aux_ndec is not None:
+            self.aux_ndec.record_to(index)
+    
+
+class CodingModel:
+    
+    def __init__(self, bnet = None, sublist = None, nodes = None, reg = None):
+        if bnet is None:
+            self.bnet = BayesNet()
+        else:
+            if isinstance(bnet, BayesNet):
+                self.bnet = bnet
+            else:
+                self.bnet = BayesNet(bnet)
+            
+        if reg is None:
+            self.reg = Region.universe()
+        else:
+            self.reg = reg
+            
+        if sublist is None:
+            self.sublist = []
+        else:
+            self.sublist = sublist
+            
+        self.nodes = []
+        if nodes is None:
+            pass
+        else:
+            for node in nodes:
+                if isinstance(node, CodingNode):
+                    self.nodes.append(node)
+                else:
+                    self.nodes.append(CodingNode(node))
+        
+        self.inner_mode = "plain"
+    
+    def copy(self):
+        r = CodingModel()
+        r.bnet = iutil.copy(self.bnet)
+        r.reg = iutil.copy(self.reg)
+        r.sublist = [(a.copy(), b.copy()) for a, b in self.sublist]
+        r.nodes = [a.copy() for a in self.nodes]
+        r.inner_mode = self.inner_mode
+        return r
+    
+    def __iadd__(self, other):
+        if isinstance(other, CodingNode):
+            self.nodes.append(other)
+        else:
+            self.bnet += other
+        return self
+        
+    def __iand__(self, other):
+        if isinstance(other, Region):
+            self.reg = self.reg & other
+        return self
+        
+    def add_edge(self, a, b, coded = False, children_edge = True, is_fcn = False, **kwargs):
+        ex = Comp.empty()
+        b2 = Comp.empty()
+        for c in b:
+            if self.bnet.index.get_index(c) >= 0:
+                ex += c
+            else:
+                b2 += c
+                
+        ac = a.copy()
+        
+        if not ex.isempty():
+            cname = "#EX_"
+            for c in a:
+                cname += str(c)
+            cname += "_"
+            for c in ex:
+                cname += str(c)
+            exc = rv(cname)
+            self.bnet.add_edge(ac, exc)
+            if is_fcn:
+                self.bnet.set_fcn(exc)
+            if children_edge:
+                ac += ex
+            if coded:
+                self.nodes.append(CodingNode(exc, **kwargs))
+            self.sublist.append((exc, ex))
+        
+        for c in b2:
+            self.bnet.add_edge(ac, c)
+            if is_fcn:
+                self.bnet.set_fcn(c)
+            if children_edge:
+                ac += c
+            if coded:
+                self.nodes.append(CodingNode(c, **kwargs))
+        
+    def add_node(self, a, b, **kwargs):
+        self.add_edge(a, b, coded = True, **kwargs)
+            
+    def set_rate(self, a, rate):
+        self.sublist.append((a, rate))
+        
+    
+    def get_aux(self):
+        r = Comp.empty()
+        for node in self.nodes:
+            r += node.aux_out
+        return r
+        
+    
+    def get_rv_rates(self, v):
+        v = v.copy()
+        r = Expr.zero()
+        for v0, v1 in self.sublist:
+            if v0.ispresent(v):
+                if isinstance(v1, Expr):
+                    r += v1
+                else:
+                    v.substitute(v0, v1)
+        return r
+    
+    def is_rate(self, v):
+        return not self.get_rv_rates(v).iszero()
+    
+    def get_rv_sub(self, v):
+        v = v.copy()
+        for v0, v1 in self.sublist:
+            if v0.ispresent(v):
+                if isinstance(v1, Expr):
+                    v.substitute(v0, v0[0])
+                    # v = v0[0].copy()
+                else:
+                    v.substitute(v0, v1)
+        return v
+    
+    def get_rv_ratervs(self, v):
+        v = v.copy()
+        r = Comp.empty()
+        for v0, v1 in self.sublist:
+            if v0.ispresent(v):
+                if isinstance(v1, Expr):
+                    r += v0[0]
+                else:
+                    v.substitute(v0, v1)
+        return r
+    
+    def get_node_immediate_rates(self, node):
+        x = node.rv_out + self.bnet.get_parents(node.rv_out)
+        return self.get_rv_rates(x)
+    
+    def get_node_immediate_ratervs(self, node):
+        x = node.rv_out + self.bnet.get_parents(node.rv_out)
+        return self.get_rv_ratervs(x)
+    
+    
+    def get_node_descendants(self, node):
+        x = self.bnet.get_descendants(node.rv_out) - node.rv_out
+        r = []
+        for node2 in self.nodes:
+            if x.ispresent(node2.rv_out):
+                r.append(node2)
+        return r
+        
+    def get_nodes_rv_out(self):
+        r = Comp.empty()
+        for node in self.nodes:
+            r += node.rv_out
+        return r
+    
+        
+    def find_node_rv_out(self, x):
+        for node in self.nodes:
+            if x.ispresent(node.rv_out):
+                return node
+        return None
+    
+    def calc_node(self, node):
+        if node.aux_out is None:
+            node.aux_out = Comp.empty()
+            
+            ratervs = self.get_node_immediate_ratervs(node)
+            des = self.get_node_descendants(node)
+            crvs = list(ratervs)
+            if len(crvs) == 0:
+                crvs.append(Comp.empty())
+            
+            if self.inner_mode == "combinations":
+                for c in crvs:
+                    for mask in range(1, 1 << len(des)):
+                        cname = "A_" + str(node.rv_out) + ("" if c.isempty() else "_" + str(c)) + "_"
+                        for i, d in enumerate(des):
+                            if mask & (1 << i):
+                                cname += str(d.rv_out)
+                        a = rv(cname)
+                        node.aux_out += a
+                        node.aux_out_sublist.append((a, a + c))
+                        for i, d in enumerate(des):
+                            if mask & (1 << i):
+                                if d.aux_dec is None:
+                                    d.aux_dec = Comp.empty()
+                                d.aux_dec += a
+                            else:
+                                d.aux_ndec_try += a
+            
+            elif self.inner_mode == "plain":
+                if len(des):
+                    for c in crvs:
+                        cname = "A_" + str(node.rv_out) + ("" if c.isempty() or len(crvs) == 1 else "_" + str(c))
+                        a = rv(cname)
+                        node.aux_out += a
+                        node.aux_out_sublist.append((a, a + c))
+                        
+                        for d in des:
+                            if self.get_node_immediate_ratervs(d).ispresent(c):
+                                if d.aux_dec is None:
+                                    d.aux_dec = Comp.empty()
+                                d.aux_dec += a
+                            else:
+                                d.aux_ndec_try += a
+                            
+                            
+        
+    
+    def calc_nodes(self):
+        for node in self.nodes:
+            self.calc_node(node)
+        
+    
+    def get_inner(self, convexify = False, skip_simplify = False, skip_aux = False):
+        
+        if convexify is not False:
+            if convexify is True:
+                convexify = Comp.rv("Q_T")
+        
+        self.calc_nodes()
+        for node in self.nodes:
+            if node.aux_ndec is None:
+                r = RegionOp.union([])
+                
+                if node.ndec_mode == "all":
+                    for cndec in igen.subset(node.aux_ndec_try):
+                        node.aux_ndec = cndec if isinstance(cndec, Comp) else Comp.empty()
+                        r |= self.get_inner(convexify, skip_simplify = True, skip_aux = True)
+                        
+                elif node.ndec_mode == "min" or node.ndec_mode == "none":
+                    node.aux_ndec = Comp.empty()
+                    r = self.get_inner(convexify, skip_simplify = True, skip_aux = True)
+                        
+                elif node.ndec_mode == "max":
+                    node.aux_ndec = node.aux_ndec_try.copy()
+                    r = self.get_inner(convexify, skip_simplify = True, skip_aux = True)
+                
+                node.aux_ndec = None
+                
+                if not skip_aux:
+                    aux = self.get_aux()
+                    caux = aux.copy()
+                    if convexify is not False:
+                        caux += convexify
+                    r = r.eliminate(caux.inter(r.allcomprv()))
+                    
+                if skip_simplify:
+                    return r
+                else:
+                    r.simplify()
+                    r.simplify_union()
+                    # print(r)
+                    r.remove_missing_aux()
+                    return r.simplified_quick()
+        
+        
+        aux = self.get_aux()
+        aux_rates = [Expr.real("#TR" + str(i)) for i in range(len(aux))]
+        cbnet = self.bnet.copy()
+        
+        r = Region.universe()
+        for rate in aux_rates:
+            r &= rate >= 0
+            
+        for node in self.nodes:
+            y = self.bnet.get_parents(node.rv_out) - node.rv_in_causal
+            aux_dec = Comp.empty()
+            if node.aux_dec is not None:
+                aux_dec = node.aux_dec
+                
+            cbnet.add_edge(aux_dec + y, node.aux_out + node.rv_out)
+            
+            for cdec in igen.subset(aux_dec, minsize = 1):
+                for cndec in igen.subset(node.aux_ndec):
+                    cd = cdec + cndec
+                    expr = Expr.zero()
+                    cc = Comp.empty()
+                    for c in cd:
+                        ci = aux.index_of(c)
+                        expr += aux_rates[ci]
+                        expr -= I(c & cc + (aux_dec + node.aux_ndec - cd) + y)
+                        cc += c
+                    r &= expr <= 0
+            
+            for ce in igen.subset(node.aux_out, minsize = 1):
+                expr = Expr.zero()
+                cc = Comp.empty()
+                for c in ce:
+                    ci = aux.index_of(c)
+                    expr += aux_rates[ci]
+                    expr -= I(c & cc + aux_dec + y)
+                    cc += c
+                r &= expr >= 0
+        
+        
+        if convexify is not False:
+            r.condition(convexify)
+            for node in self.nodes:
+                cbnet.add_edge(convexify, node.aux_out + node.rv_out)
+            
+        r &= cbnet.get_region()
+        
+        # print(r)
+            
+        tosublist = []
+        for node in self.nodes:
+            tosublist += node.aux_out_sublist
+        tosublist += self.sublist
+        
+        for v0, v1 in tosublist:
+            r.substitute(v0, v1)
+            if isinstance(v1, Expr) and not isinstance(v0, Expr):
+                r &= v1 >= 0
+        
+        # print(r)
+        
+        r = r.eliminate(sum(aux_rates))
+        
+        
+        if not self.reg.isuniverse():
+            r = r & self.reg
+        
+        
+        # if convexify is not False:
+        #     r.condition(convexify)
+        #     rallcomprv = r.allcomprv()
+        #     encout = self.get_nodes_rv_out().inter(rallcomprv)
+        #     r &= markov(rallcomprv - encout - convexify, encout, convexify)
+            
+        if not skip_aux:
+            caux = aux.copy()
+            if convexify is not False:
+                caux += convexify
+            r = r.eliminate(caux.inter(r.allcomprv()))
+        
+        # print(r)
+        if skip_simplify:
+            return r
+        else:
+            r = r.simplified()
+            r.remove_missing_aux()
+            return r
+            
+    def nfold(self, n = 2, natural_eqprob = True, all_eqprob = True):
+        """
+        Return the n-letter setting.
+
+        Parameters
+        ----------
+        n : int
+            The blocklength.
+
+        Returns
+        -------
+        CodingModel.
+
+        """
+        
+        r = self.copy()
+        
+        bnet_out = BayesNet()
+        reg_out_map = {}
+        clen = n
+        
+        toeqprob = Comp.empty()
+            
+        for x in self.bnet.allcomp() + self.reg.allcomprv():
+            
+            t = None
+            if self.is_rate(x):
+                t = x.copy()
+            else:
+                t = rv_array(x.get_name(), n)
+                t[0] = x.copy()
+                if natural_eqprob or all_eqprob:
+                    toeqprob += x
+                    
+            reg_out_map[x.get_name()] = t
+        
+        for (a, b) in self.bnet.edges():
+            if not all_eqprob:
+                toeqprob -= b
+            am = reg_out_map[a.get_name()]
+            bm = reg_out_map[b.get_name()]
+            node = self.find_node_rv_out(b)
+            if node is None:
+                bnet_out += (am, bm)
+            else:
+                if node.rv_in_causal.ispresent(a) and isinstance(am, CompArray) and isinstance(bm, CompArray):
+                    for t1 in range(clen):
+                        for t2 in range(t1 + 1, clen):
+                            bnet_out += (am[t1]+bm[t1], bm[t2])
+                else:
+                    bnet_out += (am.allcomp(), bm.allcomp())
+                    
+        for x in self.bnet.allcomp():
+            if self.bnet.is_fcn(x):
+                xm = reg_out_map[x.get_name()]
+                bnet_out.set_fcn(xm)
+                
+        r.bnet = bnet_out
+        
+        r.reg = Region.universe()
+        for i in range(n):
+            tr = self.reg.copy()
+            for x in self.reg.allcomprv():
+                v = reg_out_map[x.get_name()]
+                if isinstance(v, CompArray):
+                    tr.substitute(x, v[i])
+            r.reg = r.reg & tr
+        
+        if not toeqprob.isempty():
+            for i in range(1, n):
+                v0 = CompArray.empty()
+                vi = CompArray.empty()
+                for x in toeqprob:
+                    v0.append(reg_out_map[x.get_name()][0])
+                    vi.append(reg_out_map[x.get_name()][i])
+                r.reg = r.reg & (ent_vector(*v0) == ent_vector(*vi))
+        
+        def map_getlist_id(a, i):
+            if isinstance(a, Expr):
+                return a.copy()
+            t = None
+            for c in a:
+                cm = reg_out_map[c.get_name()]
+                if isinstance(cm, CompArray):
+                    cm = cm[i]
+                if t is None:
+                    t = cm.copy()
+                else:
+                    t += cm
+            return t
+        
+        
+        r.sublist = []
+        for i in range(n):
+            for v0, v1 in self.sublist:
+                r.sublist.append((map_getlist_id(v0, i), map_getlist_id(v1, i)))
+                
+        r.nodes = []
+        for i in range(n):
+            for node in self.nodes:
+                v = reg_out_map[node.rv_out.get_name()]
+                if isinstance(v, CompArray):
+                    v = v[i]
+                else:
+                    if i != 0:
+                        continue
+                
+                cnode = node.copy()
+                cnode.clear()
+                cnode.rv_out = v.copy()
+                r.nodes.append(cnode)
+                
+        return r
+        
+        
+        
+    def get_outer(self, oneshot = False, future = True, convexify = False, add_csiszar_sum = True, leaf_remove = True, skip_simplify = True):
+        
+        if convexify is not False:
+            if convexify is True:
+                convexify = Comp.rv("Q_T")
+                
+        # auxs = self.get_aux()
+        # reg_out_aux = auxs.copy()
+        reg_out_aux = Comp.empty()
+        
+        bnet_out = BayesNet()
+        reg_out_map = {}
+        clen = 1 if oneshot else 3 if future else 2
+        ttr = [1, 0, 2]
+        
+        # for v0, v1 in self.sublist:
+        #     print(str(v0) + "  " + str(v1))
+        
+        rv_wfuture = Comp.empty()
+        to_csiszar = []
+            
+        for x in self.bnet.allcomp():
+            removable = False
+            removed = False
+            if leaf_remove and self.bnet.get_children(x).isempty() and x.ispresent(self.get_rv_sub(x)):
+                removable = True
+            
+            # print(str(x) + "   " + str(self.is_rate(x)) + "  " + str(self.get_rv_rates(x)))
+            t = None
+            if self.is_rate(x):
+                # t = CompArray([x.copy()])
+                t = x.copy()
+            elif oneshot:
+                t = CompArray([x.copy()])
+            elif future:
+                t = CompArray.series_sym(x)
+                if removable:
+                    t[1] = Comp.empty()
+                    t[2] = Comp.empty()
+                    removed = True
+                else:
+                    rv_wfuture += x
+            else:
+                t = CompArray.series_sym(x, suff = None)
+            reg_out_map[x.get_name()] = t
+            if not removed:
+                to_csiszar.append(t)
+        
+        for (a, b) in self.bnet.edges():
+            # if not self.get_rv_sub(b).ispresent(b):
+            #     continue
+            
+            am = reg_out_map[a.get_name()]
+            bm = reg_out_map[b.get_name()]
+            node = self.find_node_rv_out(b)
+            if node is None:
+                bnet_out += (am.swapped_id(0, 1), bm.swapped_id(0, 1))
+            else:
+                if node.rv_in_causal.ispresent(a) and isinstance(am, CompArray) and isinstance(bm, CompArray):
+                    for t1 in range(clen):
+                        for t2 in range(t1 + 1, clen):
+                            bnet_out += (am[ttr[t1]]+bm[ttr[t1]], bm[ttr[t2]])
+                else:
+                    bnet_out += (am.swapped_id(0, 1).allcomp(), bm.swapped_id(0, 1).allcomp())
+                    
+            
+        rvnats = Comp.empty()
+        for x in self.bnet.allcomp():
+            if self.bnet.get_parents(x).isempty():
+                xm = reg_out_map[x.get_name()]
+                if len(xm) >= 2:
+                    rvnats += xm[1]
+                if len(xm) >= 3:
+                    rvnats += xm[2]
+        
+        if convexify is False:
+            if len(rvnats) >= 2:
+                for x in rvnats - rvnats[0]:
+                    bnet_out += (rvnats[0], x)
+        else:
+            for x in rvnats:
+                bnet_out += (convexify, x)
+        
+        for x in self.bnet.allcomp():
+            if self.bnet.is_fcn(x):
+                xm = reg_out_map[x.get_name()]
+                bnet_out.set_fcn(xm)
+                
+        # print(bnet_out)
+        
+        r = bnet_out.get_region() & self.reg
+        if not oneshot and future and add_csiszar_sum:
+            # r &= csiszar_sum(*(list(x for _, x in reg_out_map.items())))
+            r &= csiszar_sum(*to_csiszar)
+        
+        if convexify is not False:
+            reg_out_aux += convexify
+            for x in self.bnet.allcomp():
+                xm = reg_out_map[x.get_name()]
+                if len(xm) >= 2:
+                    r &= Expr.Hc(convexify, xm[1]) == 0
+                if len(xm) >= 3:
+                    r &= Expr.Hc(convexify, xm[2]) == 0
+        
+        reg_out_aux += bnet_out.allcomp() - self.bnet.allcomp()
+
+        # for b in self.bnet.allcomp():
+        #     b2 = self.get_rv_sub(b)
+        #     if b2.ispresent(b):
+        #         continue
+            # if self.is_rate(b):
+            #     rate = self.get_rv_rate(b)
+            #     r &= rate >= 0
+        
+        def map_getlist(a):
+            t = None
+            for c in a:
+                cm = reg_out_map[c.get_name()]
+                if t is None:
+                    t = cm.copy()
+                else:
+                    t += cm
+            return t
+        
+        def map_substitute(r, a, b):
+            am = map_getlist(a)
+            bm = map_getlist(b)
+            if isinstance(am, Comp) or isinstance(bm, Comp):
+                r.substitute(am.allcomp(), bm.allcomp())
+            else:
+                for a2, b2 in zip(am, bm):
+                    r.substitute(a2, b2)
+                
+        msgs = Comp.empty()
+        msgnats = Comp.empty()
+        for v0, v1 in self.sublist:
+            if isinstance(v1, Expr) and not isinstance(v0, Expr):
+                msgs += reg_out_map[v0[0].get_name()]
+                
+                vout = self.bnet.get_parents(v0[0])
+                
+                if vout.isempty():
+                    msgnats += reg_out_map[v0[0].get_name()]
+        
+        
+        for v0, v1 in self.sublist:
+            if isinstance(v0, Comp):
+                rv_wfuture -= v0
+            if isinstance(v1, Expr) and not isinstance(v0, Expr):
+                map_substitute(r, v0, v0[0])
+                
+                isnat = False
+                vout = self.bnet.get_parents(v0[0])
+                
+                if vout.isempty():
+                    vout = self.bnet.get_children(v0[0])
+                    isnat = True
+                    
+                voutm = map_getlist(vout)
+                voutm0 = voutm[0]
+                voutm1 = Comp.empty()
+                if len(voutm) >= 2:
+                    voutm1 = voutm[1]
+                
+                am = reg_out_map[v0[0].get_name()]
+                
+                if isnat:
+                    if oneshot:
+                        r &= Expr.H(am) >= v1
+                        r &= v1 >= 0
+                    else:
+                        for cmsg in igen.subset(msgnats - am, minsize = 1):
+                            r &= Expr.Ic(am, voutm0, voutm1 + cmsg) >= Expr.Ic(am, voutm0, voutm1)
+                        r &= Expr.Ic(am, voutm0, voutm1) >= v1
+                        r &= v1 >= 0
+                        # r &= Expr.Ic(am, voutm0, voutm1) == v1
+                else:
+                    if oneshot:
+                        r &= Expr.H(am) <= v1
+                    else:
+                        for ctv in igen.subset(rv_wfuture - vout):
+                            tv = map_getlist(ctv)
+                            if tv is None:
+                                tv = Comp.empty()
+                            else:
+                                tv = tv[0] + tv[1] + tv[2]
+                            for cmsg in igen.subset(msgs - am):
+                                r &= Expr.Ic(am, voutm0, voutm1 + tv + cmsg) <= v1
+                    
+                    # r &= Expr.Ic(am, voutm0, voutm1) == v1
+                    
+                # print(v0)
+                # print(v1)
+                reg_out_aux += am
+            else:
+                map_substitute(r, v0, v1)
+                
+        reg_out_aux = reg_out_aux.inter(r.allcomprv())
+        r = r.exists(reg_out_aux)
+        
+        # print(r)
+        
+        if not skip_simplify:
+            return r.simplified()
+        else:
+            return r
+        
+    def get_outer_nfold(self, n = 2, **kwargs):
+        return self.nfold(n).get_outer(**kwargs) / n
+        
+    def node_groups(self):
+        r = []
+        for node in self.nodes:
+            a = self.bnet.get_parents(node.rv_out)
+            b = node.rv_out.copy()
+            for t in r:
+                if a.super_of(t[1]) and (t[1] + t[0]).super_of(a):
+                    t[0] += b
+                    break
+            else:
+                r.append([b, a])
+        return r
+        
+        
+    def graph(self, lr = True, enc_node = True):
+        """Return the graphviz digraph of the network that can be displayed in the console.
+        """
+        
+        r = graphviz.Digraph()
+        if lr:
+            r.graph_attr["rankdir"] = "LR"
+        
+        groups = self.node_groups()
+        
+        rvs = self.bnet.allcomp()
+        
+        for a in self.bnet.allcomp():
+            shape = "plaintext" #"oval"
+            node = self.find_node_rv_out(a)
+            label = str(self.get_rv_sub(a))
+            if node is not None and not enc_node:
+                shape = "rect"
+            
+            if shape == "plaintext":
+                r.node(a.get_name(), label, shape = shape, margin = "0")
+            else:
+                r.node(a.get_name(), label, shape = shape)
+        
+        if enc_node:
+            for b, a in groups:
+                cname = "enc_" + str(a) + "_" + str(b)
+                r.node(cname, " ", shape = "rect")
+                for ai in a:
+                    r.edge(ai.get_name(), cname)
+                for bi in b:
+                    r.edge(cname, bi.get_name())
+                rvs -= b
+                
+        for (a, b) in self.bnet.edges():
+            if b in rvs:
+                r.edge(a.get_name(), b.get_name())
+            
+        return r
+    
+
+class CommEnc:
+    
+    def __init__(self, rv_out, msgs, rv_in_causal = None):
+        # self.rv_in = Comp.empty()
+        # self.msgs = []
+        
+        # for x in list_in:
+        #     if isinstance(x, Comp):
+        #         self.rv_in += x
+        #     else:
+        #         self.msgs.append(x)
+        self.msgs = msgs
+        
+        self.rv_out = rv_out
+        
+        if rv_in_causal is None:
+            self.rv_in_causal = Comp.empty()
+        else:
+            self.rv_in_causal = rv_in_causal
+            
+    
+    def record_to(self, index, skip_msg = False):
+        # self.rv_in.record_to(index)
+        self.rv_out.record_to(index)
+        self.rv_in_causal.record_to(index)
+        if not skip_msg:
+            for x in self.msgs:
+                for y in x:
+                    y.record_to(index)
+        
+class CommDec:
+    
+    def __init__(self, rv_in, msgs, msgints = None):
+        self.rv_in = rv_in
+        self.msgs = msgs
+        self.msgints = msgints
+        
+    
+    def record_to(self, index):
+        self.rv_in.record_to(index)
+        for x in self.msgs:
+            for y in x:
+                y.record_to(index)
+        
+        if self.msgints is not None:
+            for x in self.msgints:
+                for y in x:
+                    y.record_to(index)
+
+class CommModel:
+    
+    def __init__(self, bnet = None, reg = None, nature = None):
+        if bnet is None:
+            self.bnet = BayesNet()
+        else:
+            self.bnet = bnet
+        if reg is None:
+            self.reg = Region.universe()
+        else:
+            self.reg = reg
+        
+        self.bnet_in = None
+        self.reg_in = None
+        
+        self.bnet_out = None
+        self.reg_out = None
+        self.reg_out_aux = None
+        self.reg_out_tsrv = None
+        self.reg_out_vs = None
+        self.reg_out_map = None
+        
+        self.msgs = None
+        self.maux_rt = None
+        self.maux_rtsub = None
+        self.decs = None
+        if nature is None:
+            self.nature = Comp.empty()
+        else:
+            self.nature = nature
+        self.enclist = []
+        self.declist = []
+        
+    def __iadd__(self, other):
+        if isinstance(other, CommEnc):
+            self.enclist.append(other)
+        elif isinstance(other, CommDec):
+            self.declist.append(other)
+        else:
+            self.bnet += other
+        return self
+        
+                
+    def create_reg_in(self, name_prefix = "A_"):
+        self.bnet_in = self.bnet.copy()
+        self.msgs = []
+        self.decs = []
+        
+        index = IVarIndex()
+        self.reg.record_to(index)
+        for x in self.enclist:
+            x.record_to(index)
+        for x in self.declist:
+            x.record_to(index)
+            
+        for x in self.enclist:
+            cauxall = Comp.empty()
+            rv_in = self.bnet.get_parents(x.rv_out)
+            rv_in = rv_in - x.rv_in_causal
+            for m in x.msgs:
+                caux = None
+                if isinstance(m, Expr):
+                    tname = name_prefix + str(m)
+                    tname = index.name_avoid(tname)
+                    caux = Comp.rv(tname)
+                    caux.record_to(index)
+                else:
+                    caux = m[1].copy()
+                self.msgs.append([rv_in.copy(), m[0], caux, x.rv_out.copy()])
+                cauxall += caux
+            self.bnet_in += (rv_in, cauxall)
+            self.bnet_in += (cauxall, x.rv_out)
+            # self.reg_in &= (Expr.Ic(cauxall, index.comprv - cauxall - (x.rv_in + x.rv_out), 
+            #                          x.rv_in + x.rv_out) == 0)
+                
+        # for x in self.declist:
+        #     self.decs.append([x.rv_in.copy(), x.msgs.copy(), iutil.copy(x.msgints)])
+        
+        self.reg_in = self.bnet_in.get_region() & self.reg
+             
+    def get_encout(self):
+        r = Comp.empty()
+        for x in self.enclist:
+            r += x.rv_out
+        return r
+    
+    def enc_id_get_aux(self, i):
+        r = Comp.empty()
+        for rv_in, rtbs, b, rv_out in self.msgs:
+            if self.enclist[i].rv_out.ispresent(rv_out):
+                r += b
+        return r
+        
+    
+    def create_reg_out(self, future = True):
+        self.create_reg_in("M_")
+        auxs = sum(x[2] for x in self.msgs)
+        self.reg_out_aux = auxs.copy()
+        #self.reg_out_tsrv = Comp.rv("#TS")
+        self.bnet_out = BayesNet()
+        self.reg_out_map = {}
+        clen = 3 if future else 2
+        ttr = [1, 0, 2]
+        
+        for x in self.bnet.allcomp():
+            t = None
+            if future:
+                t = CompArray.series_sym(x)
+            else:
+                t = CompArray.series_sym(x, suff = None)
+            self.reg_out_map[x.get_name()] = t
+        
+        for (a, b) in self.bnet.edges():
+            self.bnet_out += (self.reg_out_map[a.get_name()], self.reg_out_map[b.get_name()])
+        
+        for i in range(len(self.enclist)):
+            auxs = self.enc_id_get_aux(i)
+            rv_out = self.enclist[i].rv_out
+            rv_in_causal = self.enclist[i].rv_in_causal
+            rv_out_map = self.reg_out_map[rv_out.get_name()]
+            
+            for x in rv_out_map:
+                self.bnet_out += (auxs, x)
+            
+            for pa in self.bnet.get_parents(rv_out):
+                pa_map = self.reg_out_map[pa.get_name()]
+                if rv_in_causal.ispresent(pa):
+                    for t1 in range(clen):
+                        for t2 in range(t1 + 1, clen):
+                            self.bnet_out += (pa_map[ttr[t1]], rv_out_map[ttr[t2]])
+                else:
+                    for t1 in range(clen):
+                        for t2 in range(clen):
+                            if t1 != t2:
+                                self.bnet_out += (pa_map[t1], rv_out_map[t2])
+            
+        
+            
+        self.reg_out = self.bnet_out.get_region() & self.reg
+        if future:
+            self.reg_out &= csiszar_sum(*(list(x for _, x in self.reg_out_map.items()) + list(auxs)))
+            
+        self.reg_out_aux += self.bnet_out.allcomp() - self.bnet.allcomp()
+
+        
+    def get_outer(self, future = True, convexify = False, skip_simplify = False):
+        self.create_reg_out(future = future)
+        r = self.reg_out.copy()
+        
+        rts = self.get_rates()
+        for rt in rts:
+            r &= rt >= 0
+        for dec in self.declist:
+            a = dec.rv_in
+            rts = dec.msgs
+            ap = self.reg_out_map[a.get_name()][1]
+            for rt in rts:
+                for i, (_, rtbs, b, _) in enumerate(self.msgs):
+                    if rtbs.ispresent(rt):
+                        r &= rt <= Expr.Ic(b, a, ap)
+                        
+        aux = self.reg_out_aux
+        
+        # if convexify is not False:
+        #     if convexify is True:
+        #         convexify = Comp.rv("Q_T")
+        #     r.condition(convexify)
+        #     encout = self.get_encout()
+        #     encout_map
+        #     r &= markov(r.allcomprv() - encout - convexify, encout, convexify)
+        #     aux += convexify
+        
+        r = r.exists(aux)
+        
+        if not skip_simplify:
+            return r.simplified()
+        else:
+            return r
+        
+                
+    
+    def get_decreq(self):
+        r = []
+        for dec in self.declist:
+            a = dec.rv_in
+            rts = dec.msgs
+            reqs = []
+            reqints = None
+            if dec.msgints is not None:
+                reqints = []
+            for i, (_, rtbs, b, _) in enumerate(self.msgs):
+                if any(rtbs.ispresent(rt) for rt in rts):
+                    reqs.append(i)
+                if dec.msgints is not None and any(rtbs.ispresent(rt) for rt in dec.msgints):
+                    reqints.append(i)
+            # cknown = a.copy()
+            
+            for j in range(len(reqs) - 1, -1, -1):
+                
+                # cdec = a.copy()
+                # for cc in cknown:
+                #     ccan = self.bnet_in.get_ancestors(cc)
+                #     if cknown.super_of(ccan):
+                #         cdec += cc
+                # r.append((reqs[j], cdec))
+                
+                # TODO ?????????????
+                r.append((reqs[j], a, reqs[j+1:], None if reqints is None else [a for a in reqints if a < reqs[j]]))
+                # r.append((reqs[j], a+cknown))
+                
+                # cknown += self.msgs[reqs[j]][2]
+        return r
+    
+    def get_ratereq(self, known, reqprevs, i, tlist):
+        
+        verbose = PsiOpts.settings.get("verbose_commmodel", False)
+        
+        r = Region.universe()
+        lmask = (1 << i) + sum(1 << t for t in tlist)
+        submask = sum(1 << j for j in range(i) if self.maux_rtsub[j] is not None)
+        
+        for tmask in range(1 << len(tlist)):
+            mask = (1 << i) + sum(1 << tlist[j] for j in range(len(tlist)) if tmask & (1 << j))
+            
+            expr = Expr.zero()
+            
+            for j in range(i + 1):
+                if mask & (1 << j):
+                    
+                    expr += self.maux_rt[j]
+                    
+                    if self.maux_rtsub[j] is not None:
+                        expr += self.maux_rtsub[j]
+                        
+                    expr -= mi_rect_max(self.msgs[j][2], [known] +
+                                        [(self.msgs[j2][2], self.maux_rtsub[j2]) if self.maux_rtsub[j2] is not None
+                                         else self.msgs[j2][2] for j2 in reqprevs] +
+                                        [(self.msgs[j2][2], self.maux_rtsub[j2]) if self.maux_rtsub[j2] is not None
+                                         else self.msgs[j2][2] for j2 in range(j) if lmask & (1 << j2)])
+                    
+                    expr += mi_rect_max([self.msgs[j][0]] + 
+                                        [(self.msgs[j2][2], self.maux_rtsub[j2]) if self.maux_rtsub[j2] is not None
+                                         else self.msgs[j2][2] for j2 in range(j)],
+                                        self.msgs[j][2])
+                
+            expr.simplify()
+            r &= (expr <= 0)
+        
+        r_st = None
+        if verbose:
+            print("========== inner bound ==========")
+            print("known:" + str(known) + "  decoded:" + str(sum(self.msgs[t][2] for t in reqprevs))
+                  + "  nonunique:" + str(sum(self.msgs[t][2] for t in tlist)) + "  target:" + str(self.msgs[i][2]))
+            r_st = str(r)
+            print(r_st)
+            
+        r = r.flattened(minmax_elim = True)
+        
+        if verbose:
+            r_st2 = str(r)
+            if r_st2 != r_st:
+                print("expanded:")
+                print(r_st2)
+            print("")
+            
+        return r
+    
+    def get_ratereq_old(self, known, i, tlist):
+        r = Region.universe()
+        lmask = (1 << i) + sum(1 << t for t in tlist)
+        submask = sum(1 << j for j in range(i) if self.maux_rtsub[j] is not None)
+        
+        for tmask in range(1 << len(tlist)):
+            mask = (1 << i) + sum(1 << tlist[j] for j in range(len(tlist)) if tmask & (1 << j))
+            
+            for cp in itertools.product(*[igen.subset_mask(submask & ((1 << j) - 1))
+                                        for j in range(i + 1) if mask & (1 << j)]):
+                expr = Expr.zero()
+                caux = Comp.empty()
+                #cauxmiss = Comp.empty()
+                ji = 0
+                for j in range(i + 1):
+                    if mask & (1 << j):
+                        
+                        # TODO ??????????????????????????????????????
+                        expr += self.maux_rt[j] - Expr.I(self.msgs[j][2], known + caux)
+                        if self.maux_rtsub[j] is not None:
+                            expr += self.maux_rtsub[j]
+                            
+                        cauxmiss = self.msgs[j][0].copy()
+                        for j2 in range(j):
+                            if submask & (1 << j2):
+                                if cp[ji] & (1 << j2):
+                                    expr -= self.maux_rtsub[j2]
+                                    cauxmiss += self.msgs[j2][2]
+                            else:
+                                cauxmiss += self.msgs[j2][2]
+                        if not cauxmiss.isempty():
+                            expr += Expr.I(self.msgs[j][2], cauxmiss)
+                            
+                        ji += 1
+                    if lmask & (1 << j):
+                        caux += self.msgs[j][2]
+                    #cauxmiss += self.msgs[j][2]
+                expr.simplify()
+                r &= (expr <= 0)
+        # print("==========")
+        # print(str(known) + "  " + str(self.msgs[i][2]) + "  " + str(sum(self.msgs[t][2] for t in tlist)))
+        # print(r)
+        return r
+    
+    def get_rates(self):
+        r = Expr.zero()
+        for _, rts, a, _ in self.msgs:
+            for rt in rts:
+                if not r.ispresent(rt):
+                    r += rt
+        return r
+    
+    
+    def get_aux(self):
+        r = Comp.empty()
+        for _, rts, a, _ in self.msgs:
+            r += a
+        return r
+                    
+        
+    
+    def get_inner_iter(self, subcodebook = True, skip_simplify = False):
+        self.maux_rt = [rt[0] for _, rt, a, _ in self.msgs]
+        self.maux_rtsub = [None] * len(self.msgs)
+        if subcodebook is True:
+            self.maux_rtsub = [Expr.real("#RS_" + x.get_name()) for _, rt, x, _ in self.msgs]
+            self.maux_rtsub[-1] = None
+        elif isinstance(subcodebook, Comp):
+            self.maux_rtsub = [Expr.real("#RS_" + x.get_name()) 
+                               if subcodebook.ispresent(x) else None for _, rt, x, _ in self.msgs]
+            self.maux_rtsub[-1] = None
+            subcodebook = True
+            
+        reqs = self.get_decreq()
+        #r = Region.universe()
+        r = self.reg_in.copy()
+        rts = self.get_rates()
+        for rt in rts:
+            r &= rt >= 0
+        if subcodebook:
+            for rt in self.maux_rtsub:
+                if rt is not None:
+                    r &= rt >= 0
+                    
+        for reqi, known, reqprevs, reqints in reqs:
+            r2 = Region.empty()
+            if reqints is None:
+                for mask in range(1 << reqi):
+                    tlist = []
+                    for i in range(reqi):
+                        if mask & (1 << i):
+                            tlist.append(i)
+                    r2 |= self.get_ratereq(known, reqprevs, reqi, tlist)
+            else:
+                r2 = self.get_ratereq(known, reqprevs, reqi, reqints)
+            if not skip_simplify:
+                r2 = r2.simplified()
+            
+            r &= r2
+            
+        if subcodebook and any(x is not None for x in self.maux_rtsub):
+            r.eliminate(sum(x for x in self.maux_rtsub if x is not None))
+        return r
+    
+    def rate_splitting(self, r):
+        if self.msgs is None:
+            self.create_reg_in()
+        
+        rttmp = [Expr.real("#RT_" + x.get_name()) for _, rt, x, _ in self.msgs]
+        
+        for rt1, rt2 in zip((rt for _, rt, x, _ in self.msgs), rttmp):
+            r.substitute(rt1, rt2)
+            
+        decflag = [0] * len(self.msgs)
+        for i, (_, rtbs, b, _) in enumerate(self.msgs):
+            for j, dec in enumerate(self.declist):
+                a = dec.rv_in
+                rts = dec.msgs
+                if any(rtbs.ispresent(rt) for rt in rts):
+                    decflag[i] |= 1 << j
+        
+        rtauxs = []
+        n = len(self.msgs)
+        rn = Region.universe()
+        
+        bexps = [Expr.zero() for i in range(n)]
+        
+        for i, (_, rtbs, b, _) in enumerate(self.msgs):
+            vis = []
+            cexp = Expr.zero()
+            for mask in range(1, 1 << n):
+                if any(mask | v == mask for v in vis):
+                    continue
+                
+                cdecflag = 0
+                for i2 in range(n):
+                    if mask & (1 << i2):
+                        cdecflag |= decflag[i2]
+                if cdecflag | decflag[i] != cdecflag:
+                    continue
+                
+                vis.append(mask)
+                crtaux = Expr.real("#RTA_" + str(i) + "_" + str(mask))
+                rn &= crtaux >= 0
+                
+                for i2 in range(n):
+                    if mask & (1 << i2):
+                        bexps[i2] += crtaux
+                cexp += crtaux
+                rtauxs.append(crtaux)
+                
+            rn &= rtbs <= cexp
+            
+        
+        for i in range(n):
+            rn &= bexps[i] <= rttmp[i]
+        
+        r &= rn
+            
+        rts = self.get_rates()
+        for rt in rts:
+            r &= rt >= 0
+        
+        # print(r)
+        r.eliminate(sum(rttmp + rtauxs, Expr.zero()))
+        # print(r)
+        
+        return r
+        
+    
+    def get_inner(self, subcodebook = True, rate_split = False, shuffle = False, 
+                  convexify = False, convexify_diag = False,
+                  skip_simplify = False, skip_simplify_iter = False):
+        r = None
+        self.create_reg_in()
+        aux = self.get_aux()
+        
+        if shuffle:
+            r = Region.empty()
+            tmaux = self.msgs
+            for cmaux in itertools.permutations(tmaux):
+                tbnet = self.bnet.copy()
+                for i in range(len(cmaux) - 1):
+                    tbnet += (cmaux[i][3], cmaux[i+1][3])
+                if tbnet.iscyclic():
+                    # print("CYCLIC " + str(cmaux))
+                    continue
+                
+                self.msgs = list(cmaux)
+                r |= self.get_inner_iter(subcodebook = subcodebook, skip_simplify = skip_simplify_iter)
+            self.msgs = tmaux
+            
+        else:
+            r = self.get_inner_iter(subcodebook = subcodebook, skip_simplify = skip_simplify_iter)
+            
+        if convexify_diag:
+            r = r.convexified_diag(self.get_rates(), skip_simplify = skip_simplify)
+            
+        if convexify is not False:
+            if convexify is True:
+                convexify = Comp.rv("Q_T")
+            r.condition(convexify)
+            encout = self.get_encout()
+            r &= markov(r.allcomprv() - encout - convexify, encout, convexify)
+            aux += convexify
+        
+        if rate_split:
+            r = self.rate_splitting(r)
+        
+        if not skip_simplify:
+            #return r.distribute().simplified()
+            r = r.exists(aux)
+            # print(r)
+            r.simplify_union()
+            # print(r)
+            r.remove_missing_aux()
+            return r.simplified_quick()
+        
+        else:
+            return r.exists(aux)
+            
+
 # Generators
 
 class igen:
     
+    def subset_mask(mask):
+        x = 0
+        while True:
+            yield x
+            if x >= mask:
+                break
+            x = ((x | ~mask) + 1) & mask
+    
+    def partition_mask(mask, n, max_mask = None):
+        if n == 1:
+            if mask != 0 and not (max_mask is not None and mask > max_mask):
+                yield (mask,)
+            return
+        
+        for xmask in igen.subset_mask(mask):
+            if xmask == 0:
+                continue
+            if max_mask is not None and xmask > max_mask:
+                break
+            for t in igen.partition_mask(mask & ~xmask, n - 1, xmask):
+                yield t + (xmask,)
+            
+    def partition(x, n):
+        m = len(x)
+        for mask in igen.partition_mask((1 << m) - 1, n):
+            yield tuple(sum(t for i, t in enumerate(x) if xmask & (1 << i)) for xmask in mask)
+        
     def subset(x, minsize = 0, maxsize = 100000, size = None, reverse = False, coeffmode = 0, replacement = False):
         """Iterate sum of subset.
         Parameters:
@@ -11764,7 +18940,12 @@ class igen:
                     else:
                         yield 0
                 else:
-                    yield 0
+                    if isinstance(x, Comp):
+                        yield Comp.empty()
+                    elif isinstance(x, Expr):
+                        yield Expr.zero()
+                    else:
+                        yield 0
                     
             elif s == 1:
                 if coeffmode == 2:
@@ -11912,24 +19093,24 @@ def rv(*args, **kwargs):
         
     return r
     
-def rv_array(name, st, en):
+def rv_seq(name, st, en = None):
     """Array of random variables"""
     return Comp.array(name, st, en)
     
-def rv_list(name, st, en):
+def rv_array(name, st, en = None):
     """List of random variables"""
-    return CompList.make(*(Comp.array(name, st, en)))
+    return CompArray.make(*(Comp.array(name, st, en)))
     
 def real(*args):
     """Real variable"""
     if len(args) == 1:
         return Expr.real(args[0])
-    return ExprList([Expr.real(a) for a in args])
+    return ExprArray([Expr.real(a) for a in args])
     
-def real_list(name, st, en):
+def real_list(name, st, en = None):
     """List of random variables"""
-    t = rv_array(name, st, en)
-    return ExprList([Expr.real(a.name) for a in t.varlist])
+    t = rv_seq(name, st, en)
+    return ExprArray([Expr.real(a.name) for a in t.varlist])
 
 def rv_empty():
     """Empty random variable"""
@@ -11965,6 +19146,8 @@ def H(x):
     """
     if isinstance(x, Comp):
         return Expr.H(x)
+    if isinstance(x, ConcDist):
+        return x.entropy()
     return Expr([(x.copy(), 1.0)])
     
 def I(x):
@@ -12011,9 +19194,16 @@ def indep_across(*args):
 @fcn_list_to_list
 def equiv(*args):
     """Return Region where the arguments contain the same information."""
+    if len(args) <= 1:
+        return Region.universe()
     r = Region.universe()
     for i in range(1, len(args)):
-        r &= (Expr.Hc(args[i], args[0]) == 0) & (Expr.Hc(args[0], args[i]) == 0)
+        if isinstance(args[0], Comp):
+            r &= (Expr.Hc(args[i], args[0]) == 0) & (Expr.Hc(args[0], args[i]) == 0)
+        elif isinstance(args[0], Expr):
+            r &= args[0] == args[i]
+        elif isinstance(args[0], Region):
+            r &= args[0] == args[i]
     return r
 
 @fcn_list_to_list
@@ -12109,14 +19299,17 @@ def cardbd(x, n):
     """Return Region where the cardinality of x is upper bounded by n."""
     if n <= 1:
         return H(x) == 0
-    V = rv_array("V", 0, n-1)
+    
+    loge = PsiOpts.settings["ent_coeff"]
+    
+    V = rv_seq("V", 0, n-1)
     r = Expr.H(V[n - 2]) == 0
     r2 = Region.universe()
     for i in range(0, n - 1):
         r2 &= Expr.Hc(V[i], V[i - 1] if i > 0 else x) == 0
         r |= Expr.Hc(V[i - 1] if i > 0 else x, V[i]) == 0
     r = r.implicated(r2, skip_simplify = True).forall(V)
-    return r & (H(x) <= numpy.log2(n))
+    return r & (H(x) <= numpy.log(n) * loge)
 
 
 @fcn_list_to_list
@@ -12157,11 +19350,11 @@ def copylem(n = 2, m = 1):
     symm_id_x = iutil.get_count()
     symm_id_y = iutil.get_count()
     
-    X = rv_array("CX", 0, n)
+    X = rv_seq("CX", 0, n)
     for i in range(n):
         X[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_x), ("symm_nonempty", 1)])
-    Y = rv_array("CY", 0, m)
-    Z = rv_array("CZ", 0, m)
+    Y = rv_seq("CY", 0, m)
+    Z = rv_seq("CZ", 0, m)
     for i in range(m):
         Y[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_y), ("symm_nonempty", 1)])
     return (eqdist(X + Y, X + Z) & markov(Y, X, Z)).exists(Z).forall(X + Y)
@@ -12195,7 +19388,7 @@ def mmrv_thm(n = 2):
     symm_id_x = iutil.get_count()
     symm_id_u = iutil.get_count()
     
-    X = rv_array("CX", 0, n)
+    X = rv_seq("CX", 0, n)
     for i in range(n):
         X[i].add_markers([("disjoint", disjoint_id), ("symm", symm_id_x), ("symm_nonempty", 2)])
     U = rv("CU")
@@ -12250,7 +19443,7 @@ def ainfdiv(n = 2, coeff = None, cadd = None):
     arXiv preprint arXiv:2008.06092 (2020).
     """
     X = rv("X")
-    Z = rv_array("Z", 0, n)
+    Z = rv_seq("Z", 0, n)
     
     if coeff is None:
         coeff = 1.0 / (1.0 - (1.0 - 1.0 / n) ** n) / n
@@ -12264,12 +19457,21 @@ def ainfdiv(n = 2, coeff = None, cadd = None):
     r &= H(Z[0]) <= H(X) * coeff + cadd
     return r.exists(Z).forall(X)
     
+def exists_xor():
+    """For any X, there exists Z0 uniformly distributed and Z1 = X XOR Z0.
+    """
+    X = rv("X")
+    Z = rv_seq("Z", 0, 2)
+    r = indep(X, Z[0]) & indep(X, Z[1]) & (H(X | Z) == 0)
+    return r.exists(Z).forall(X)
+    
+    
     
 def existence(f, numarg = 2, nonempty = False):
     """A region for the existence of the random variable f(X, Y).
     e.g. existence(meet), existence(mss)
     """
-    T = rv_array("T", 0, numarg)
+    T = rv_seq("T", 0, numarg)
     X = f(*T)
     r = X.varlist[0].reg
     
@@ -12304,7 +19506,7 @@ def rv_bit():
 
 def exists_bit(n = 1):
     """There exists a random variable with entropy 1."""
-    U = rv_array("BIT", 0, n)
+    U = rv_seq("BIT", 0, n)
     return (alland([H(x) == 1 for x in U]) & indep(*U)).exists(U)
 
 
@@ -12397,7 +19599,7 @@ def esfrl_rv(x, y, gap = None):
         if not isinstance(gap, Expr):
             gap = Expr.const(gap)
         r &= Expr.H(K) <= Expr.I(x, y) + gap
-    return Comp.rv_reg(U, r, reg_det = False), Comp.rv_reg(K, r, reg_det = False)
+    return (Comp.rv_reg(U, r, reg_det = False), Comp.rv_reg(K, r, reg_det = False))
 
 
 def copylem_rv(x, y):
@@ -12651,19 +19853,66 @@ def intrinsic_mi(x):
     return r.exists(U).minimum(R)
 
 
-def directed_info(x, y):
+def mi_rect(xs, ys, z = None, sgn = 1):
+    if z is None:
+        z = Comp.empty()
+    if not isinstance(xs, list):
+        xs = [xs]
+    if not isinstance(ys, list):
+        ys = [ys]
+    xs = [x if isinstance(x, tuple) else (x,) for x in xs]
+    ys = [y if isinstance(y, tuple) else (y,) for y in ys]
+    
+    exprs = []
+    for px in itertools.product(*[range(len(x)) for x in xs]):
+        for py in itertools.product(*[range(len(y)) for y in ys]):
+            cx = sum((x[0] for x, p in zip(xs, px) if p or len(x) == 1), Comp.empty())
+            cy = sum((y[0] for y, p in zip(ys, py) if p or len(y) == 1), Comp.empty())
+            cxm = sum((x[1] for x, p in zip(xs, px) if p), Expr.zero())
+            cym = sum((y[1] for y, p in zip(ys, py) if p), Expr.zero())
+            if sgn > 0:
+                if cx.isempty() or cy.isempty():
+                    if cxm.iszero() and cym.iszero():
+                        exprs.append(Expr.zero())
+                else:
+                    exprs.append(Expr.Ic(cx, cy, z) - cxm - cym)
+            else:
+                if cx.isempty() or cy.isempty():
+                    exprs.append(-cxm - cym)
+                else:
+                    exprs.append(Expr.Ic(cx, cy, z) - cxm - cym)
+    
+    if len(exprs) == 1:
+        return exprs[0]
+    if sgn > 0:
+        return emax(*exprs)
+    else:
+        return emin(*exprs)
+
+def mi_rect_max(xs, ys, z = None):
+    return mi_rect(xs, ys, z, 1)
+
+def mi_rect_min(xs, ys, z = None):
+    return mi_rect(xs, ys, z, -1)
+    
+
+def directed_info(x, y, z = None):
     """Directed information. 
     Massey, James. "Causality, feedback and directed information." Proc. Int. 
     Symp. Inf. Theory Applic.(ISITA-90). 1990.
-    Parameters can be either Comp or CompList.
+    Parameters can be either Comp or CompArray.
     """
-    x = CompList.arg_convert(x)
-    y = CompList.arg_convert(y)
-    return sum(I(x.past_ns() & y | y.past()))
+    x = CompArray.arg_convert(x)
+    y = CompArray.arg_convert(y)
+    if z is None:
+        return sum(I(x.past_ns() & y | y.past()))
+    else:
+        z = CompArray.arg_convert(z)
+        return sum(I(x.past_ns() & y | y.past() + z.past_ns()))
 
 
 def comp_vector(*args):
-    return CompList.make(igen.subset(args, minsize = 1))
+    return CompArray.make(igen.subset(args, minsize = 1))
 
 
 def ent_vector(*args):
@@ -12680,7 +19929,7 @@ def ent_cells(*args, minsize = 1):
     IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
     """
     allrv = sum(args)
-    r = ExprList.empty()
+    r = ExprArray.empty()
     for xs in igen.subset([1 << x for x in range(len(args))], minsize = minsize):
         r.append(I(alland(args[x] for x in range(len(args)) if xs & (1 << x)) 
                  | sum(args[x] for x in range(len(args)) if not (xs & (1 << x)))))
@@ -12700,10 +19949,295 @@ def ent_region(n, real_name = "R", var_name = "X"):
     Z. Zhang and R. W. Yeung, "On characterization of entropy function via information inequalities,"
     IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
     """
-    xs = rv_array(var_name, 0, n)
+    xs = rv_seq(var_name, 0, n)
     cv = comp_vector(*xs)
     re = real_list(real_name, 1, 1 << n)
     return (re == H(cv)).exists(xs)
+
+
+def csiszar_sum(*args):
+    """Csiszar sum identity.
+    """
+    r = Region.universe()
+    vecs = []
+    ones = []
+    for a in args:
+        if isinstance(a, CompArray) or isinstance(a, list):
+            vecs.append(a)
+            # ones.append(sum(a))
+        else:
+            ones.append(a)
+    
+    for xmask in range(1, 1 << len(vecs)):
+        x = sum(vecs[i] for i in range(len(vecs)) if xmask & (1 << i))
+        #for ymask in igen.subset_mask((1 << len(vecs)) - 1 - xmask):
+        for ymask in range(1, 1 << len(vecs)):
+            if ymask == 0:
+                continue
+            y = sum(vecs[i] for i in range(len(vecs)) if ymask & (1 << i))
+            for umask in range(1 << len(ones)):
+                u = sum((ones[i] for i in range(len(ones)) if umask & (1 << i)), Comp.empty())
+                r &= Expr.Ic(x[2], y[0], y[1]+u) == Expr.Ic(y[1], x[0], x[2]+u)
+                
+    return r
+        
+
+
+# Numerical functions
+
+@fcn_list_to_list
+def elog(x, base = None):
+    """Logarithm."""
+    loge = PsiOpts.settings["ent_coeff"]
+    
+    fcnargs = [x]
+    if base is not None:
+        fcnargs.append(base)
+        
+    R = Expr.real(iutil.fcn_name_maker("log", fcnargs, pname = "elog", lname = "\\log"))
+        
+    reg = Region.universe()
+    
+    def fcncall(x, cbase = None):
+        cloge = loge
+        if cbase is not None:
+            if iutil.istorch(cbase):
+                cloge = 1.0 / torch.log(cbase)
+            else:
+                cloge = 1.0 / numpy.log(cbase)
+        
+        if iutil.istorch(x) or iutil.istorch(cloge):
+            return torch.log(x) * cloge
+        else:
+            return numpy.log(x) * cloge
+    
+    return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), reg, 0, fcncall, fcnargs))
+
+@fcn_list_to_list
+def renyi(x, order = 2):
+    """Renyi entropy.
+    Renyi, Alfred (1961). "On measures of information and entropy". Proceedings of the 
+    fourth Berkeley Symposium on Mathematics, Statistics and Probability 1960. pp. 547-561.
+    """
+    ceps = PsiOpts.settings["eps"]
+    loge = PsiOpts.settings["ent_coeff"]
+    
+    if isinstance(order, int):
+        order = float(order)
+    
+    def fcncall(xdist, corder):
+        if isinstance(corder, ConcReal):
+            corder = corder.x
+        if isinstance(corder, int):
+            corder = float(corder)
+            
+        if isinstance(corder, float):
+            if abs(order - 1) < ceps:
+                return xdist.entropy()
+            if abs(order - 0) < ceps:
+                r = 0.0
+                for a in xdist.items():
+                    if a > ceps:
+                        r += 1
+                return numpy.log(r) * loge
+            if numpy.isinf(order):
+                if xdist.istorch():
+                    return -torch.log(torch.max(torch.flatten(xdist.p))) * loge
+                else:
+                    return -numpy.log(max(xdist.items())) * loge
+        
+        if xdist.istorch():
+            return (torch.log(torch.sum(torch.pow(torch.flatten(xdist.p), corder)))
+                    / (1.0 - corder) * loge)
+        else:
+            return (numpy.log(sum(numpy.power(a, corder) for a in xdist.items()))
+                    / (1.0 - corder) * loge)
+            
+        
+           
+    if isinstance(x, ConcDist):
+        return fcncall(x, order)
+        
+    R = Expr.real(iutil.fcn_name_maker("renyi", [x, order], pname = "renyi"))
+    reg = Region.universe()
+    
+    if isinstance(order, float):
+        if abs(order - 1) < ceps:
+            return H(x)
+        if order > 1:
+            reg = (R <= H(x)) & (R >= 0)
+        else:
+            reg = R >= H(x)
+    
+    return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), reg, 0, fcncall, [x, order]))
+
+
+@fcn_list_to_list
+def maxcorr(x):
+    """Maximal correlation.
+    H. O. Hirschfeld, "A connection between correlation and contingency," in Mathematical 
+    Proceedings of the Cambridge Philosophical Society, vol. 31, no. 04. Cambridge Univ Press, 1935, pp. 520-524.
+    H. Gebelein, "Das statistische problem der korrelation als variations-und eigenwertproblem 
+    und sein zusammenhang mit der ausgleichsrechnung," ZAMM-Journal of Applied Mathematics and 
+    Mechanics/Zeitschrift fur Angewandte Mathematik und Mechanik, vol. 21, no. 6, pp. 364-379, 1941.
+    A. Renyi, "On measures of dependence," Acta mathematica hungarica, vol. 10, no. 3, 
+    pp. 441-451, 1959.
+    """
+    ceps = PsiOpts.settings["eps"]
+    ceps_d = PsiOpts.settings["opt_eps_denom"]
+    
+    def fcncall(xdist):
+        xdist = xdist.flattened_sublen()
+        if len(xdist.p.shape) != 2:
+            raise ValueError("Only maximal correlation between two random variables is supported.")
+            return None
+        
+        if xdist.istorch():
+            px = torch.sum(xdist.p, 1)
+            # return torch.sum(px)
+            py = torch.sum(xdist.p, 0)
+            tmat = torch.zeros(xdist.p.shape, dtype=torch.float64)
+            for x in range(xdist.p.shape[0]):
+                for y in range(xdist.p.shape[1]):
+                    rxy = torch.sqrt(px[x] * py[y])
+                    tmat[x, y] = xdist.p[x, y] / (rxy + ceps_d) - rxy
+            return torch.linalg.norm(tmat, 2)
+        else:
+            px = numpy.sum(xdist.p, 1)
+            py = numpy.sum(xdist.p, 0)
+            tmat = numpy.zeros(xdist.p.shape)
+            for x in range(xdist.p.shape[0]):
+                for y in range(xdist.p.shape[1]):
+                    rxy = numpy.sqrt(px[x] * py[y])
+                    if rxy > ceps:
+                        tmat[x, y] = xdist.p[x, y] / rxy - rxy
+            return numpy.linalg.norm(tmat, 2)
+            
+           
+    if isinstance(x, ConcDist):
+        return fcncall(x)
+
+    R = Expr.real(iutil.fcn_name_maker("maxcorr", x, pname = "maxcorr"))
+    reg = R >= 0
+    
+    return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), reg, 0, fcncall, [x]))
+
+
+
+@fcn_list_to_list
+def divergence(x, y, mode = "kl"):
+    """
+    Divergence between probability distributions.
+
+    Parameters
+    ----------
+    x : Comp or ConcDist
+        The first distribution (if random variable is given, consider its distribution).
+    y : Comp or ConcDist
+        The second distribution (if random variable is given, consider its distribution).
+    mode : str, optional
+        Choices are "kl" (Kullback-Leibler divergence or relative entropy), 
+        "tv" (total variation distance), "chi2" (Chi-squared divergence),
+        "hellinger" (Hellinger distance) and "js" (Jensen-Shannon divergence). 
+        The default is "kl".
+
+    Returns
+    -------
+    Expr, float or torch.Tensor
+        The expression of the divergence. If x,y are ConcDist, gives float or torch.Tensor.
+
+    """
+    
+    
+    mode = mode.lower()
+    ceps = PsiOpts.settings["eps"]
+    ceps_d = PsiOpts.settings["opt_eps_denom"]
+    loge = PsiOpts.settings["ent_coeff"]
+    
+    def fcncall(xdist, ydist):
+        r = 0.0
+        if mode == "kl":
+            for a, b in zip(xdist.items(), ydist.items()):
+                r += iutil.xlogxoy(a, b) * loge
+                    
+        elif mode == "tv":
+            for a, b in zip(xdist.items(), ydist.items()):
+                r += abs(a - b) * 0.5
+                
+        elif mode == "chi2":
+            if xdist.istorch() or ydist.istorch():
+                for a, b in zip(xdist.items(), ydist.items()):
+                    r += (a ** 2) / (b + ceps_d)
+            else:
+                for a, b in zip(xdist.items(), ydist.items()):
+                    r += (a ** 2) / b
+            r -= 1.0
+                    
+        elif mode == "hellinger":
+            for a, b in zip(xdist.items(), ydist.items()):
+                r += (iutil.sqrt(a) - iutil.sqrt(b)) ** 2
+            r = iutil.sqrt(r * 0.5)
+                    
+        elif mode == "js":
+            for a, b in zip(xdist.items(), ydist.items()):
+                r += iutil.xlogxoy(a, (a + b) * 0.5) * loge * 0.5
+                r += iutil.xlogxoy(b, (a + b) * 0.5) * loge * 0.5
+                
+        return r
+           
+    if isinstance(x, ConcDist) and isinstance(y, ConcDist):
+        return fcncall(x, y)
+        
+    R = Expr.real(iutil.fcn_name_maker("divergence", [x, y, mode], pname = "divergence"))
+    reg = R >= 0
+    
+    return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), reg, 0, fcncall, [x, y]))
+
+
+
+@fcn_list_to_list
+def varent(x):
+    """Varentropy (variance of self information) and dispersion (variance of information density).
+    Kontoyiannis, Ioannis, and Sergio Verdu. "Optimal lossless compression: Source 
+    varentropy and dispersion." 2013 IEEE International Symposium on Information Theory. IEEE, 2013.
+    Polyanskiy, Yury, H. Vincent Poor, and Sergio Verdu. "Channel coding rate in the finite 
+    blocklength regime." IEEE Transactions on Information Theory 56.5 (2010): 2307-2359.
+    """
+    ceps = PsiOpts.settings["eps"]
+    ceps_d = PsiOpts.settings["opt_eps_denom"]
+    
+    def fcncall(xdist):
+        xdist = xdist.flattened_sublen()
+        n = len(xdist.p.shape)
+        
+        pxs = None
+        if xdist.istorch():
+            pxs = [torch.sum(xdist.p, tuple(j for j in range(n) if j != i)) for i in range(n)]
+        else:
+            pxs = [numpy.sum(xdist.p, tuple(j for j in range(n) if j != i)) for i in range(n)]
+            
+        s1 = 0.0
+        s2 = 0.0
+        for zs in itertools.product(*[range(z) for z in xdist.p.shape]):
+            t = 0.0
+            if n == 1:
+                s1 += -iutil.xlogxoy(xdist.p[zs], 1.0)
+                s2 += iutil.xlogxoy2(xdist.p[zs], 1.0)
+            else:
+                prod = iutil.product(pxs[i][zs[i]] for i in range(n))
+                s1 += iutil.xlogxoy(xdist.p[zs], prod)
+                s2 += iutil.xlogxoy2(xdist.p[zs], prod)
+        
+        return s2 - s1 ** 2
+           
+    if isinstance(x, ConcDist):
+        return fcncall(x)
+
+    R = Expr.real(iutil.fcn_name_maker("varent", x, pname = "varent"))
+    reg = R >= 0
+            
+    return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), reg, 0, fcncall, [x]))
+
 
 
 

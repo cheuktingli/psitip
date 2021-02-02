@@ -33,7 +33,7 @@ class TestPsitip(unittest.TestCase):
         # Fourier-Motzkin elimination for Marton's inner bound with common message
         # [Marton 1979], [Liang-Kramer 2007]
         R0, R1, R2, R10, R20, Rs = real("R0", "R1", "R2", "R10", "R20", "Rs")
-        U0, U1, U2, Y1, Y2 = rv("U0", "U1", "U2", "Y1", "Y2")
+        U0, U1, U2, X, Y1, Y2 = rv("U0", "U1", "U2", "X", "Y1", "Y2")
         
         r = universe()
         r &= R0 >= 0
@@ -52,6 +52,8 @@ class TestPsitip(unittest.TestCase):
         r &= R2 - R20 - Rs <= I(U2 & Y2 | U0) - I(U1 & U2 | U0)
         r &= R2 - R20 <= I(U2 & Y2 | U0)
         
+        r &= markov(U0+U1+U2, X, Y1+Y2)
+        
         region_str = r.exists(R10+R20+Rs+U0+U1+U2).tostring(tosort = True, lhsvar = R0+R1+R2)
         print(region_str)
         self.assertEqual(region_str, 
@@ -60,10 +62,11 @@ class TestPsitip(unittest.TestCase):
             "  R2 >= 0,\n"
             "  R0+R1 <= I(U0,U1;Y1),\n"
             "  R0+R2 <= I(U0,U2;Y2),\n"
-            "  I(U1;Y1|U0)+I(U2;Y2|U0) >= I(U1;U2|U0),\n"
             "  R0+R1+R2 <= I(U0,U1;Y1)+I(U2;Y2|U0)-I(U1;U2|U0),\n"
             "  R0+R1+R2 <= I(U0,U2;Y2)+I(U1;Y1|U0)-I(U1;U2|U0),\n"
-            "  2R0+R1+R2 <= I(U0,U1;Y1)+I(U0,U2;Y2)-I(U1;U2|U0) | U0,U1,U2 }")
+            "  2R0+R1+R2 <= I(U0,U1;Y1)+I(U0,U2;Y2)-I(U1;U2|U0),\n"
+            "  I(U0,U1,U2;Y1,Y2|X) == 0,\n"
+            "  I(U1;Y1|U0)+I(U2;Y2|U0) >= I(U1;U2|U0) } , exists U0,U1,U2")
             )
         
         
@@ -581,12 +584,12 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(H(X) * 2 / (I(X & Y) + H(X | Y)), 2.0)
         self.assertEqual((H(X) + H(Y) - H(X+Y) - I(X&Y)) / (I(X & Y) + H(X | Y)), 0.0)
-        self.assertEqual((H(X) + H(Y)) / (H(X) * 3 - H(X) * 3), None)
-        self.assertEqual(H(X) * 2 / I(X & Y), None)
+        # self.assertEqual((H(X) + H(Y)) / (H(X) * 3 - H(X) * 3), None)
+        # self.assertEqual(H(X) * 2 / I(X & Y), None)
         self.assertEqual((H(X) * 2 + H(Z) * 6) / (H(Z) * 3 + I(X & Y) + H(X | Y)), 2.0)
-        self.assertEqual((H(X) * 2 + H(Z) * 6) / (H(Z) * 2 + I(X & Y) + H(X | Y)), None)
-        self.assertEqual((H(X) * 2 + H(Z) * 6) / (H(Z) * 3 + I(X & Y) + H(X | Y) + H(W)), None)
-        self.assertEqual((H(X) * 2 + H(Z) * 6 + H(W)) / (H(Z) * 3 + I(X & Y) + H(X | Y)), None)
+        # self.assertEqual((H(X) * 2 + H(Z) * 6) / (H(Z) * 2 + I(X & Y) + H(X | Y)), None)
+        # self.assertEqual((H(X) * 2 + H(Z) * 6) / (H(Z) * 3 + I(X & Y) + H(X | Y) + H(W)), None)
+        # self.assertEqual((H(X) * 2 + H(Z) * 6 + H(W)) / (H(Z) * 3 + I(X & Y) + H(X | Y)), None)
     
     
     def test_bayesnet(self):
@@ -612,7 +615,7 @@ class TestPsitip(unittest.TestCase):
 
     def test_markov(self):
         
-        X = rv_array("X", 0, 9)
+        X = rv_seq("X", 0, 9)
         self.assertTrue(markov(*X) >> markov(X[0], X[4], X[8]))
         self.assertTrue(markov(*X) >> (I(X[0] & X[8]) <= H(X[4])))
         
@@ -794,13 +797,13 @@ class TestPsitip(unittest.TestCase):
         self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
             & (-2*H(U) - 3*I(Y & W) == 0)).simplified()),
             ("{ I(Y;W) == 0,\n"
-            "  I(Z;W|X) == 0,\n"
+            "  I(Z;W) == 0,\n"
             "  H(X) == 0,\n"
             "  H(U) == 0 }"))
     
-        self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
-            & (-2*H(U) - 3*I(Y & W) == 0)).simplified(zero_group = 2)),
-            "{ I(W;U)+I(Y;U)+I(Y;W)+I(Z;W|X)+H(X)+H(U) <= 0 }")
+        # self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
+        #     & (-2*H(U) - 3*I(Y & W) == 0)).simplified(zero_group = 2)),
+        #     "{ I(W;U)+I(Y;U)+I(Y;W)+I(Z;W|X)+H(X)+H(U) <= 0 }")
         
         self.assertEqual(str(((H(X | Y) == 0) & (I(X & Y) <= 0)).simplified()),
             "{ H(X) == 0 }")
@@ -988,7 +991,7 @@ class TestPsitip(unittest.TestCase):
                     continue
                 start = time.time()
                 for it in range(nit):
-                    X = rv_array("X", 0, l)
+                    X = rv_seq("X", 0, l)
                     r = universe()
                     for i in range(l - 1):
                         r &= H(X[i + 1] | X[i]) >= H(X[i])
@@ -1004,6 +1007,8 @@ class TestPsitip(unittest.TestCase):
 #PsiOpts.set_setting(solver = "pulp.glpk")
 PsiOpts.set_setting(solver = "pyomo.glpk")
 #PsiOpts.set_setting(pulp_solver = pulp.solvers.GUROBI(mip = False, msg = 0))
+
+PsiOpts.set_setting(str_style = "std")
 
 unittest.main(verbosity=2)
 
