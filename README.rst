@@ -5,7 +5,7 @@ Python Symbolic Information Theoretic Inequality Prover
 
 Psitip is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it supports a versatile deduction system for automated theorem proving. Psitip supports features such as:
 
-- Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_), which was implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). 
+- Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). 
 
 - `Automated inner and outer bounds`_ in network information theory (e.g. see the automated proof of Gel'fand-Pinsker theorem in the example below).
 
