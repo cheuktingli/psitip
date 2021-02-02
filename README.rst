@@ -5,7 +5,7 @@ Python Symbolic Information Theoretic Inequality Prover
 
 Psitip is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it supports a versatile deduction system for automated theorem proving. Psitip supports features such as:
 
-- Proving linear information inequalities via the linear programming method by Zhang and Yeung (see `References`_), which was implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). 
+- Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_), which was implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). 
 
 - `Automated inner and outer bounds`_ in network information theory (e.g. see the automated proof of Gel'fand-Pinsker theorem in the example below).
 
@@ -345,7 +345,7 @@ The :code:`venn` method of :code:`Comp`, :code:`Expr` and :code:`Region` draws t
 
 - :code:`nolegend`: Hide the legends.
 
-Example:
+Examples:
 
 .. code-block:: python
 
@@ -355,7 +355,8 @@ Example:
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/Figure_1.png
 
-
+|
+|
 
 .. code-block:: python
 
@@ -364,6 +365,8 @@ Example:
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/Figure_2.png
 
 
+|
+|
 
 .. code-block:: python
 
@@ -375,6 +378,8 @@ Example:
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/Figure_3.png
 
 
+|
+|
 
 Numerical optimization
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -624,6 +629,8 @@ Example 3: Finding the most informative bit
 
 
 
+|
+|
 
 Automated inner and outer bounds
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -757,6 +764,8 @@ Example 2: Lossy source coding with side information at decoder
 
 
 
+|
+|
 
 Fourier-Motzkin elimination
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
