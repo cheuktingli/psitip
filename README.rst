@@ -3,13 +3,15 @@ Psitip
 
 Python Symbolic Information Theoretic Inequality Prover
 
-Psitip is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it supports a versatile deduction system for automated theorem proving. Psitip supports features such as:
+Psitip is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it implements a versatile deduction system for automated theorem proving. Psitip supports features such as:
 
-- Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). 
+- Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). See `References`_ for other software based on this method.
 
-- `Automated inner and outer bounds`_ in network information theory (e.g. see the automated proof of Gel'fand-Pinsker theorem in the example below).
+- `Automated inner and outer bounds`_ for multiuser settings in network information theory (e.g. see the automated proof of Gel'fand-Pinsker theorem in the example below).
 
-- `Numerical optimization`_ over distributions, and evaluation of rate regions involving auxiliary random variables.
+- `Numerical optimization`_ over distributions, and evaluation of rate regions involving auxiliary random variables (e.g. `Example 1: Degraded broadcast channel`_).
+
+- `Finding examples`_ of distributions where a set of constraints is satisfied.
 
 - `Fourier-Motzkin elimination`_.
 
@@ -17,9 +19,11 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - Non-Shannon-type inequalities.
 
+- Generation of `human-readable proofs`_.
+
 - Drawing `Information diagrams`_.
 
-- User-defined information quantities (e.g. see Wyner's CI and Gács-Körner CI in the example below). 
+- User-defined information quantities (see `Real-valued information quantities`_, e.g. `information bottleneck`_, and Wyner's CI and Gács-Körner CI in the example below). 
 
 - `Bayesian network optimization`_. Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
 
@@ -30,7 +34,6 @@ Examples:
 
     from psitip import *
     PsiOpts.setting(solver = "pyomo.glpk")
-
     X, Y, Z, W, U, M, S = rv("X", "Y", "Z", "W", "U", "M", "S") # declare random variables
 
 
@@ -38,8 +41,7 @@ Examples:
 
     print(bool(H(X) + I(Y & Z | X) >= I(Y & Z))) # H(X)+I(Y;Z|X)>=I(Y;Z) is True
     print(markov(X, Y, Z).implies(H(X | Y) <= H(X | Z))) # returns True
-    print((H(X) == I(X & Y) + H(X | Y+Z)).implies(markov(X, Y, Z))) # returns True
-    print((H(X+Y) - H(X) - H(Y)).simplified()) # gives -I(Y;X)
+    print((H(X+Y) - H(X) - H(Y)).simplified()) #gives -I(Y;X) (X+Y means joint RV (X,Y))
 
     # Defining Wyner's common information [Wyner 1975]
     wci = markov(X, U, Y).exists(U).minimum(I(U & X+Y))
@@ -48,16 +50,16 @@ Examples:
     gkci = ((H(U|X) == 0) & (H(U|Y) == 0)).exists(U).maximum(H(U))
 
     print(bool(emin(H(X), H(Y)) >= wci)) # min(H(X),H(Y)) >= Wyner is True
-    print(bool(wci >= I(X & Y))) # Wyner >= I(X;Y) is True
-    print(bool(I(X & Y) >= gkci)) # I(X;Y) >= Gács-Körner is True
+    print(bool(wci >= I(X & Y)))         # Wyner >= I(X;Y) is True
+    print(bool(I(X & Y) >= gkci))        # I(X;Y) >= Gács-Körner is True
 
     # The meet or Gács-Körner common part [Gács-Körner 1973] between X and Y
     # is a function of the GK common part between X and (Y,Z)
     print(bool(H(meet(X, Y) | meet(X, Y + Z)) == 0)) # returns True
 
-    # The condition "there exists Y independent of (X,Z) such that 
+    # The condition "there exists Y independent of X such that 
     #  X-Y-Z forms a Markov chain" can be simplified to "X,Z independent"
-    print((markov(X, Y, Z) & indep(X+Z, Y)).exists(Y).simplified()) # gives I(X;Z)==0
+    print((markov(X, Y, Z) & indep(X, Y)).exists(Y).simplified()) # gives I(X;Z)==0
 
 
 
@@ -104,10 +106,11 @@ About
 
 Author: Cheuk Ting Li ( https://www.ie.cuhk.edu.hk/people/ctli.shtml ). The source code of Psitip is released under the GNU General Public License v3.0 ( https://www.gnu.org/licenses/gpl-3.0.html ). The author would like to thank Raymond W. Yeung and Chandra Nair for their invaluable comments.
 
-If you find Psitip useful in your research, please consider citing it as:
+The deduction system in Psitip is based on the concept of existential information inequalities in:
 
 \C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," arXiv preprint, available: https://arxiv.org/pdf/2101.12370.pdf , 2021.
 
+If you find Psitip useful in your research, please consider citing the above article.
 
 WARNING
 ~~~~~~~
@@ -228,7 +231,7 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - :code:`Expr` and :code:`Region` objects have a :code:`simplify()` method, which simplify the expression/region in place. The :code:`simplified()` method returns the simplified expression/region without modifying the object. For example, :code:`(H(X+Y) - H(X) - H(Y)).simplified()` gives :code:`-I(Y & X)`.
 
- - Note that calling :code:`Region.simplify()` can take some time for the detection of redundant constraints. Use :code:`Region.simplify_quick()` instead to skip this step.
+ - Note that calling :code:`Region.simplify()` can take some time for the detection of redundant constraints. Use :code:`Region.simplify_quick()` instead to skip this step. Use :code:`PsiOpts.setting(simplify_level = ???)` to set the simplification level (integer between 1 and 10, larger means more thorough attempt at simplification, and takes longer).
 
 - Use :code:`str(x)` to convert :code:`x` (a :code:`Comp`, :code:`Expr` or :code:`Region` object) to string. The :code:`tostring` method of :code:`Comp`, :code:`Expr` and :code:`Region` provides more options. For example, :code:`r.tostring(tosort = True, lhsvar = R)` converts the region :code:`r` to string, sorting all terms and constraints, and putting the real variable :code:`R` to the left hand side of all expressions (and the rest to the right).
 
@@ -237,13 +240,15 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 Advanced
 ~~~~~~~~
 
+ .. _auxiliary random variable:
+
 - **Existential quantification** is represented by the :code:`exists` method of :code:`Region` (which returns a :code:`Region`). For example, the condition "there exists auxiliary random variable U such that R <= I(U;Y) - I(U;S) and U-(X,S)-Y forms a Markov chain" (as in Gelfand-Pinsker theorem) is represented by:
 
   .. code-block:: python
 
     ((R <= I(U & Y) - I(U & S)) & markov(U, X+S, Y)).exists(U) 
 
- - Calling :code:`exists` on real variables will cause the variable to be eliminated by Fourier-Motzkin elimination (see Fourier-Motzkin elimination section). Currently, calling :code:`exists` on real variables for a region obtained from material implication is not supported.
+ - Calling :code:`exists` on real variables will cause the variable to be eliminated by `Fourier-Motzkin elimination`_. Currently, calling :code:`exists` on real variables for a region obtained from material implication is not supported.
 
  - Calling :code:`exists` on random variables will cause the variable to be marked as auxiliary (dummy).
 
@@ -267,17 +272,12 @@ Advanced
 
  - Currently, calling :code:`forall` on real variables is not supported.
 
-- Existential/universal quantification over marginal distributions is represented by the :code:`marginal_exists` or :code:`marginal_forall` method of :code:`Region`. This is usually used in channel coding settings where only the marginal distribution of the input can be altered (but not the channel). This is sometimes followed by the :code:`convexified()` (use :code:`convexified(forall = True)` for :code:`marginal_forall`) method to add a time sharing random variable, for example, for the less noisy broadcast channel:
-
-  .. code-block:: python
-
-    (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))
-        ).forall(U).marginal_forall(X).convexified(forall = True)
-
 
 - The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`.
 
  - Call :code:`substituted_aux` instead of :code:`substituted` to stop treating :code:`x` as an auxiliary in the region :code:`r` (useful in substituting a known value of an auxiliary).
+
+  .. _information bottleneck:
 
 - **Minimization / maximization** over an expression subject to the constraints in a region is represented by the :code:`minimum` / :code:`maximum` method of :code:`Region` respectively (which returns an :code:`Expr` object). This method usually follows an :code:`exists` call to mark the dummy variables in the optimization. For example, Wyner's common information [Wyner 1975] is represented by:
 
@@ -303,6 +303,21 @@ Advanced
 
 - The **absolute value** of an :code:`Expr` object is represented by the :code:`abs` function. For example, :code:`bool(abs(H(X) - H(Y)) <= H(X) + H(Y))` returns True.
 
+- The **projection** of a :code:`Region` :code:`r` onto the real variable :code:`a` is given by :code:`r.projected(a)`. All real variables in :code:`r` other than :code:`a` will be eliminated. For projection along the diagonal :code:`a + b`, use :code:`r.projected(c == a + b)` (where :code:`a`, :code:`b`, :code:`c` are all real variables, and :code:`c` is a new real variable not in :code:`r`). The function :code:`Region.projected` accepts any number of arguments (:code:`Expr` objects for real variables, or :code:`Region` objects for linear combinations of real variables). For example:
+
+  .. code-block:: python
+    
+    # Multiple access channel capacity region without time sharing [Ahlswede 1971]
+    r = indep(X, Y) & (R1 <= I(X & Z | Y)) & (R2 <= I(Y & Z | X)) & (R1 + R2 <= I(X+Y & Z))
+
+    print(r.projected(R1))
+    # Gives ( ( R1 <= I(X&Z+Y) ) & ( I(X&Y) == 0 ) )
+
+    print(r.projected(R == R1 + R2)) # Project onto diagonal to get sum rate
+    # Gives ( ( R <= I(X+Y&Z) ) & ( I(X&Y) == 0 ) )
+
+  See `Fourier-Motzkin elimination`_ for another example.
+
 - While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments (returns None if :code:`bool(r)` is False). For example:
 
   .. code-block:: python
@@ -326,12 +341,27 @@ Advanced
 
 - The random variable given by the **strong functional representation lemma** [Li-El Gamal 2018] applied on X, Y (:code:`Comp` objects) with a gap term logg (:code:`Expr` object) is denoted as :code:`sfrl_rv(X, Y, logg)` (a :code:`Comp` object). If the gap term is omitted, this will be the ordinary functional representation lemma [El Gamal-Kim 2011].
 
+  .. _human-readable proofs:
+
+- To output a **human-readable proof**, start a block with :code:`with PsiOpts(proof_new = True):`, and end it with :code:`print(PsiOpts.get_proof())` (or use :code:`str(PsiOpts.get_proof())` to obtain the text of the proof). For example,
+
+  .. code-block:: python
+
+    with PsiOpts(proof_new = True):
+        bool(markov(X, Y, Z) >> (H(Y) >= I(X & Z)))
+        print(PsiOpts.get_proof())
+
+  Also see `Example 3: Lossy source coding with side information at decoder`_.
+
+ - A solver which supports outputting dual variables is required for proof generation, e.g. :code:`PsiOpts.setting(solver = "pyomo.glpk")`.
+
+- To set a **time limit** to a block of code, start the block with :code:`with PsiOpts(timer = 5000):` (e.g. for a time limit of 5000ms). This is useful for time-consuming tasks, e.g. simplification and optimization.
 
 
 Information diagrams
 ~~~~~~~~~~~~~~~~~~~~
 
-The :code:`venn` method of :code:`Comp`, :code:`Expr` and :code:`Region` draws the information diagram of that object. The :code:`venn` method takes any number of arguments (:code:`Comp`, :code:`Expr` or :code:`Region`) which are drawn together. For :code:`Region.venn`, only the nonzero cells of the region will be drawn (the others are in black). The ordering of the random variables is decided by the first :code:`Comp` argument (or automatically if no :code:`Comp` argument is supplied). To draw a Gray-coded table instead of a Venn diagram, use :code:`table` instead of :code:`venn`. The methods :code:`venn` and :code:`table` take a :code:`style` argument, which is a string with the following options (multiple options are separated by ","):
+The :code:`venn` method of :code:`Comp`, :code:`Expr`, :code:`Region` and :code:`ConcModel` draws the information diagram of that object. The :code:`venn` method takes any number of arguments (:code:`Comp`, :code:`Expr`, :code:`Region` or :code:`ConcModel`) which are drawn together. For :code:`Region.venn`, only the nonzero cells of the region will be drawn (the others are in black). The ordering of the random variables is decided by the first :code:`Comp` argument (or automatically if no :code:`Comp` argument is supplied). To draw a Gray-coded table instead of a Venn diagram, use :code:`table` instead of :code:`venn`. The methods :code:`venn` and :code:`table` take a :code:`style` argument, which is a string with the following options (multiple options are separated by ","):
 
 - :code:`blend`: Blend the colors in overlapping areas. Default for :code:`venn`.
 
@@ -386,6 +416,8 @@ Numerical optimization
 
 Psitip supports numerical optimization on distributions of random variables. While :code:`Comp` are abstract random variables without information on their distributions, you can use a :code:`ConcModel` object (concrete model) to assign joint distributions to random variables.
 
+**WARNING:** Numerical optimization is prone to numerical errors. For nonconvex optimization, the algorithm is not guaranteed to find the global optimum.
+
 **Caution:** In order to use the numerical functions of Psitip, the cardinality of random variables must be specified using :code:`set_card`, e.g. :code:`X = rv("X").set_card(2)`. For numerical optimization, add the line :code:`PsiOpts.setting(istorch = True)` at the beginning to enable PyTorch.
 
 
@@ -393,6 +425,8 @@ Concrete distributions
 ----------------------
 
 A (joint/conditional) distribution is stored as a :code:`ConcDist` (concrete distribution) object. It is constructed as :code:`ConcDist(a, num_in)`, where :code:`a` is the probability table (a :code:`numpy.array` or :code:`torch.Tensor`), and :code:`num_in` is the number of random variables to be conditioned on. For example, if X -> Y is a Z-channel, P(Y|X) can be represented as :code:`ConcDist(array([[1.0, 0.0], [0.1, 0.9]]), num_in = 1)`. Note that for P(Y[0],...,Y[m-1] | X[0],...,X[n-1]), the number of dimensions of :code:`a` is n+m, where the first n dimensions correspond to X[0],...,X[n-1], and the remaining m dimensions correspond to Y[0],...,Y[m-1].
+
+- Some entries of the distribution can be :code:`Expr` objects, e.g. we can have :code:`t = real("t"); p = ConcDist([1 - t, t])` for the distribution Bern(t). The distribution is automatically updated when the value of t changes. This is useful for optimizing over distributions parametrized by some parameters. See `Example 4: Parametric distribution`_.
 
 - If :code:`p` is P(Y|X), and :code:`q` is P(Z|X), then P(Y,Z|X) (assuming Y,Z are conditionally independent given X) is :code:`p * q`.
 
@@ -408,6 +442,8 @@ A (joint/conditional) distribution is stored as a :code:`ConcDist` (concrete dis
 
  - In both :code:`given` and :code:`mean`, the values of X are assumed to range from 0 to the cardinality of X minus 1. If X does not take these values, manual conversion is needed between the values of X and indices between 0 and the cardinality of X minus 1. 
 
+- :code:`p.numpy()` gives the probability tensor as a numpy array. :code:`p.torch()` gives the probability tensor as a PyTorch tensor.
+
 
 Concrete model
 --------------
@@ -416,13 +452,25 @@ Letting :code:`P = ConcModel()`, we have the following operations:
 
 - :code:`P[X]` for a random variable (:code:`Comp`) :code:`X` gives the distribution of X (:code:`ConcDist`). Use :code:`P[X] = p` to set the distribution of X (where :code:`p` is :code:`ConcDist`, :code:`numpy.array` or :code:`torch.Tensor`). Use :code:`P[X+Y | Z+W]` for the conditional distribution P(X,Y|Z,W).
 
+ - Some entries of the distribution can be :code:`Expr` objects, e.g. we can have :code:`t = real("t"); P[X] = [1 - t, t]` to represent X ~ Bern(t). The distribution is automatically updated when the value of t changes. This is useful for optimizing over distributions parametrized by some parameters. See `Example 4: Parametric distribution`_.
+
  - Random variables must be added to the model in the order they are generated. E.g., :code:`P[X] = p1; P[Y|X] = p2; P[Z|Y] = p3`. If Z is added as :code:`P[Z|Y] = p3`, it is assumed to be conditionally independent of all previously added random variables given Y.
 
- - Use :code:`P[Y|X] = "var"` to specify that P(Y|X) is a variable that can be optimized over. Use :code:`P[Y|X] = "var_rand"` to randomize its initial value (otherwise the initial value is uniform, which may not be desirable for some optimization tasks).
+ - :code:`P[Y|X] = "var"` specifys that P(Y|X) is a variable that can be optimized over. Use :code:`P[Y|X] = "var,rand"` to randomize its initial value (otherwise the initial value is uniform, which may not be desirable for some optimization tasks).
 
-- :code:`P[a]` for an expression (:code:`Expr`) :code:`a` gives the value of :code:`a` under the distribution in :code:`P`. E.g. :code:`P[I(X & Y) - H(Z | Y)]`.
+ - :code:`P[X] = "unif"` specifys that X is uniformly distributed over 0, ..., X.get_card()-1 (shorthand of :code:`P[X] = ConcDist.uniform(X.get_card())`).
+
+ - :code:`P[Z|X+Y] = "add"` specifys that Z = X + Y (the "+" here is addition between integers, not joint random variable).
+
+ - :code:`P[Z|X+Y] = "flat"` specifys that Z = X * Y.get_card() + Y, i.e., Z is an integer in the range 0, ..., X.get_card()*Y.get_card()-1 which contains the same information as (X, Y).
+
+- :code:`P[a]` for an expression (:code:`Expr`) :code:`a` gives the value of :code:`a` (as a :code:`ConcReal` object) under the distribution in :code:`P`. E.g. :code:`P[I(X & Y) - H(Z | Y)]`.
+
+ - Use :code:`float(P[I(X & Y)])` to convert the :code:`ConcReal` to a :code:`float`. Use :code:`P[I(X & Y)].torch()` to convert the :code:`ConcReal` to a PyTorch tensor.
 
  - Note that :code:`P[a]` is read-only except when :code:`a` is a single real variable. In that case, :code:`P[a]=1.0` sets the value of the real variable to 1.0. Use :code:`P[a]=ConcReal(1.0, lbound = 0.0, ubound = 10.0, isvar = True)` to set :code:`a` to be a variable that can be optimized over, with lower bound lbound and upper bound ubound.
+
+ - Shorthand: :code:`P[a] = "var"` specifys that :code:`a` is a variable that can be optimized over.
 
 - :code:`P[r]` for a region (:code:`Region`) :code:`r` gives the truth value of the conditions in :code:`r`.
 
@@ -438,9 +486,9 @@ Letting :code:`X, Y, Z = rv("X", "Y", "Z")`,
 
 - :code:`X.prob(x)` (an :code:`Expr` object) gives the probability P(X=x). For joint probability, :code:`(X+Y).prob(x, y)` gives P(X=x, Y=y).
 
- - :code:`X.pmf()` gives the whole probability vector (an :code:`ExprArray` object). :code:`(X+Y+Z).pmf()` gives the probability tensor. :code:`(X|Y).pmf()` gives the transition matrix. :code:`ExprArray` objects support basic numpy-array-like operations such as +, -, \*, @, dot, transpose, trace, diag, reshape.
+ - :code:`X.pmf()` gives the whole probability vector (an :code:`ExprArray` object). :code:`(X+Y+Z).pmf()` gives the probability tensor of X,Y,Z. :code:`(X|Y).pmf()` gives the transition matrix. :code:`ExprArray` objects support basic numpy-array-like operations such as +, -, \*, @, dot, transpose, trace, diag, reshape.
 
- - Note that :code:`X.prob(x)` gives an abstract expression (:code:`Expr`). To evaluate it on a concrete model :code:`P`, use :code:`P[X.prob(x)]` as mentioned in the `Concrete model`_ section. This can also be used on :code:`ExprArray`, e.g. :code:`P[X.pmf()]` is the same as :code:`P[X]`.
+ - Note that :code:`X.prob(x)` gives an abstract expression (:code:`Expr`). To evaluate it on a concrete model :code:`P`, use :code:`P[X.prob(x)]` as mentioned in the `Concrete model`_ section. This can also be used on :code:`ExprArray`, e.g. :code:`P[X.pmf()]` gives the same result as :code:`P[X]`.
 
 - :code:`X.mean(f)` (an :code:`Expr` object) gives the expectation E[f(X)]. For joint probability, :code:`(X+Y).mean(f)` gives E[f(X, Y)]. The parameter :code:`f` follows the same requirements as :code:`ConcDist.mean` above.
 
@@ -452,9 +500,17 @@ Letting :code:`X, Y, Z = rv("X", "Y", "Z")`,
 Optimization
 ------------
 
-The function :code:`ConcModel.minimize(expr, vs, reg)` (or :code:`maximize`) takes 3 arguments: :code:`expr` (:code:`Expr` object) is the optimization objective, :code:`vs` (:code:`ConcDist`, :code:`ConcReal`, or a list of these objects) specifies the variables to be optimized over, and :code:`reg` (:code:`Region` object, optional) specifies the constraints. General functions (not only linear combinations of entropy) may be used in :code:`expr` and :code:`reg` using :code:`Expr.fcn` (see `Useful functions`_).
+The function :code:`ConcModel.minimize(expr, vs, reg)` (or :code:`maximize`) takes 3 arguments: :code:`expr` (:code:`Expr` object) is the optimization objective, :code:`vs` (:code:`ConcDist`, :code:`ConcReal`, or a list of these objects) specifies the variables to be optimized over, and :code:`reg` (:code:`Region` object, optional) specifies the constraints. The return value is the minimum (or maximum).
 
-- Use :code:`PsiOpts.setting(opt_optimizer = ???)` to choose the optimization method. The default algorithm is :code:`"SLSQP"` via :code:`scipy.optimize` [Kraft 1988], which is suitable for convex problems (e.g. channel capacity, rate distortion). Other choices are :code:`"sgd"` (gradient descent) and :code:`"adam"` [Kingma 2014] via PyTorch. 
+- :code:`reg` may contain `auxiliary random variable`_ s that are not already in the model. The auxiliary random variables are added to the model automatically.
+
+- After calling :code:`P.minimize`, the optimal distributions are written to :code:`P`, and can be obtained via e.g. :code:`P[X+Y]`.
+
+ - Note that :code:`P` only contains distributions of random variables originally in :code:`P` before calling :code:`P.minimize`. To also obtain the distributions of auxiliary random variables (e.g. :code:`U`), use :code:`P.opt_model()[U]`.
+
+- General functions (not only linear combinations of entropy) may be used in :code:`expr` and :code:`reg` using :code:`Expr.fcn` (see `Useful functions`_).
+
+- Use :code:`PsiOpts.setting(opt_optimizer = ???)` to choose the optimization method. The default algorithm is :code:`"SLSQP"` via :code:`scipy.optimize` [Kraft 1988], which is suitable for convex problems (e.g. channel capacity, rate-distortion). Other choices are :code:`"sgd"` (gradient descent) and :code:`"adam"` [Kingma 2014] via PyTorch. 
 
 - Use :code:`PsiOpts.setting(opt_basinhopping = True)` to enable basin hopping [Wales-Doye 1997] for nonconvex problems (e.g. problems involving auxiliary random variables).
 
@@ -467,6 +523,10 @@ The function :code:`ConcModel.minimize(expr, vs, reg)` (or :code:`maximize`) tak
 - Use :code:`PsiOpts.setting(opt_aux_card = 3)` to set the default cardinality of the auxiliary random variables where :code:`set_card` has not been called.
 
 - Use :code:`PsiOpts.setting(verbose_opt = True)` and :code:`PsiOpts.setting(verbose_opt_step = True)` to display steps.
+
+ .. _Finding examples:
+
+- **Finding examples**. For a :code:`Region` :code:`r`, to find an example of distributions of random variables where :code:`r` is satisfied, use :code:`r.example()`, which returns a :code:`ConcModel`. E.g. :code:`P = ((I(X & Y) == 0.2) & (H(X) == 0.3)).example(); print(P[X+Y])`. It uses :code:`ConcModel.minimize` internally, and all above options apply (turning on :code:`opt_basinhopping` is highly recommended).
 
 
 Example 1: Channel coding, finding optimal input distribution
@@ -481,62 +541,43 @@ Example 1: Channel coding, finding optimal input distribution
     import torch
     from psitip import *
     PsiOpts.setting(solver = "pyomo.glpk")
-    PsiOpts.setting(istorch = True)       # Enable pytorch
+    PsiOpts.setting(istorch = True)     # Enable pytorch
 
-    # Enable pytorch for numerical optimization
-    PsiOpts.setting(istorch = True)
+    X, Y = rv("X", "Y").set_card(2)     # X,Y are binary RVs (cardinality = 2)
+    P = ConcModel()                     # Underlying distribution of RVs
+    P[X] = [0.3, 0.7]                   # Distribution of X is Bernoulli(0.7)
+    P[Y | X] = [[0.8, 0.2], [0.2, 0.8]] # X->Y is BSC(0.2)
 
-    # X, Y are binary RVs (cardinality = 2)
-    X, Y = rv("X", "Y").set_card(2)
+    print(P[Y])                         # Print distribution of Y
+    print(P[I(X & Y)])                  # Print I(X;Y)
 
-    # P is the underlying distribution of random variables
-    P = ConcModel()
+    P[X] = "var"                        # P[X] is a variable in optimization
+    P.maximize(I(X & Y), P[X])          # Maximize I(X;Y) over variable P[X]
 
-    # Distribution of X is Bernoulli(0.7)
-    P[X] = [0.3, 0.7]
-
-    # X -> Y is binary symmetric channel with crossover 0.2
-    P[Y | X] = [[0.8, 0.2], [0.2, 0.8]]
-
-    print(P[Y])        # print distribution of Y
-    print(P[I(X & Y)]) # print I(X;Y)
-
-    # Declare that the distribution of X is a variable in optimization
-    P[X] = "var"
-
-    # Maximize I(X;Y) over variable P[X]
-    P.maximize(I(X & Y), P[X])
-
-    print(P[I(X & Y)]) # print optimal I(X;Y)
-    print(P[X])        # print distribution of X attaining optimum
-    P.venn()           # draw information diagram
+    print(P[I(X & Y)])                  # Print optimal I(X;Y)
+    print(P[X])                         # Print distribution of X attaining optimum
+    P.venn()                            # Draw information diagram
 
 
-Example 2: Lossy source coding, rate distortion
+
+Example 2: Lossy source coding, rate-distortion
 -----------------------------------------------
 
 .. code-block:: python
 
-    # ********** Rate distortion **********
+    # ********** Rate-distortion **********
 
     import numpy
     import scipy
     import torch
     from psitip import *
     PsiOpts.setting(solver = "pyomo.glpk")
-    PsiOpts.setting(istorch = True)       # Enable pytorch
+    PsiOpts.setting(istorch = True) # Enable pytorch
 
-    # X, Y are binary RVs (cardinality = 2)
-    X, Y = rv("X", "Y").set_card(2)
-
-    # P is the underlying distribution of random variables
-    P = ConcModel()
-
-    # Distribution of X is Bernoulli(0.7)
-    P[X] = [0.3, 0.7]
-
-    # Declare that P[Y | X] is a variable in optimization
-    P[Y | X] = "var"
+    X, Y = rv("X", "Y").set_card(2) # X,Y are binary RVs (cardinality = 2)
+    P = ConcModel()                 # Underlying distribution of RVs
+    P[X] = [0.3, 0.7]               # Distribution of X is Bernoulli(0.7)
+    P[Y | X] = "var"                # P[Y | X] is a variable in optimization
 
     # Hamming distortion function is the mean of the function 1{x != y}
     # over the distribution P(X,Y). We demonstrate 4 methods to specify it:
@@ -557,11 +598,11 @@ Example 2: Lossy source coding, rate distortion
     # Minimize I(X;Y) over P[Y | X], under constraint dist <= 0.1
     P.minimize(I(X & Y), P[Y | X], dist <= 0.1)
 
-    print(P[I(X & Y)])       # print optimal I(X;Y)
-    print(P[Y | X].given(0)) # print P[Y | X=0] attaining optimum
-    print(P[Y | X].given(1)) # print P[Y | X=1] attaining optimum
-    print(P[dist])           # print distortion
-    P.venn()                 # draw information diagram
+    print(P[I(X & Y)])        # print optimal I(X;Y)
+    print(P[Y | X].given(0))  # print P[Y | X=0] attaining optimum
+    print(P[Y | X].given(1))  # print P[Y | X=1] attaining optimum
+    print(P[dist])            # print distortion
+    P.venn()                  # draw information diagram
 
 
 
@@ -589,29 +630,19 @@ Example 3: Finding the most informative bit
     n = 3
     a = 0.1
 
-    # X, Y are array of bits (cardinality = 2)
-    X = rv_seq("X", n).set_card(2)
+    X = rv_seq("X", n).set_card(2) # X,Y are array of bits (cardinality = 2)
     Y = rv_seq("Y", n).set_card(2)
-
-    # F is a binary random variable
-    F = rv("F").set_card(2)
-
-    # P is the underlying distribution of random variables
-    P = ConcModel()
+    F = rv("F").set_card(2)        # F is a binary random variable
+    P = ConcModel()                # Underlying distribution of RVs
 
     # Add random variables to the model in the order they are generated
     for x, y in zip(X, Y):
-        
-        # P(x) is Bernoulli(1/2)
-        P[x] = ConcDist.bit()
-        
-        # P(y|x) is BSC with crossover a
-        P[y | x] = ConcDist.bsc(a)
+        P[x] = ConcDist.bit()      # P(x) is Bernoulli(1/2)
+        P[y | x] = ConcDist.bsc(a) # P(y|x) is BSC with crossover a
 
-    # P(F|X) is the variable we optimize over
-    P[F | X] = "var_rand"
+    P[F | X] = "var,rand"          # P(F|X) is the variable we optimize over
 
-    # Maximize I(F1,F2,F3 ; Y1,Y2,Y3)
+    # Maximize I(F ; Y1,Y2,Y3)
     # The default setting is not suitable for nonconvex optimization
     print(P.maximize(I(F & Y), P[F | X]))
     print(P[F | X])
@@ -628,6 +659,45 @@ Example 3: Finding the most informative bit
     print(P[I(F & Y)])
 
 
+Example 4: Parametric distribution
+----------------------------------
+
+.. code-block:: python
+
+    # ********** Parametric distribution **********
+
+    import numpy
+    import scipy
+    import torch
+    from psitip import *
+    PsiOpts.setting(solver = "pyomo.glpk")
+    PsiOpts.setting(istorch = True)       # Enable pytorch
+
+    X = rv("X").set_card(2)               # X is binary RV (cardinality = 2)
+    Y = rv("Y").set_card(3)               # Y is ternary RV (cardinality = 3)
+    t = real("t")                         # Real variable
+
+    P = ConcModel()                       # Underlying distribution of RVs
+    P[t] = 0.5                            # Set value of t
+    P[X] = [0.3, 0.7]                     # Distribution of X is Bernoulli(0.7)
+    P[Y | X] = [[1-t, 0, t], [0, 1-t, t]] # X -> Y is BEC(t)
+    t_reg = P[Y | X].valid_region()       # Region where P(Y|X) is valid is 0<=t<=1
+
+    print(P[Y])                           # Print distribution of Y
+    print(P[H(Y)])                        # Print value of H(Y)
+
+    P[t] = "var"                          # Declare t is a variable in optimization
+    P.maximize(H(Y), P[t], t_reg)         # Maximize H(Y) over t subject to t_reg
+    print(P[Y])                           # Print optimal distribution of Y
+    print(P[H(Y)])                        # Print optimal value of H(Y)
+
+    P[X] = "var"                          # Declare P(X) is also a variable
+    P.maximize(H(Y), [P[t], P[X]], t_reg) # Max H(Y) over t, P(X) subject to t_reg
+    print(P[Y])                           # Print optimal distribution of Y
+    print(P[H(Y)])                        # Print optimal value of H(Y)
+
+
+
 
 |
 |
@@ -637,11 +707,13 @@ Automated inner and outer bounds
 
 Psitip supports automated achievability and converse proofs in network information theory. The achievability part uses the general coding theorem for network information theory in [Lee-Chung 2015], whereas the converse part follows the general strategy of identifying auxiliaries using past and future random variables pioneered by Gallager [Gallager 1974], using Csiszár sum identity [Körner-Marton 1977], [Csiszár-Körner 1978].
 
-A setting in network information theory is represented by a :code:`CodingModel` object. To specify a setting, use the following three functions (here we let :code:`model = CodingModel()`):
+A setting in network information theory is represented by a :code:`CodingModel` object. To specify a setting, use the following four functions (here we let :code:`model = CodingModel()`):
 
 - :code:`model.add_node(M, X)` specifies that there is an encoder/decoder which observes M (a :code:`Comp` object) and outputs X (:code:`Comp`).
 
  - For causal observation, use the argument :code:`rv_in_causal`. E.g. :code:`model.add_node(M+S, X, rv_in_causal = S)` means that the encoder produces Xi using only M,S1,...,Si.
+
+ - For strictly causal observation, use the argument :code:`rv_in_scausal`. E.g. :code:`model.add_node(M+Y, X, rv_in_scausal = Y)` means that the encoder produces Xi using only M,Y1,...,Y[i-1]. This is useful, for example, in communication with feedback. Note that this is used only in the computation of outer bounds, and is ignored in inner bounds.
 
  - Passing the argument :code:`ndec_mode = "min"` to :code:`add_node` instructs the algorithm to avoid using simultaneous nonunique decoding. The argument :code:`ndec_mode = "max"` instructs the algorithm to use simultaneous nonunique decoding whenever possible. The default is to try all possibilities and output the inner bound as the union, which can be quite slow.
 
@@ -653,17 +725,22 @@ A setting in network information theory is represented by a :code:`CodingModel` 
 
  - **Caution.** :code:`model.set_rate` must be called **after** all calls of :code:`model.add_node` and :code:`model.add_edge`.
 
+- (Optional) :code:`model &= r` specifies that the model satisfies the conditions in r (:code:`Region`). E.g. see `Example 2: Less noisy and more capable broadcast channel`_.
+
+
 After a setting is specified, call:
 
 - :code:`model.get_inner()` to obtain an inner bound (:code:`Region`).
 
- - Use :code:`model.get_inner(convexify = True)` instead to convexify the region using a time sharing random variable.
+ - Use :code:`model.get_inner(convexify = True)` instead to convexify the region using a time sharing random variable. Default is automatic (time sharing random variable is added only when it enlarges the inner bound, e.g. for multiple access channel, though the automatic check is not always accurate). The returned region is a valid inner bound regardless of whether :code:`convexify` is turned on or not.
 
  - If this is taking too long, use the option :code:`ndec_mode = "min"` for :code:`model.add_node` mentioned before.
 
 - :code:`model.get_outer()` to obtain an outer bound (:code:`Region`). 
 
  - Note that the outer bound includes all past/future random variables, and is not simplified. Though this is useful for checking other outer bounds. For example, :code:`(model.get_outer() >> r).check_getaux()` checks whether :code:`r` is an outer bound (by checking whether the outer bound implies :code:`r`), and if so, outputs the choices of auxiliaries for the proof. If :code:`r` is an inner bound, this checks whether :code:`r` is tight.
+
+ - Use :code:`model.get_outer(convexify = True)` instead to explicitly add the time sharing random variable. Default is automatic (time sharing random variable is added only when it is necessary, e.g. for multiple access channel). The returned region is a valid outer bound regardless of whether :code:`convexify` is turned on or not.
 
 - :code:`model.graph()` to obtain a graphical representation of the setting (Graphviz graph).
 
@@ -736,7 +813,52 @@ Example 1: Degraded broadcast channel
     plt.show()
 
 
-Example 2: Lossy source coding with side information at decoder
+Example 2: Less noisy and more capable broadcast channel
+--------------------------------------------------------
+
+.. code-block:: python
+
+    # ********** Less noisy and more capable broadcast channel **********
+
+    from psitip import *
+    PsiOpts.setting(solver = "pyomo.glpk")
+
+    X, Y, Z, M1, M2 = rv("X", "Y", "Z", "M1", "M2")
+    U, V = rv("U", "V")
+    R1, R2 = real("R1", "R2")
+
+    model = CodingModel()
+    model.add_node(M1+M2, X)  # Encoder maps M1,M2 to X
+    model.add_edge(X, Y)      # Channel X -> Y
+    model.add_edge(X, Z)      # Channel X -> Z
+    model.add_node(Y, M1)     # Decoder1 maps Y to M1
+    model.add_node(Z, M2)     # Decoder2 maps Z to M2
+    model.set_rate(M1, R1)    # Rate of M1 is R1
+    model.set_rate(M2, R2)    # Rate of M2 is R2
+    # display(model.graph())  # Draw the model
+
+    # More capable BC [Körner-Marton 1975], [El Gamal 1979]
+    model &= (markov(V, X, Y+Z) >> (I(X & Y | V) >= I(X & Z | V))).forall(V)
+
+    # Less noisy BC [Körner-Marton 1975]
+    # model &= (markov(U+V, X, Y+Z) >> (I(U & Y | V) >= I(U & Z | V))).forall(U+V)
+
+    r = model.get_inner()     # Get inner bound, recovers superposition region 
+    print(r)                  # [Bergmans 1973], [Gallager 1974]
+    # display(r.graph())      # Draw Bayesian network of RVs
+
+    # If none of more capable/less noisy is added, will recover the union of
+    # 2-auxiliary Marton's inner bound [Marton 1979] and superposition region.
+    # To recover the 3-auxiliary Marton's inner bound [Liang-Kramer 2007],
+    # a common message must be included explicitly.
+
+    r_out = model.get_outer() # Get outer bound
+
+    # Check outer bound implies inner bound and output auxiliaries for proof
+    print((r_out >> r).check_getaux())
+
+
+Example 3: Lossy source coding with side information at decoder
 ---------------------------------------------------------------
 
 .. code-block:: python
@@ -760,7 +882,12 @@ Example 2: Lossy source coding with side information at decoder
     r = model.get_inner()     # Get inner bound, recovers Wyner-Ziv
     print(r)
     r_out = model.get_outer() # Get outer bound
-    print((r_out >> r).check_getaux()) # Tightness, output auxiliaries
+
+    with PsiOpts(proof_new = True):        # Record human-readable proof
+        print((r_out >> r).check_getaux()) # Tightness, output auxiliaries
+        print(PsiOpts.get_proof())         # Print tightness proof
+
+
 
 
 
@@ -780,27 +907,35 @@ The :code:`exists` method of :code:`Region` with real variable arguments perform
     # Fourier-Motzkin elimination for Marton's inner bound with common message
     # [Marton 1979], [Liang-Kramer 2007]
     R0, R1, R2, R10, R20, Rs = real("R0", "R1", "R2", "R10", "R20", "Rs")
-    U0, U1, U2, Y1, Y2 = rv("U0", "U1", "U2", "Y1", "Y2")
-    
-    r = universe()
-    r &= R0 >= 0
-    r &= R1 >= 0
-    r &= R2 >= 0
-    r &= R10 >= 0
-    r &= R10 <= R1
-    r &= R20 >= 0
-    r &= R20 <= R2
-    r &= Rs >= 0
-    
-    r &= R0 + R20 + R1 + Rs <= I(U0 + U1 & Y1)
-    r &= R1 - R10 + Rs <= I(U1 & Y1 | U0)
-    r &= R0 + R10 + R2 - Rs <= I(U0 + U2 & Y2) - I(U1 & U2 | U0)
-    r &= R0 + R10 + R2 <= I(U0 + U2 & Y2)
-    r &= R2 - R20 - Rs <= I(U2 & Y2 | U0) - I(U1 & U2 | U0)
-    r &= R2 - R20 <= I(U2 & Y2 | U0)
-    
-    r = r.exists(R10+R20+Rs+U0+U1+U2)
+    U0, U1, U2, X, Y1, Y2 = rv("U0", "U1", "U2", "X", "Y1", "Y2")
+
+    # alland([r1, r2]) is a shorthand for r1 & r2
+    r = alland([
+            R0 >= 0,
+            R1 >= 0,
+            R2 >= 0,
+            R10 >= 0,
+            R10 <= R1,
+            R20 >= 0,
+            R20 <= R2,
+            Rs >= 0,
+            R0 + R20 + R1 + Rs <= I(U0 + U1 & Y1),
+            R1 - R10 + Rs <= I(U1 & Y1 | U0),
+            R0 + R10 + R2 - Rs <= I(U0 + U2 & Y2) - I(U1 & U2 | U0),
+            R0 + R10 + R2 <= I(U0 + U2 & Y2),
+            R2 - R20 - Rs <= I(U2 & Y2 | U0) - I(U1 & U2 | U0),
+            R2 - R20 <= I(U2 & Y2 | U0),
+            markov(U0+U1+U2, X, Y1+Y2)
+        ]).exists(U0+U1+U2)
+
+    r = r.exists(R10+R20+Rs)  # Eliminate R10, R20, Rs
     print(r)
+
+    # Project the region to obtain Marton's inner bound for private messages
+    S1, S2 = real("S1", "S2")
+    print(r.projected((S1 >= 0) & (S2 >= 0) & (S1 <= R0+R1) 
+                      & (S2 <= R0+R2) & (S1+S2 <= R0+R1+R2)))
+
 
 
 Discover inequalities
@@ -921,7 +1056,7 @@ The following are true statements (:code:`Region` objects) that allow Psitip to 
 
 - The non-Shannon inequality in [Makarychev-Makarychev-Romashchenko-Vereshchagin 2002] is given by :code:`mmrv_thm(n)`.
 
-- The non-Shannon inequalities in four variables in [Zhang-Yeung 1998] and [Dougherty-Freiling-Zeger 2006] is given by :code:`zydfz_thm()`.
+- The non-Shannon inequalities in four variables in [Zhang-Yeung 1998] and [Dougherty-Freiling-Zeger 2006] are given by :code:`zydfz_thm()`.
 
 - **Existence of meet and minimal sufficient statistics** is given by :code:`existence(meet)` and :code:`existence(mss)` respectively.
 
@@ -1183,7 +1318,7 @@ theoretic inequality is based on the following work:
 
 - \Z. Zhang and R. W. Yeung, "On characterization of entropy function via information inequalities," IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
 
-There are several other pieces of software based on the linear programming approach in ITIP, for example, `Xitip <http://xitip.epfl.ch/>`_, `FME-IT <http://www.ee.bgu.ac.il/~fmeit/index.html>`_, `Minitip <https://github.com/lcsirmaz/minitip>`_, and `Citip <https://github.com/coldfix/Citip>`_.
+There are several other pieces of software based on the linear programming approach in ITIP, for example, `Xitip <http://xitip.epfl.ch/>`_, `FME-IT <http://www.ee.bgu.ac.il/~fmeit/index.html>`_, `Minitip <https://github.com/lcsirmaz/minitip>`_, `Citip <https://github.com/coldfix/Citip>`_, `AITIP <https://github.com/convexsoft/AITIP>`_ and `CAI <https://github.com/ct2641/CAI>`_.
 
 We remark that there is a Python package for discrete information theory called dit ( https://github.com/dit/dit ), which contains a collection of numerical optimization algorithms for information theory. Though it is not for proving information theoretic results.
 
@@ -1288,3 +1423,7 @@ Results used as examples above:
 - Polyanskiy, Yury, H. Vincent Poor, and Sergio Verdu. "Channel coding rate in the finite blocklength regime." IEEE Transactions on Information Theory 56.5 (2010): 2307-2359.
 
 - Hellinger, Ernst (1909), "Neue Begründung der Theorie quadratischer Formen von unendlichvielen Veränderlichen", Journal für die reine und angewandte Mathematik, 136: 210–271.
+
+- \A. El Gamal, "The capacity of a class of broadcast channels," IEEE Transactions on Information Theory, vol. 25, no. 2, pp. 166-169, 1979.
+
+- Ahlswede, Rudolf. "Multi-way communication channels." Second International Symposium on Information Theory: Tsahkadsor, Armenian SSR, Sept. 2-8, 1971.

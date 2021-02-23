@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.05
+Version 1.06
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -96,6 +96,7 @@ try:
     import scipy.sparse
     import scipy.optimize
     import scipy.spatial
+    import scipy.special
 except ImportError:
     scipy = None
 
@@ -180,6 +181,7 @@ class PsiOpts:
     STR_STYLE_LATEX = 4
     STR_STYLE_LATEX_ARRAY = 8
     STR_STYLE_LATEX_FRAC = 16
+    STR_STYLE_LATEX_QUANTAFTER = 32
     
     SFRL_LEVEL_SINGLE = 1
     SFRL_LEVEL_MULTIPLE = 2
@@ -268,7 +270,7 @@ class PsiOpts:
         "proof_enabled": False,
         "proof_nowrite": False,
         "proof_step_dualsum": True,
-        "proof_step_simplify": True,
+        "proof_step_simplify": False,
         
         "repr_simplify": True,
         "repr_check": False,
@@ -304,6 +306,7 @@ class PsiOpts:
         "verbose_opt_step_var": False,
         "verbose_float_dp": 8,
         "verbose_commmodel": False,
+        "verbose_codingmodel": False,
         
         "sfrl_level": 0,
         "sfrl_maxsize": 1,
@@ -436,6 +439,18 @@ class PsiOpts:
                 else:
                     d["proof"] = d["proof"].copy()
                     
+        elif key == "proof_step_in":
+            if d["proof"] is None:
+                d["proof"] = ProofObj.empty()
+                
+            d["proof"] = d["proof"].step_in(value)
+                    
+        elif key == "proof_step_out":
+            if d["proof"] is None:
+                d["proof"] = ProofObj.empty()
+                
+            d["proof"] = d["proof"].step_out()
+                    
         elif key == "opt_singlepass":
             d["opt_learnrate"] = 0.04
             d["opt_num_iter"] = 800
@@ -444,12 +459,15 @@ class PsiOpts:
             d["opt_num_hop"] = 1
             
         elif key == "opt_basinhopping":
-            d["opt_learnrate"] = 0.12
-            d["opt_learnrate2"] = 0.02 #0.001
-            d["opt_num_points"] = 5
-            d["opt_num_iter"] = 15
-            d["opt_num_iter2"] = 500
-            d["opt_num_hop"] = 20
+            if value:
+                d["opt_learnrate"] = 0.12
+                d["opt_learnrate2"] = 0.02 #0.001
+                d["opt_num_points"] = 5
+                d["opt_num_iter"] = 15
+                d["opt_num_iter2"] = 500
+                d["opt_num_hop"] = 20
+            else:
+                PsiOpts.set_setting_dict(d, "opt_singlepass", True)
             
             
         elif key == "opt_learnrate_mul":
@@ -592,6 +610,12 @@ class iutil:
 
     def lcm(a, b):
         return (a // iutil.gcd(a, b)) * b
+    
+    def hasinstance(a, t):
+        if isinstance(a, t):
+            return True
+        if isinstance(a, (tuple, list)):
+            return any(iutil.hasinstance(x, t) for x in a)
     
     def convert_str_style(style):
         if style == "standard" or style == "std":
@@ -783,6 +807,9 @@ class iutil:
                 return True
         return False
         
+    def str_inden(s, ninden):
+        return " " * ninden + s.replace("\n", "\n" + " " * ninden)
+    
     def enum_partition(n):
         def enum_partition_recur(mask):
             if mask == 0:
@@ -977,14 +1004,30 @@ class iutil:
     
     def copy(x):
         if (x is None or isinstance(x, int) or isinstance(x, float) 
-            or isinstance(x, str) or isinstance(x, tuple)):
+            or isinstance(x, str)):
             return x
         if isinstance(x, list):
             return [iutil.copy(a) for a in x]
+        if isinstance(x, tuple):
+            return tuple(iutil.copy(a) for a in x)
         if isinstance(x, dict):
             return {a: iutil.copy(b) for a, b in x.items()}
         
         return x.copy()
+    
+    def str_join(x, delim = ""):
+        if isinstance(x, list) or isinstance(x, tuple):
+            return delim.join(iutil.str_join(a, delim) for a in x)
+        return str(x)
+    
+    
+    def tostring_join(x, style, delim = ""):
+        if isinstance(x, list) or isinstance(x, tuple):
+            return delim.join(iutil.tostring_join(a, style, delim) for a in x)
+        if hasattr(x, "tostring"):
+            return x.tostring(style = style)
+        return str(x)
+    
     
     def bit_reverse(x, n):
         r = 0
@@ -1413,7 +1456,13 @@ class Comp:
         return self
     
     def get_card(self):
-        return self.get_marker_key("card")
+        r = 1
+        for a in self:
+            t = a.get_marker_key("card")
+            if t is None:
+                return None
+            r *= t
+        return r
     
     def get_shape(self):
         r = []
@@ -3617,7 +3666,7 @@ class BayesNet:
             return None
         return sum((self.index.comprv[x] for x in self.child[i]), Comp.empty())
     
-    def get_ancestors(self, x, descendant = False):
+    def get_ancestors(self, x, descendant = False, include_self = True):
         """
         Get the ancestors of node x.
 
@@ -3633,19 +3682,20 @@ class BayesNet:
         n = self.index.comprv.size()
         vis = [False] * n
         i = self.index.get_index(x)
-        vis[i] = True
+        vis[i] = include_self
         cstack = [i]
         r = Comp.empty()
         while len(cstack):
             x = cstack.pop()
-            r += self.index.comprv[x]
+            if vis[x]:
+                r += self.index.comprv[x]
             for y in (self.child[x] if descendant else self.parent[x]):
                 if not vis[y]:
                     vis[y] = True
                     cstack.append(y)
         return r
         
-    def get_descendants(self, x):
+    def get_descendants(self, x, **kwargs):
         """
         Get the descendants of node x.
 
@@ -3658,7 +3708,7 @@ class BayesNet:
         Comp
 
         """
-        return self.get_ancestors(x, descendant = True)
+        return self.get_ancestors(x, descendant = True, **kwargs)
     
     def edges(self):
         """
@@ -3706,7 +3756,7 @@ class BayesNet:
             if i >= 0:
                 self.fcn[i] = v
         
-    def is_fcn(self, x, v = True):
+    def is_fcn(self, x):
         """Query whether x is a function of their parents."""
         for xa in x.varlist:
             i = self.index.get_index(xa)
@@ -3758,6 +3808,35 @@ class BayesNet:
                 
         return self
     
+    def communicate(self, a, b):
+        return self.get_ancestors(a).ispresent(b) and self.get_ancestors(b).ispresent(a)
+    
+    def scc(self):
+        n = self.index.comprv.size()
+        r = BayesNet()
+        vis = [False] * n
+        for i in range(n):
+            if vis[i]:
+                continue
+            cgroup = Comp.empty()
+            cparent = Comp.empty()
+            for j in range(i, n):
+                if self.communicate(self.index.comprv[i], self.index.comprv[j]):
+                    vis[j] = True
+                    cgroup += self.index.comprv[j]
+                    cparent += self.get_parents(self.index.comprv[j])
+            
+            cparent -= cgroup
+            for k in range(len(cgroup)):
+                tparent = cparent + cgroup[:k]
+                r.add_edge(tparent, cgroup[k])
+                if self.is_fcn(cgroup[k]) and tparent.super_of(self.get_parents(cgroup[k])):
+                    r.set_fcn(cgroup[k])
+                
+                
+        return r
+        
+    
     def tsorted(self):
         n = self.index.comprv.size()
         cstack = []
@@ -3788,6 +3867,10 @@ class BayesNet:
             for j in self.parent[i]:
                 r.add_edge(self.index.comprv[j], self.index.comprv[i])
         
+        for i in range(n):
+            if self.fcn[i]:
+                r.set_fcn(self.index.comprv[i])
+                
         return r
     
     def iscyclic(self):
@@ -3981,7 +4064,9 @@ class BayesNet:
         
     def tostring(self, tsort = True):
         if tsort:
-            return self.tsorted().tostring(tsort = False)
+            tself = self.tsorted()
+            if tself is not None:
+                return tself.tostring(tsort = False)
         
         n = self.index.comprv.size()
         r = ""
@@ -3992,7 +4077,7 @@ class BayesNet:
                     r += ","
                 r += self.index.comprv.varlist[j].tostring()
                 first = False
-            r += " -> " + self.index.comprv.varlist[i].tostring() + "\n"
+            r += " -> " + self.index.comprv.varlist[i].tostring() + ("*" if self.fcn[i] else "") + "\n"
         return r
         
     def __str__(self):
@@ -4004,25 +4089,45 @@ class BayesNet:
     def __hash__(self):
         return hash(self.tostring())
         
-    def graph(self, tsort = True, shape = "plaintext", lr = True):
+    def graph(self, tsort = True, shape = "plaintext", lr = True, groups = None):
         """Return the graphviz digraph of the network that can be displayed in the console.
         """
         if tsort:
-            return self.tsorted().graph(tsort = False, shape = shape, lr = lr)
+            return self.tsorted().graph(tsort = False, shape = shape, lr = lr, groups = groups)
         
         n = self.index.comprv.size()
         r = graphviz.Digraph()
         if lr:
             r.graph_attr["rankdir"] = "LR"
+        
+        if groups is None:
+            groups = []
+        
+        remrv = self.index.comprv.copy()
+        for gi, g in enumerate(groups):
+            with r.subgraph(name = "cluster_" + str(gi)) as rs:
+                rs.attr(color = "blue")
+                for c in g:
+                    if not remrv.ispresent(c):
+                        continue
+                    remrv -= c
+                    i = self.index.get_index(c)
+                    rs.node(self.index.comprv[i].get_name(), str(self.index.comprv[i])
+                           + ("*" if self.fcn[i] else ""), shape = shape)
+                
             
         for i in range(n):
-            r.node(self.index.comprv[i].get_name(), str(self.index.comprv[i]), shape = shape)
+            if not remrv.ispresent(self.index.comprv[i]):
+                continue
+            r.node(self.index.comprv[i].get_name(), str(self.index.comprv[i])
+                   + ("*" if self.fcn[i] else ""), shape = shape)
         
         for i in range(n):
             for j in self.parent[i]:
                 r.edge(self.index.comprv[j].get_name(), self.index.comprv[i].get_name())
         
         return r
+    
     
 class ValIndex:
     def __init__(self, v = None):
@@ -4064,7 +4169,7 @@ class ConcDist:
         
         
     
-    def __init__(self, p = None, num_in = None, shape = None, shape_in = None, shape_out = None, isvar = False, randomize = False):
+    def __init__(self, p = None, num_in = None, shape = None, shape_in = None, shape_out = None, isvar = False, randomize = False, isfcn = False):
         self.isvar = isvar
         self.iscache = False
             
@@ -4073,6 +4178,24 @@ class ConcDist:
         # if p is None and shape_in is None and shape_out is None:
         #     self.p = None
         #     return
+        
+        self.expr = None
+        self.isfcn = isfcn
+        
+        if isinstance(p, list) and iutil.hasinstance(p, Expr):
+            p = ExprArray(p)
+        
+        if isinstance(p, ExprArray):
+            self.expr = p
+            if num_in is None:
+                if shape_in is None:
+                    num_in = 0
+                else:
+                    num_in = len(shape_in)
+            if num_in is not None:
+                shape_in = p.shape[:num_in]
+                shape_out = p.shape[num_in:]
+            p = None
         
         if self.isvar and torch is None:
             raise ImportError("Requires pytorch. Please install it first.")
@@ -4112,7 +4235,26 @@ class ConcDist:
             
             if self.isvar:
                 self.normalize()
-                
+        
+        if isfcn:
+            self.clamp_fcn()
+            
+    def clamp_fcn(self, randomize = False):
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            mzs = None
+            m = -1.0
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                t = float(self.p[xs + zs])
+                if randomize:
+                    t /= numpy.random.exponential()
+                self.p[xs + zs] = 0.0
+                if t > m:
+                    m = t
+                    mzs = zs
+            self.p[xs + mzs] = 1.0
+        self.copy_torch()
+        
+        
     def istorch(self):
         return torch is not None and isinstance(self.p, torch.Tensor)
         
@@ -4211,6 +4353,10 @@ class ConcDist:
         self.calc_torch()
         
     def normalize(self):
+        if self.isfcn:
+            self.clamp_fcn()
+            return
+        
         ceps = PsiOpts.settings["eps"]
         ceps_d = PsiOpts.settings["opt_eps_denom"]
         
@@ -4234,6 +4380,9 @@ class ConcDist:
     
     def clamp(self):
         if not self.isvar:
+            return
+        if self.isfcn:
+            self.clamp_fcn(randomize = True)
             return
         
         ceps = PsiOpts.settings["eps"]
@@ -4321,6 +4470,8 @@ class ConcDist:
         return self.p
     
     def get_v(self):
+        # if self.isfcn:
+        #     return None
         return self.v
     
     def numpy(self):
@@ -4328,6 +4479,13 @@ class ConcDist:
         if iutil.istorch(self.p):
             return self.p.detach().numpy()
         return self.p
+    
+    def torch(self):
+        """Convert to torch.Tensor."""
+        if iutil.istorch(self.p):
+            return self.p
+        return torch.tensor(self.p, dtype=torch.float64)
+    
     
     def entropy(self):
         """Entropy of this distribution."""
@@ -4398,6 +4556,39 @@ class ConcDist:
         other = ConcDist.convert(other)
         return other * self
     
+    def __pow__(self, other):
+        r = ConcDist(shape_in = self.shape_in, shape_out = tuple())
+        for i in range(other):
+            r = r * self
+        return r
+            
+    
+    def chan_product(self, other):
+        """Product channel.
+        """
+        other = ConcDist.convert(other)
+        
+        r = None
+        if torch is not None and (isinstance(self.p, torch.Tensor) or isinstance(other.p, torch.Tensor)):
+            r = torch.zeros(self.shape_in + other.shape_in + self.shape_out + other.shape_out, dtype=torch.float64)
+        else:
+            r = numpy.zeros(self.shape_in + other.shape_in + self.shape_out + other.shape_out)
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for x2s in itertools.product(*[range(x2) for x2 in other.shape_in]):
+                for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                    for ws in itertools.product(*[range(w) for w in other.shape_out]):
+                        r[xs + x2s + zs + ws] += self.p[xs + zs] * other.p[x2s + ws]
+        return ConcDist(r, num_in = self.get_num_in() + other.get_num_in())
+    
+    
+    def chan_power(self, other):
+        """n-product channel.
+        """
+        r = ConcDist(shape_in = tuple(), shape_out = tuple())
+        for i in range(other):
+            r = r.chan_product(self)
+        return r
+        
     def __matmul__(self, other):
         other = ConcDist.convert(other)
         
@@ -4625,6 +4816,31 @@ class ConcDist:
         r += ")"
         return r
         
+    
+    def fcn(fcncall, shape):
+        shape_in, shape_out = ConcDist.convert_shape_pair(shape)
+        return ConcDist(ExprArray.fcn(fcncall, shape_in + shape_out), shape_in = shape_in, shape_out = shape_out)
+        
+    def valid_region(self, skip_simplify = False):
+        """For a symbolic distribution, returns the region where this is a
+        valid distribution.
+        """
+        if self.expr is None:
+            return Region.universe()
+        r = Region.universe()
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            sumexpr = Expr.zero()
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                cexpr = self.expr[xs + zs]
+                r.iand_norename(cexpr >= 0)
+                sumexpr += cexpr
+            r.iand_norename(sumexpr == 1)
+        
+        if not skip_simplify:
+            return r.simplified()
+        return r
+        
+    
     def uniform(n, isvar = False):
         """n-ary uniform distribution."""
         return ConcDist(numpy.ones(n) / n, isvar = isvar)
@@ -4647,7 +4863,9 @@ class ConcDist:
         """n-ary symmetric channel."""
         a = 1.0 - crossover
         b = crossover / (n - 1)
-        return ConcDist(numpy.ones((n, n)) * b + numpy.eye(n) * (a - b), num_in = 1, isvar = isvar)
+        # return ConcDist(numpy.ones((n, n)) * b + numpy.eye(n) * (a - b), num_in = 1, isvar = isvar)
+        return ConcDist([[a if i == j else b for j in range(n)] for i in range(n)],
+                        num_in = 1, isvar = isvar)
         
     def bsc(crossover, isvar = False):
         """Binary symmetric channel."""
@@ -4659,12 +4877,74 @@ class ConcDist:
     
     def erasure_chan(n, er_prob, isvar = False):
         """n-ary erasure channel."""
-        return ConcDist(numpy.hstack([numpy.eye(n) * (1.0 - er_prob), 
-                                      numpy.ones((n, 1)) * er_prob]), num_in = 1, isvar = isvar)
+        # return ConcDist(numpy.hstack([numpy.eye(n) * (1.0 - er_prob), 
+        #                               numpy.ones((n, 1)) * er_prob]), num_in = 1, isvar = isvar)
+        return ConcDist([[(1.0 - er_prob) if i == j else 0.0 for j in range(n)] + [er_prob] for i in range(n)],
+                        num_in = 1, isvar = isvar)
         
     def bec(er_prob, isvar = False):
         """Binary erasure channel."""
         return ConcDist.erasure_chan(2, er_prob, isvar = isvar)
+        
+    def flat(shape_in, isvar = False):
+        """Transition probability for flattening a random vector into one random variable."""
+        if isinstance(shape_in, int):
+            shape_in = (shape_in,)
+        nout = iutil.product(shape_in)
+        p = numpy.zeros(shape_in + (nout,))
+        for xs in itertools.product(*[range(x) for x in shape_in]):
+            t = 0
+            for a, b in zip(xs, shape_in):
+                t = t * b + a
+            p[xs + (t,)] = 1.0
+        return ConcDist(p, num_in = len(shape_in), isvar = isvar)
+    
+    def add(shape_in, isvar = False):
+        """Transition probability from several random variables to their sum."""
+        if isinstance(shape_in, int):
+            shape_in = (shape_in,)
+        nout = sum(shape_in) - len(shape_in) + 1
+        p = numpy.zeros(shape_in + (nout,))
+        for xs in itertools.product(*[range(x) for x in shape_in]):
+            p[xs + (sum(xs),)] = 1.0
+        return ConcDist(p, num_in = len(shape_in), isvar = isvar)
+        
+    def gaussian(r, l, isvar = False):
+        """Quantized standard Gaussian distribution in the range [-r, r],
+        divided into l cells.
+        """
+        sqrt2 = numpy.sqrt(2.0)
+        p = numpy.zeros(l)
+        cdf = 0.0
+        cdf0 = 0.0
+        for i in range(l + 1):
+            x = (i * 2.0 / l - 1.0) * r
+            cdf2 = 0.5 * (1 + scipy.special.erf(x / sqrt2))
+            if i > 0:
+                p[i - 1] = cdf2 - cdf
+            cdf = cdf2
+            if i == 0:
+                cdf0 = cdf
+        for i in range(l):
+            p[i] /= cdf - cdf0
+        return ConcDist(p, num_in = 0, isvar = isvar)
+        
+    def convolve_kernel(shape_in, kernel, isvar = False):
+        """Transition probability from X to X+Z, where X is a random vector with a
+        pmf of shape shape_in, and Z is independent of X and follows the distribution
+        given by kernel.
+        """
+        if isinstance(shape_in, int):
+            shape_in = (shape_in,)
+        if isinstance(kernel, ConcDist):
+            kernel = kernel.p
+        shape_out = tuple(a + b - 1 for a, b in zip(shape_in, kernel.shape))
+        p = numpy.zeros(shape_in + shape_out)
+        for xs in itertools.product(*[range(x) for x in shape_in]):
+            for zs in itertools.product(*[range(x) for x in kernel.shape]):
+                p[xs + tuple(x + z for x, z in zip(xs, zs))] = kernel[zs]
+        return ConcDist(p, num_in = len(shape_in), isvar = isvar)
+        
     
     
 class ConcReal:
@@ -4849,6 +5129,12 @@ class ConcReal:
     def __int__(self):
         return int(round(float(self.x)))
     
+    def torch(self):
+        """Convert to torch.Tensor."""
+        if iutil.istorch(self.x):
+            return self.x
+        return torch.tensor(self.x, dtype=torch.float64)
+    
     def __str__(self):
         return str(self.x)
     
@@ -4886,6 +5172,9 @@ class ConcModel:
         else:
             self.istorch = istorch
             
+        if self.istorch and torch is None:
+            raise ImportError("Requires pytorch. Please install it first.")
+            
         if bnet is None:
             self.bnet = BayesNet()
         else:
@@ -4904,6 +5193,8 @@ class ConcModel:
         
         self.index_real = IVarIndex()
         self.reals = []
+        self.opt_reg = None
+        
         
     def copy_shallow(self):
         r = ConcModel()
@@ -4919,10 +5210,11 @@ class ConcModel:
         return r
         
     def set_real(self, x, v):
+        self.clear_cache()
         if v == "var":
             self.set_real(x, ConcReal(isvar = True))
             return
-        if v == "var_rand":
+        if v == "var,rand":
             self.set_real(x, ConcReal(isvar = True, randomize = True))
             return
         
@@ -4976,18 +5268,45 @@ class ConcModel:
         return []
         
     def set_prob(self, x, p):
-        if p == "var":
-            self.set_prob(x, ConcDist(shape = x, isvar = True))
+        if isinstance(p, str):
+            opt_split = p.split(",")
+            opt = None
+            randomize = False
+            isvar = False
+            isfcn = False
+            mode = ""
+            
+            for copt in opt_split:
+                if copt == "var":
+                    isvar = True
+                elif copt == "rand":
+                    randomize = True
+                elif copt == "fcn":
+                    isfcn = True
+                else:
+                    mode = copt
+            
+            if mode == "flat":
+                shape_in, shape_out = self.convert_shape_pair(x)
+                self.set_prob(x, ConcDist.flat(shape_in, isvar = isvar))
+            elif mode == "add":
+                shape_in, shape_out = self.convert_shape_pair(x)
+                self.set_prob(x, ConcDist.add(shape_in, isvar = isvar))
+            else:
+                shape_in, shape_out = self.convert_shape_pair(x)
+                self.set_prob(x, ConcDist(shape_in = shape_in, shape_out = shape_out, 
+                                          isvar = isvar, randomize = randomize, isfcn = isfcn))
             return
-        if p == "var_rand":
-            self.set_prob(x, ConcDist(shape = x, isvar = True, randomize = True))
-            return
+        
         
         self.bnet += x
         cin, cout = self.comp_to_pair(x)
         
         if isinstance(p, list):
-            p = numpy.array(p)
+            if iutil.hasinstance(p, Expr):
+                p = ExprArray(p)
+            else:
+                p = numpy.array(p)
             
         shape = p.shape
         if len(shape) != len(cin) + len(cout):
@@ -5017,8 +5336,15 @@ class ConcModel:
             self.psv[k] = (cin, cout)
         self.clear_cache()
         
+    def calc_dist(self, p):
+        if p is None:
+            return
+        if p.expr is not None:
+            p.p = self[p.expr]
+        
     def get_prob_mask(self, mask):
         t = self.psmap_mask.get(mask, None)
+        self.calc_dist(t)
         if t is not None:
             return t
         
@@ -5033,6 +5359,7 @@ class ConcModel:
             
         tin, tout = self.psv[k]
         tp = self.psmap[(tin, tout)]
+        self.calc_dist(tp)
         
         tin_mask = 0
         for a in tin:
@@ -5067,9 +5394,11 @@ class ConcModel:
         
     def get_prob_pair(self, cin, cout):
         t = self.psmap.get((cin, cout), None)
+        self.calc_dist(t)
         if t is not None:
             return t
         t = self.psmap_cache.get((cin, cout), None)
+        self.calc_dist(t)
         if t is not None:
             return t
         
@@ -5121,6 +5450,32 @@ class ConcModel:
         if i < 0:
             return None
         return self.get_card_id(i)
+    
+    def get_card_default(self, x):
+        i = self.bnet.index.get_index(x)
+        if i < 0:
+            return x.get_card()
+        return self.get_card_id(i)
+        
+    def convert_shape(self, x):
+        if x is None:
+            return tuple()
+        if isinstance(x, Comp):
+            return tuple(self.get_card_default(a) for a in x)
+        if isinstance(x, ConcDist):
+            return x.shape_out
+        return tuple(x)
+    
+    def convert_shape_pair(self, x):
+        if x is None:
+            return (tuple(), tuple())
+        if isinstance(x, Term):
+            return (self.convert_shape(x.z), sum((self.convert_shape(t) for t in x.x), tuple()))
+        if isinstance(x, Comp) or isinstance(x, ConcDist):
+            return (tuple(), self.convert_shape(x))
+        if isinstance(x, tuple) and (len(x) == 0 or isinstance(x[0], int)):
+            return (tuple(), tuple(x))
+        return (self.convert_shape(x[0]), self.convert_shape(x[1]))
         
                 
     def get_H(self, x):
@@ -5153,22 +5508,46 @@ class ConcModel:
         
         reg.simplify_quick(zero_group = 0)
         
-        reg.iand_norename(reg.completed_semigraphoid(max_iter = 10000))
+        regcom = reg.copy()
+        regcom.iand_norename(regcom.completed_semigraphoid(max_iter = 10000))
         
-        tbnet = reg.get_bayesnet(roots = self.bnet.index.comprv.inter(reg.allcomprv()), 
+        
+        # print(reg)
+        # print(regcom)
+        
+        tbnet = regcom.get_bayesnet(roots = self.bnet.index.comprv.inter(regcom.allcomprv()), 
                                  skip_simplify = True)
         # print(tbnet)
         
-        for a in tbnet.index.comprv:
+        fcnreg = Region.universe()
+        
+        for a in tbnet.index.comprv + reg.allcomprv():
             if self.bnet.index.get_index(a) >= 0:
                 continue
+            
             ccard = a.get_card()
             if ccard is None:
                 ccard = card0
-            pa = tbnet.get_parents(a)
+            
+            pa = None
+            if tbnet.index.get_index(a) >= 0:
+                pa = tbnet.get_parents(a)
+            else:
+                pa = self.bnet.index.comprv
+                
             # print(pa)
             
-            p = ConcDist(shape = (tuple(self.get_card(t) for t in pa), (ccard,)), isvar = True, randomize = True)
+            isfcn = reg.copy_noaux().implies(Expr.Hc(a, pa) <= 0)
+            if isfcn:
+                fcnreg.iand_norename(Expr.Hc(a, pa) <= 0)
+            # print(reg)
+            # print(a)
+            # print(pa)
+            # print(isfcn)
+            p = ConcDist(shape = (tuple(self.get_card(t) for t in pa), (ccard,)),
+                         isvar = True, randomize = True, isfcn = isfcn)
+            
+            
             self[a | pa] = p
             varlist.append(p)
             
@@ -5178,10 +5557,11 @@ class ConcModel:
                 self[a] = t
                 varlist.append(t)
             
-        csreg = self.get_region() & cons
+        csreg = self.get_region() & cons & fcnreg
         for ineq in reg:
             if not csreg.implies(ineq):
-                cons &= ineq
+                cons.iand_norename(ineq)
+                csreg.iand_norename(ineq)
         
         return (varlist, cons)
     
@@ -5250,7 +5630,10 @@ class ConcModel:
             for b in bds:
                 cons &= tvar * sgn <= b * sgn
         
-        return cs.optimize(tvar, varlist, cons, sgn = sgn)
+        retval = cs.optimize(tvar, varlist, cons, sgn = sgn)
+        self.opt_reg = cs.opt_reg
+        
+        return retval
         
     
     def get_val(self, expr, esgn = 0):
@@ -5300,11 +5683,24 @@ class ConcModel:
                 r = torch.hstack(tuple(iutil.ensure_torch(self[a]) for a in x))
                 return torch.reshape(r, x.shape)
             else:
-                r = numpy.array([self[a] for a in x])
+                r = numpy.array([float(self[a]) for a in x])
                 return numpy.reshape(r, x.shape)
             
         elif isinstance(x, Region):
-            return x.evalcheck(self)
+            if x.aux_present():
+                x = x.simplified_quick()
+            
+            if x.aux_present():
+                cs = self.copy_shallow()
+                varlist, cons = cs.add_reg(x)
+                
+                retval = cs.optimize(Expr.zero(), varlist, cons, sgn = 1)
+                
+                self.opt_reg = cs.opt_reg
+                return x.evalcheck(cs)
+            
+            else:
+                return x.evalcheck(self)
         
         return None
     
@@ -5352,11 +5748,21 @@ class ConcModel:
                 tr, tdist = self.convert_torch_tensors(t)
                 r += tr
                 r_dist += tdist
+        elif isinstance(x, ExprArray):
+            for x2 in x:
+                t = self.get_real(x2)
+                if t is not None:
+                    tr, tdist = self.convert_torch_tensors(t)
+                    r += tr
+                    r_dist += tdist
         elif isinstance(x, ConcDist) or isinstance(x, ConcReal):
             t = x.get_v()
             if t is not None and torch is not None and isinstance(t, torch.Tensor):
                 r.append(t)
+            
+            if x.isvar:
                 r_dist.append(x)
+                
         return (r, r_dist)
     
     def tensor_copy_list(x, y):
@@ -5712,6 +6118,12 @@ class ConcModel:
                 if not has_d:
                     return float(cval)
                 
+                if isinstance(cval, float):
+                    if has_f:
+                        return (float(cval), ConcModel.tensor_list_grad_to_array(varlist) * 0.0)
+                    else:
+                        return ConcModel.tensor_list_grad_to_array(varlist) * 0.0
+                    
                 cval.backward()
                 
                 if has_f:
@@ -5777,7 +6189,7 @@ class ConcModel:
             for (cin, cout), cp in cs.psmap.items():
                 print(str(sum(cs.bnet.index.comprv[i] for i in cin)) + " -> " 
                       + str(sum(cs.bnet.index.comprv[i] for i in cout)) 
-                      + (" var" if cp.isvar else ""))
+                      + (" var" if cp.isvar else "") + (" fcn" if cp.isfcn else ""))
             if sgn > 0:
                 print("========    maximize    ========")
             else:
@@ -5862,32 +6274,51 @@ class ConcModel:
                     if scipy_optimizer is not None:
                         
                         res = None
+                        resx = None
+                        resfun = None
+                        if len(varlist):
+                            with warnings.catch_warnings():
+                                
+                                warnings.simplefilter("ignore")
+                                
+                                opts = {"maxiter": cur_num_iter, "disp": verbose_step}
+                                if scipy_optimizer == "trust-constr":
+                                    opts["initial_tr_radius"] = 0.001
+                                    if verbose_step:
+                                        opts["verbose"] = 3
+                                
+                                res = scipy.optimize.minimize(
+                                    get_fcn(expr, -sgn, True, use_jac), 
+                                    ConcModel.tensor_list_to_array(varlist),
+                                    method = scipy_optimizer,
+                                    jac = use_jac,
+                                    bounds = bds,
+                                    constraints = cons_list,
+                                    tol = eps_tol,
+                                    options = opts
+                                    )
+                                
+                                resx = res.x
+                                resfun = res.fun
+                        else:
+                            resx = numpy.array([])
+                            resfun = get_fcn(expr, -sgn, True, use_jac)(numpy.array([]))[0]
+                            
+                        ConcModel.tensor_list_from_array(varlist, resx)
                         
-                        with warnings.catch_warnings():
-                            
-                            warnings.simplefilter("ignore")
-                            
-                            opts = {"maxiter": cur_num_iter, "disp": verbose_step}
-                            if scipy_optimizer == "trust-constr":
-                                opts["initial_tr_radius"] = 0.001
-                                if verbose_step:
-                                    opts["verbose"] = 3
-                            
-                            res = scipy.optimize.minimize(
-                                get_fcn(expr, -sgn, True, use_jac), 
-                                ConcModel.tensor_list_to_array(varlist),
-                                method = scipy_optimizer,
-                                jac = use_jac,
-                                bounds = bds,
-                                constraints = cons_list,
-                                tol = eps_tol,
-                                options = opts
-                                )
+                        bad = False
+                        for d in distlist:
+                            if isinstance(d, ConcDist) and d.isfcn:
+                                d.clamp()
+                                bad = True
+                        if bad:
+                            resx = ConcModel.tensor_list_to_array(varlist)
+                            resfun = get_fcn(expr, -sgn, True, use_jac)(resx)[0]
                             
                         num_violate = 0
                         sum_violate = 0.0
                         for a in cons_list_fcn:
-                            t = a["fun"](res.x)
+                            t = a["fun"](resx)
                             if numpy.isnan(t):
                                 sum_violate = numpy.inf
                                 num_violate += 1
@@ -5904,16 +6335,16 @@ class ConcModel:
                                 
                         penalty = sum_violate * alm_penalty
                                     
-                        score = res.fun + penalty
+                        score = resfun + penalty
                         if numpy.isnan(score):
                             score = numpy.inf
                         t = (0, score)
-                        ConcModel.tensor_list_from_array(varlist, res.x)
-                        
+                            
+                            
                         if verbose_step:
                             print((("pass=" + str(cpass + 1) + " ") if cpass > 0 else "")
                                   + "#pt=" + str(ip)
-                                  + " val=" + str(res.fun)
+                                  + " val=" + str(resfun)
                                   + " violate=" + str((num_violate, sum_violate)) + " opt=" + str_tuple(r))
                         
                     else:
@@ -6048,6 +6479,7 @@ class ConcModel:
                     d.calc_torch()
                 cs.clear_cache()
             
+        self.opt_reg = cs
         self.clear_cache()
         return (r[1] if r[0] == 0 else numpy.inf) * -sgn
 
@@ -6065,6 +6497,9 @@ class ConcModel:
         """
         return self.optimize(*args, sgn = 1, **kwargs)
     
+    def opt_model(self):
+        return self.opt_reg
+    
     def get_bayesnet(self):
         return self.bnet.copy()
     
@@ -6079,11 +6514,11 @@ class ConcModel:
         """
         return universe().venn(*args, self, **kwargs)
         
-    def graph(self):
+    def graph(self, **kwargs):
         """Return the Bayesian network among the random variables as a 
         graphviz digraph that can be displayed in the console.
         """
-        return self.get_bayesnet().graph()
+        return self.get_bayesnet().graph(**kwargs)
     
     
 class SparseMat:
@@ -6856,23 +7291,56 @@ class LinearProg:
         
         return r
     
-    def write_pf(self, x):
+    def get_dual_sum_region(self, x):
         r = self.get_dual_region()
+        with PsiOpts(proof_enabled = False):
+            rsum = sum(r.exprs_ge + r.exprs_eq, Expr.zero())
+            rdiff = (x - rsum).simplified()
+            if not rdiff.iszero():
+                rowt = self.row_toexpr()
+                for t in rdiff:
+                    v = self.get_vec(t)[0]
+                    if v is not None:
+                        tv = (t - rowt(v)).simplified()
+                        if not tv.iszero():
+                            r.exprs_eq.append(tv)
+                
+        return r
+            
+    
+    def write_pf(self, x):
+        r = self.get_dual_sum_region(x)
         if r is None:
             return
         xstr = str(x) + " >= 0"
-        pf = ProofObj.from_region(r, c = "Duals for " + xstr)
+        pf = None
         
         if PsiOpts.settings["proof_step_dualsum"]:
-            r2 = Region.universe()
-            cur = Expr.zero()
-            for x in r.exprs_ge:
-                cur = (cur + x).simplified()
-                r2.exprs_ge.append(cur)
-            for x in r.exprs_eq:
-                cur = (cur + x).simplified()
-                r2.exprs_ge.append(cur)
-            pf += ProofObj.from_region(r2, c = "Steps for " + xstr)
+            rt = r.removed_trivial()
+            pf = None
+            if rt.isuniverse():
+                pf = ProofObj.from_region(x >= 0, c = "Claim: ")
+            else:
+                pf = ProofObj.from_region(("implies", rt, x >= 0), c = "Claim: ")
+            cadds, csums = r.get_sum_seq()
+            for i, (cadd, csum) in enumerate(zip(cadds, csums)):
+                if i == 0:
+                    pf += ProofObj.from_region(csum >= 0, c = "Have:")
+                else:
+                    pf += ProofObj.from_region(csum >= 0, c = ["Add: ", cadd >= 0])
+            
+            # self.trytry()
+            # r2 = Region.universe()
+            # cur = Expr.zero()
+            # for x in r.exprs_ge:
+            #     cur = (cur + x).simplified()
+            #     r2.exprs_ge.append(cur)
+            # for x in r.exprs_eq:
+            #     cur = (cur + x).simplified()
+            #     r2.exprs_ge.append(cur)
+            # pf += ProofObj.from_region(r2, c = "Steps for " + xstr)
+        else:
+            pf = ProofObj.from_region(r, c = ["Duals for ", x >= 0])
             
         PsiOpts.set_setting(proof_add = pf)
     
@@ -8624,7 +9092,7 @@ class Region:
         """Return the vertices and the facet list of the polytope with coordinates in the list w."""
         
         if not skip_discover:
-            t = real_list("#TMPVAR", 0, len(w))
+            t = real_array("#TMPVAR", 0, len(w))
             return self.discover([(a, b) for a, b in zip(t, w)]).corners_value(t, ispolar, True, inf_value)
         
         cindex = IVarIndex()
@@ -8968,7 +9436,7 @@ class Region:
     def to_cause_consequence(self):
         return [(self.imp_flippedonly_noaux(), self.consonly(), self.auxi.copy())]
     
-    def and_cause_consequence(self, other):
+    def and_cause_consequence(self, other, avoid = None):
         cs = self.copy()
         
         other = other.copy()
@@ -8993,7 +9461,14 @@ class Region:
             # print(auxi)
             # print("TCS")
             # print(tcs)
-            for rr in tcs.check_getaux_gen():
+            
+            hint_aux_avoid = None
+            if avoid is not None:
+                hint_aux_avoid = []
+                for a in auxi:
+                    hint_aux_avoid.append((a, avoid.copy()))
+                    
+            for rr in tcs.check_getaux_inplace_gen(hint_aux_avoid = hint_aux_avoid):
                 if iutil.signal_type(rr) == "":
                     #print(rr)
                     tcons = cons.copy()
@@ -10974,10 +11449,10 @@ class Region:
             if iutil.signal_type(rr) == "":
                 if write_pf_enabled:
                     if len(rr) > 0:
-                        pf = ProofObj.from_region(self, c = "To prove")
-                        PsiOpts.set_setting(proof_add = pf)
+                        pf = ProofObj.from_region(self, c = "Claim:")
+                        PsiOpts.set_setting(proof_step_in = pf)
                         
-                        pf = ProofObj.from_region(Region.universe(), c = "Substitute:\n" + iutil.list_tostr_std(rr))
+                        pf = ProofObj.from_region(None, c = "Substitute:\n" + iutil.list_tostr_std(rr))
                         PsiOpts.set_setting(proof_add = pf)
                         
                         cs = self.copy()
@@ -10985,6 +11460,8 @@ class Region:
                         if cs.getaux().isempty():
                             with PsiOpts(proof_enabled = True):
                                 cs.check_plain()
+                                
+                        PsiOpts.set_setting(proof_step_out = True)
                         
                 return rr
         return None
@@ -11095,6 +11572,13 @@ class Region:
                 return numpy.inf
             r = max(r, abs(t))
         return r
+    
+    def example(self):
+        cs = self.exists(self.allcomprv() - self.getaux() - self.getauxi())
+        P = ConcModel()
+        if not P[cs]:
+            return None
+        return P.opt_model()
     
     def implies(self, other):
         """Whether self implies other"""
@@ -11588,8 +12072,9 @@ class Region:
         
         if write_pf_enabled:
             if self.tostring() != prevself.tostring():
-                pf = ProofObj.from_region(prevself, c = "Simplify")
-                pf += ProofObj.from_region(self, c = "Simplified as")
+                # pf = ProofObj.from_region(prevself, c = "Simplify")
+                # pf += ProofObj.from_region(self, c = "Simplified as")
+                pf = ProofObj.from_region(("equiv", prevself, self), c = "Simplify:")
                 PsiOpts.set_setting(proof_add = pf)
             
         return self
@@ -12258,6 +12743,50 @@ class Region:
         r.simplify(reg, zero_group)
         return r
     
+    def remove_trivial(self):
+        self.exprs_gei = [x for x in self.exprs_gei if not x.isnonneg()]
+        self.exprs_eqi = [x for x in self.exprs_eqi if not (x.isnonneg() and x.isnonpos())]
+        self.exprs_ge = [x for x in self.exprs_ge if not x.isnonneg()]
+        self.exprs_eq = [x for x in self.exprs_eq if not (x.isnonneg() and x.isnonpos())]
+    
+    def removed_trivial(self):
+        r = self.copy()
+        r.remove_trivial()
+        return r
+    
+    def get_sum_seq(self):
+        exprs = list(self.exprs_ge + self.exprs_eq)
+        c = Expr.zero()
+        r0 = []
+        r1 = []
+        while exprs:
+            minc = None
+            minx = None
+            mincomp = 1e20
+            mini = 0
+            for i, x in enumerate(exprs):
+                t = None
+                with PsiOpts(proof_enabled = False):
+                    t = (c + x).simplified()
+                tcomp = t.complexity()
+                if tcomp < mincomp:
+                    mincomp = tcomp
+                    minc = t
+                    minx = x
+                    mini = i
+                
+            r0.append(minx)
+            r1.append(minc)
+            c = minc
+            exprs.pop(mini)
+            
+            # print(i)
+            # print(exprs)
+            # print(minx)
+            # print(minc)
+        
+        return (r0, r1)
+        
     def get_ic(self, skip_simplify = False):
         cs = self
         if not skip_simplify:
@@ -12280,11 +12809,11 @@ class Region:
         icexpr = self.get_ic(skip_simplify)
         return BayesNet.from_ic(icexpr, roots = roots).tsorted()
     
-    def graph(self):
+    def graph(self, **kwargs):
         """Return the Bayesian network among the random variables as a 
         graphviz digraph that can be displayed in the console.
         """
-        return self.get_bayesnet().graph()
+        return self.get_bayesnet().graph(**kwargs)
     
     def get_bayesnet_imp(self, skip_simplify = False):
         """Return a Bayesian network containing the conditional independence
@@ -12308,6 +12837,10 @@ class Region:
     def table(self, *args, skip_cons = False, plot = True, **kwargs):
         """Plot the information diagram as a Gray-coded table.
         """
+        
+        imp_r = self.imp_flippedonly_noaux()
+        if not imp_r.isuniverse():
+            return imp_r.table(self.consonly(), *args, skip_cons, plot, **kwargs)
         
         ceps = PsiOpts.settings["eps"]
         index = IVarIndex()
@@ -13480,7 +14013,27 @@ class Region:
                 r += "\to" + nlstr
             else:
                 r += " ->" + nlstr
+        
+        if not self.auxi.isempty():
+            if style == PsiOpts.STR_STYLE_PSITIP:
+                pass
+            else:
+                if style & PsiOpts.STR_STYLE_LATEX:
+                    if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += "\\forall "
+                        r += self.auxi.tostring(style = style, tosort = tosort)
+                        r += ": "
             
+        if not self.aux.isempty():
+            if style == PsiOpts.STR_STYLE_PSITIP:
+                pass
+            else:
+                if style & PsiOpts.STR_STYLE_LATEX:
+                    if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += "\\exists "
+                        r += self.aux.tostring(style = style, tosort = tosort)
+                        r += ": "
+                
         
         eqnlist = ([x.tostring_eqn(">=", style = style, tosort = tosort, lhsvar = lhsvar) for x in self.exprs_ge]
         + [x.tostring_eqn("==", style = style, tosort = tosort, lhsvar = lhsvar) for x in self.exprs_eq])
@@ -13559,20 +14112,24 @@ class Region:
                 pass
             else:
                 if style & PsiOpts.STR_STYLE_LATEX:
-                    r += " , \\exists "
+                    if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += " , \\exists "
+                        r += self.aux.tostring(style = style, tosort = tosort)
                 else:
                     r += " , exists "
-                r += self.aux.tostring(style = style, tosort = tosort)
+                    r += self.aux.tostring(style = style, tosort = tosort)
         
         if not self.auxi.isempty():
             if style == PsiOpts.STR_STYLE_PSITIP:
                 pass
             else:
                 if style & PsiOpts.STR_STYLE_LATEX:
-                    r += " , \\forall "
+                    if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += " , \\forall "
+                        r += self.auxi.tostring(style = style, tosort = tosort)
                 else:
                     r += " , forall "
-                r += self.auxi.tostring(style = style, tosort = tosort)
+                    r += self.auxi.tostring(style = style, tosort = tosort)
                 
         if imp_pres:
             r += ")"
@@ -14309,8 +14866,9 @@ class RegionOp(Region):
         
         if write_pf_enabled:
             if didall:
-                pf = ProofObj.from_region(prevself, c = "Expand definitions")
-                pf += ProofObj.from_region(self, c = "Expanded definitions to")
+                # pf = ProofObj.from_region(prevself, c = "Expand definitions")
+                # pf += ProofObj.from_region(self, c = "Expanded definitions to")
+                pf = ProofObj.from_region(("equiv", prevself, self), c = "Expand definitions:")
                 PsiOpts.set_setting(proof_add = pf)
             
         return self
@@ -14558,11 +15116,11 @@ class RegionOp(Region):
             
     
     def to_cause_consequence(self):
-        cs = self.copy()
+        cs = ~self
         cs.presolve()
         r = []
         #allauxs = cs.auxs
-        auxi = cs.getauxi()
+        auxi = cs.getaux()
         
         for x, c in cs.regs:
             #allcomprv = x.allcomprv()
@@ -14579,6 +15137,8 @@ class RegionOp(Region):
                         cons.append(y)
             elif x.get_type() == RegionType.NORMAL:
                 if c:
+                    if x.isempty():
+                        continue
                     req &= x
                 else:
                     cons.append(x)
@@ -14589,7 +15149,7 @@ class RegionOp(Region):
             else:
                 ccons = RegionOp.union(cons)
             
-            r.append((req, ccons, auxi.inter(x.getauxi())))
+            r.append((req, ccons, auxi.inter(x.allcomp())))
             
         return r
     
@@ -15287,10 +15847,10 @@ class RegionOp(Region):
             if write_pf_enabled:
                 if write_pf_twopass:
                     
-                    pf = ProofObj.from_region(self, c = "To prove")
-                    PsiOpts.set_setting(proof_add = pf)
+                    pf = ProofObj.from_region(self, c = "Claim:")
+                    PsiOpts.set_setting(proof_step_in = pf)
                     
-                    pf = ProofObj.from_region(Region.universe(), c = "Substitute:\n" + iutil.list_tostr_std(resrr))
+                    pf = ProofObj.from_region(None, c = "Substitute:\n" + iutil.list_tostr_std(resrr))
                     PsiOpts.set_setting(proof_add = pf)
                     
                     cs = self.copy()
@@ -15299,6 +15859,7 @@ class RegionOp(Region):
                         with PsiOpts(proof_enabled = True):
                             cs.check()
                     
+                    PsiOpts.set_setting(proof_step_out = True)
             return resrr
         
         return None
@@ -15720,6 +16281,25 @@ class RegionOp(Region):
             else:
                 return " " * inden + "{}"
         
+        for x, c in reversed(self.auxs):
+            if c:
+                if style == PsiOpts.STR_STYLE_PSITIP:
+                    pass
+                elif style & PsiOpts.STR_STYLE_LATEX:
+                    if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += "\\exists "
+                        r += x.tostring(style = style, tosort = tosort)
+                        r += ": "
+            else:
+                if style == PsiOpts.STR_STYLE_PSITIP:
+                    pass
+                elif style & PsiOpts.STR_STYLE_LATEX:
+                    if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += "\\forall "
+                        r += x.tostring(style = style, tosort = tosort)
+                        r += ": "
+            
+                
         if style == PsiOpts.STR_STYLE_PSITIP:
             r += " " * inden + "(" + nlstr
         elif style & PsiOpts.STR_STYLE_LATEX:
@@ -15757,14 +16337,20 @@ class RegionOp(Region):
                 if style == PsiOpts.STR_STYLE_PSITIP:
                     r += ".exists("
                 elif style & PsiOpts.STR_STYLE_LATEX:
-                    r += " , \\exists "
+                    if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += " , \\exists "
+                    else:
+                        continue
                 else:
                     r += " , exists "
             else:
                 if style == PsiOpts.STR_STYLE_PSITIP:
                     r += ".forall("
                 elif style & PsiOpts.STR_STYLE_LATEX:
-                    r += " , \\forall "
+                    if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
+                        r += " , \\forall "
+                    else:
+                        continue
                 else:
                     r += " , forall "
             r += x.tostring(style = style, tosort = tosort)
@@ -16489,6 +17075,15 @@ class ExprArray(IBaseArray):
         return (self - other).eq_region()
     
     
+    
+    def fcn(fcncall, shape):
+        if isinstance(shape, int):
+            shape = (shape,)
+        return ExprArray([Expr.fcn(
+            (lambda txs: (lambda P: fcncall(P, txs[0] if len(txs) == 1 else txs)))(xs)) 
+            for xs in itertools.product(*[range(t) for t in shape])],
+            shape = shape)
+        
     
     # def tostring(self, style = 0, tosort = False):
     #     """Convert to string
@@ -17479,21 +18074,32 @@ class CellTable:
         plt.tight_layout()
 
 class ProofObj:
-    def __init__(self, steps):
+    def __init__(self, claim, desc = None, steps = None, parent = None):
+        self.claim = claim
+        self.desc = desc
+        if steps is None:
+            steps = []
         self.steps = steps
+        self.parent = parent
     
     def empty():
-        return ProofObj([])
+        return ProofObj(None, None, [])
     
     def copy(self):
-        return ProofObj([(x.copy(), list(d), c) for x, d, c in self.steps])
+        # return ProofObj([(x.copy(), list(d), c) for x, d, c in self.steps])
+        return ProofObj(iutil.copy(self.claim), iutil.copy(self.desc), 
+                        iutil.copy(self.steps), self.parent)
     
     def from_region(x, c = ""):
-        return ProofObj([(x.copy(), [], c)])
+        # return ProofObj([(x.copy(), [], c)])
+        return ProofObj(iutil.copy(x), c)
     
     def __iadd__(self, other):
-        n = len(self.steps)
-        self.steps += [(x.copy(), [di + n for di in d], c) for x, d, c in other.steps]
+        # n = len(self.steps)
+        # self.steps += [(x.copy(), [di + n for di in d], c) for x, d, c in other.steps]
+        other = other.copy()
+        other.parent = self
+        self.steps.append(other)
         return self
     
     def __add__(self, other):
@@ -17501,38 +18107,84 @@ class ProofObj:
         r += other
         return r
     
+    def step_in(self, other):
+        other = other.copy()
+        other.parent = self
+        self.steps.append(other)
+        return other
+    
+    def step_out(self):
+        return self.parent
+    
     def clear(self):
         self.steps = []
           
-    def tostring(self, style = 0, prev = None):
-        """Convert to string. 
-        Parameters:
-            style   : Style of string conversion
-                      STR_STYLE_STANDARD : I(X,Y;Z|W)
-                      STR_STYLE_PSITIP : I(X+Y&Z|W)
-        """
+    # def tostring(self, style = 0, prev = None):
+    #     """Convert to string. 
+    #     Parameters:
+    #         style   : Style of string conversion
+    #                   STR_STYLE_STANDARD : I(X,Y;Z|W)
+    #                   STR_STYLE_PSITIP : I(X+Y&Z|W)
+    #     """
+    #     style = iutil.convert_str_style(style)
+    #     r = ""
+    #     start_n = 0
+    #     if prev is not None:
+    #         start_n = len(prev.steps)
+        
+    #     for i, (x, d, c) in enumerate(self.steps):
+    #         if i > 0:
+    #             r += "\n"
+    #         r += "STEP #" + str(start_n + i)
+    #         if c != "":
+    #             r += " " + c
+                
+    #         if x is None or x.isuniverse():
+    #             r += "\n"
+    #         else:
+    #             r += ":\n"
+    #             r += x.tostring(style = style)
+            
+    #         r += "\n"
+    #     return r
+    
+    def tostring(self, style = 0, prefix = ""):
         style = iutil.convert_str_style(style)
         r = ""
-        start_n = 0
-        if prev is not None:
-            start_n = len(prev.steps)
+        cinden = 4
+        cprefix = prefix
         
-        for i, (x, d, c) in enumerate(self.steps):
-            if i > 0:
+        if self.desc is None:
+            cinden = 0
+        else:
+            if prefix:
+                r += prefix + ": "
+                cprefix += "."
+            r += iutil.tostring_join(self.desc, style)
+            if self.claim is not None:
                 r += "\n"
-            r += "STEP #" + str(start_n + i)
-            if c != "":
-                r += " " + c
-                
-            if x is None or x.isuniverse():
-                r += "\n"
-            else:
-                r += ":\n"
-                r += x.tostring(style = style)
-            
+                if isinstance(self.claim, tuple):
+                    if self.claim[0] == "equiv":
+                        r += self.claim[1].tostring(style = style)
+                        if style == PsiOpts.STR_STYLE_PSITIP:
+                            r += "\n==\n"
+                        else:
+                            r += "\n<=>\n"
+                        r += self.claim[2].tostring(style = style)
+                    elif self.claim[0] == "implies":
+                        r += self.claim[1].tostring(style = style)
+                        if style == PsiOpts.STR_STYLE_PSITIP:
+                            r += "\n>>\n"
+                        else:
+                            r += "\n=>\n"
+                        r += self.claim[2].tostring(style = style)
+                else:
+                    r += self.claim.tostring(style = style)
             r += "\n"
+        for i, x in enumerate(self.steps):
+            r += "\n"
+            r += iutil.str_inden(x.tostring(style, cprefix + str(i + 1)), cinden)
         return r
-    
         
     def __str__(self):
         return self.tostring(PsiOpts.settings["str_style"])
@@ -17540,7 +18192,7 @@ class ProofObj:
 
 class CodingNode:
     
-    def __init__(self, rv_out, aux_out = None, aux_dec = None, aux_ndec = None, rv_in_causal = None, ndec_mode = "all"):
+    def __init__(self, rv_out, aux_out = None, aux_dec = None, aux_ndec = None, rv_in_causal = None, rv_in_scausal = None, ndec_mode = None):
         
         self.rv_out = rv_out
         
@@ -17562,6 +18214,11 @@ class CodingNode:
             self.rv_in_causal = Comp.empty()
         else:
             self.rv_in_causal = rv_in_causal
+        
+        if rv_in_scausal is None:
+            self.rv_in_scausal = Comp.empty()
+        else:
+            self.rv_in_scausal = rv_in_scausal
         
         self.aux_ndec_try = Comp.empty()
         self.ndec_mode = ndec_mode
@@ -17626,6 +18283,8 @@ class CodingModel:
                     self.nodes.append(CodingNode(node))
         
         self.inner_mode = "plain"
+        self.bnet_out = None
+        self.bnet_out_arrays = None
     
     def copy(self):
         r = CodingModel()
@@ -17634,6 +18293,7 @@ class CodingModel:
         r.sublist = [(a.copy(), b.copy()) for a, b in self.sublist]
         r.nodes = [a.copy() for a in self.nodes]
         r.inner_mode = self.inner_mode
+        r.bnet_out = iutil.copy(self.bnet_out)
         return r
     
     def __iadd__(self, other):
@@ -17648,7 +18308,14 @@ class CodingModel:
             self.reg = self.reg & other
         return self
         
-    def add_edge(self, a, b, coded = False, children_edge = True, is_fcn = False, **kwargs):
+    def add_edge(self, a, b, coded = False, children_edge = True, is_fcn = False, 
+                 rv_in_causal = None, rv_in_scausal = None, **kwargs):
+        
+        if rv_in_causal is None:
+            rv_in_causal = Comp.empty()
+        if rv_in_scausal is None:
+            rv_in_scausal = Comp.empty()
+            
         ex = Comp.empty()
         b2 = Comp.empty()
         for c in b:
@@ -17657,10 +18324,10 @@ class CodingModel:
             else:
                 b2 += c
                 
-        ac = a.copy()
+        ac = a.copy() + rv_in_causal - rv_in_scausal
         
         if not ex.isempty():
-            cname = "#EX_"
+            cname = str(ex) + "?@@100@@#EX_"
             for c in a:
                 cname += str(c)
             cname += "_"
@@ -17673,7 +18340,8 @@ class CodingModel:
             if children_edge:
                 ac += ex
             if coded:
-                self.nodes.append(CodingNode(exc, **kwargs))
+                self.nodes.append(CodingNode(exc, rv_in_causal = rv_in_causal, 
+                                             rv_in_scausal = rv_in_scausal, **kwargs))
             self.sublist.append((exc, ex))
         
         for c in b2:
@@ -17683,7 +18351,8 @@ class CodingModel:
             if children_edge:
                 ac += c
             if coded:
-                self.nodes.append(CodingNode(c, **kwargs))
+                self.nodes.append(CodingNode(c, rv_in_causal = rv_in_causal, 
+                                             rv_in_scausal = rv_in_scausal, **kwargs))
         
     def add_node(self, a, b, **kwargs):
         self.add_edge(a, b, coded = True, **kwargs)
@@ -17778,10 +18447,17 @@ class CodingModel:
             if self.inner_mode == "combinations":
                 for c in crvs:
                     for mask in range(1, 1 << len(des)):
-                        cname = "A_" + str(node.rv_out) + ("" if c.isempty() else "_" + str(c)) + "_"
+                        cname = ("A_" + node.rv_out.tostring(style = PsiOpts.STR_STYLE_STANDARD)
+                                 + ("" if c.isempty() else "_" + c.tostring(style = PsiOpts.STR_STYLE_STANDARD)))
+                        cname_l = ("A_{" + node.rv_out.tostring(style = PsiOpts.STR_STYLE_LATEX)
+                                 + ("" if c.isempty() else "," + c.tostring(style = PsiOpts.STR_STYLE_LATEX)))
+                        
                         for i, d in enumerate(des):
                             if mask & (1 << i):
-                                cname += str(d.rv_out)
+                                cname += "_" + d.rv_out.tostring(style = PsiOpts.STR_STYLE_STANDARD)
+                                cname_l += "," + d.rv_out.tostring(style = PsiOpts.STR_STYLE_LATEX)
+                        cname_l += "}"
+                        cname += "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@" + cname_l
                         a = rv(cname)
                         node.aux_out += a
                         node.aux_out_sublist.append((a, a + c))
@@ -17796,7 +18472,12 @@ class CodingModel:
             elif self.inner_mode == "plain":
                 if len(des):
                     for c in crvs:
-                        cname = "A_" + str(node.rv_out) + ("" if c.isempty() or len(crvs) == 1 else "_" + str(c))
+                        cname = ("A_" + node.rv_out.tostring(style = PsiOpts.STR_STYLE_STANDARD) 
+                                 + ("" if c.isempty() or len(crvs) == 1 else "_" + c.tostring(style = PsiOpts.STR_STYLE_STANDARD)))
+                        cname += "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@"
+                        cname += ("A_{" + node.rv_out.tostring(style = PsiOpts.STR_STYLE_LATEX) 
+                                 + ("" if c.isempty() or len(crvs) == 1 else "," + c.tostring(style = PsiOpts.STR_STYLE_LATEX) + "}"))
+                        
                         a = rv(cname)
                         node.aux_out += a
                         node.aux_out_sublist.append((a, a + c))
@@ -17817,8 +18498,18 @@ class CodingModel:
             self.calc_node(node)
         
     
-    def get_inner(self, convexify = False, skip_simplify = False, skip_aux = False):
+    def get_inner(self, convexify = None, ndec_mode = "all", skip_simplify = False, skip_aux = False):
         
+        
+        verbose = PsiOpts.settings.get("verbose_codingmodel", False)
+        
+        if self.bnet.tsorted() is None:
+            raise ValueError("Non-strictly-causal cycle detected.")
+            return None
+        
+        if convexify is None:
+            convexify = self.convexify_needed()
+            
         if convexify is not False:
             if convexify is True:
                 convexify = Comp.rv("Q_T")
@@ -17828,18 +18519,22 @@ class CodingModel:
             if node.aux_ndec is None:
                 r = RegionOp.union([])
                 
-                if node.ndec_mode == "all":
+                cndec_mode = node.ndec_mode
+                if cndec_mode is None:
+                    cndec_mode = ndec_mode
+                    
+                if cndec_mode == "all":
                     for cndec in igen.subset(node.aux_ndec_try):
                         node.aux_ndec = cndec if isinstance(cndec, Comp) else Comp.empty()
-                        r |= self.get_inner(convexify, skip_simplify = True, skip_aux = True)
+                        r |= self.get_inner(convexify, ndec_mode = ndec_mode, skip_simplify = True, skip_aux = True)
                         
-                elif node.ndec_mode == "min" or node.ndec_mode == "none":
+                elif cndec_mode == "min" or cndec_mode == "none":
                     node.aux_ndec = Comp.empty()
-                    r = self.get_inner(convexify, skip_simplify = True, skip_aux = True)
+                    r = self.get_inner(convexify, ndec_mode = ndec_mode, skip_simplify = True, skip_aux = True)
                         
-                elif node.ndec_mode == "max":
+                elif cndec_mode == "max":
                     node.aux_ndec = node.aux_ndec_try.copy()
-                    r = self.get_inner(convexify, skip_simplify = True, skip_aux = True)
+                    r = self.get_inner(convexify, ndec_mode = ndec_mode, skip_simplify = True, skip_aux = True)
                 
                 node.aux_ndec = None
                 
@@ -17905,8 +18600,6 @@ class CodingModel:
                 cbnet.add_edge(convexify, node.aux_out + node.rv_out)
             
         r &= cbnet.get_region()
-        
-        # print(r)
             
         tosublist = []
         for node in self.nodes:
@@ -17918,13 +18611,12 @@ class CodingModel:
             if isinstance(v1, Expr) and not isinstance(v0, Expr):
                 r &= v1 >= 0
         
-        # print(r)
+        
+        if verbose:
+            print("============== Inner bound ==============")
+            print(r)
         
         r = r.eliminate(sum(aux_rates))
-        
-        
-        if not self.reg.isuniverse():
-            r = r & self.reg
         
         
         # if convexify is not False:
@@ -17933,20 +18625,40 @@ class CodingModel:
         #     encout = self.get_nodes_rv_out().inter(rallcomprv)
         #     r &= markov(rallcomprv - encout - convexify, encout, convexify)
             
+        caux = aux.copy()
+        if convexify is not False:
+            caux += convexify
+        
+        # assume_reg = Region.universe()
+        if not self.reg.isuniverse():
+            # r = r & self.reg
+            # r = r.and_cause_consequence(self.reg, avoid = caux)
+            r = r.and_cause_consequence(self.reg)
+            
         if not skip_aux:
-            caux = aux.copy()
-            if convexify is not False:
-                caux += convexify
             r = r.eliminate(caux.inter(r.allcomprv()))
         
+        
+        if verbose:
+            print("============== Elim aux rate ==============")
+            print(r)
+            
         # print(r)
         if skip_simplify:
             return r
         else:
             r = r.simplified()
+            # r = r.simplified(self.reg)
             r.remove_missing_aux()
+        
+            if verbose:
+                print("============== Simplified ==============")
+                print(r)
+                
             return r
             
+        
+        
     def nfold(self, n = 2, natural_eqprob = True, all_eqprob = True):
         """
         Return the n-letter setting.
@@ -18061,10 +18773,20 @@ class CodingModel:
                 
         return r
         
+    def convexify_needed(self):
+        return self.get_outer(convexify = False, convexify_test = True)
         
+    def get_outer(self, oneshot = False, future = True, convexify = None, 
+                  add_csiszar_sum = True, leaf_remove = True, node_fcn = True,
+                  node_fcn_force = False, skip_simplify = True, convexify_test = False):
         
-    def get_outer(self, oneshot = False, future = True, convexify = False, add_csiszar_sum = True, leaf_remove = True, skip_simplify = True):
+        if self.bnet.tsorted() is None:
+            raise ValueError("Non-strictly-causal cycle detected.")
+            return None
         
+        if convexify is None:
+            convexify = self.convexify_needed()
+            
         if convexify is not False:
             if convexify is True:
                 convexify = Comp.rv("Q_T")
@@ -18083,6 +18805,8 @@ class CodingModel:
         
         rv_wfuture = Comp.empty()
         to_csiszar = []
+        rv_series = Comp.empty()
+        rv_timedep = Comp.empty()
             
         for x in self.bnet.allcomp():
             removable = False
@@ -18108,6 +18832,11 @@ class CodingModel:
             else:
                 t = CompArray.series_sym(x, suff = None)
             reg_out_map[x.get_name()] = t
+            if isinstance(t, CompArray):
+                for tt in t:
+                    rv_timedep += tt
+                for tt in t[1:]:
+                    rv_series += tt
             if not removed:
                 to_csiszar.append(t)
         
@@ -18121,51 +18850,124 @@ class CodingModel:
             if node is None:
                 bnet_out += (am.swapped_id(0, 1), bm.swapped_id(0, 1))
             else:
+                if convexify is False and self.is_rate(b) and am.allcomp().ispresent(rv_series):
+                    rv_series += bm.allcomp()
+                    
                 if node.rv_in_causal.ispresent(a) and isinstance(am, CompArray) and isinstance(bm, CompArray):
                     for t1 in range(clen):
-                        for t2 in range(t1 + 1, clen):
-                            bnet_out += (am[ttr[t1]]+bm[ttr[t1]], bm[ttr[t2]])
+                        for t2 in range(t1, clen):
+                            if convexify is False:
+                                bnet_out += (am[ttr[t1]] + bm[ttr[t1]], bm[ttr[t2]])
+                            else:
+                                bnet_out += (am[ttr[t1]], bm[ttr[t2]])
                 else:
-                    bnet_out += (am.swapped_id(0, 1).allcomp(), bm.swapped_id(0, 1).allcomp())
+                    if convexify is False:
+                        bnet_out += (am.swapped_id(0, 1).allcomp(), bm.swapped_id(0, 1).allcomp())
+                    else:
+                        for tbm in bm.swapped_id(0, 1).allcomp():
+                            bnet_out += (am.swapped_id(0, 1).allcomp(), tbm)
                     
+        for b in self.bnet.allcomp():
+            bm = reg_out_map[b.get_name()]
+            if not isinstance(bm, CompArray):
+                continue
+            node = self.find_node_rv_out(b)
+            if node is None:
+                continue
+            for a in node.rv_in_scausal:
+                am = reg_out_map[a.get_name()]
+                if not isinstance(am, CompArray):
+                    continue
+                for t1 in range(clen):
+                    for t2 in range(t1, clen):
+                        if t1 == 1 and t2 == 1:
+                            continue
+                        if convexify is False:
+                            bnet_out += (am[ttr[t1]] + bm[ttr[t1]], bm[ttr[t2]])
+                        else:
+                            bnet_out += (am[ttr[t1]], bm[ttr[t2]])
+            
+            
+        if convexify is False:
+            for x in self.bnet.allcomp():
+                parent_empty = self.bnet.get_parents(x).isempty()
+                if parent_empty:
+                    xm = reg_out_map[x.get_name()]
+                    if isinstance(xm, CompArray) and len(xm) >= 3:
+                        bnet_out += (xm[1], xm[2])
             
         rvnats = Comp.empty()
-        for x in self.bnet.allcomp():
-            if self.bnet.get_parents(x).isempty():
-                xm = reg_out_map[x.get_name()]
-                if len(xm) >= 2:
-                    rvnats += xm[1]
-                if len(xm) >= 3:
-                    rvnats += xm[2]
         
-        if convexify is False:
-            if len(rvnats) >= 2:
-                for x in rvnats - rvnats[0]:
-                    bnet_out += (rvnats[0], x)
-        else:
-            for x in rvnats:
-                bnet_out += (convexify, x)
+        for x in self.bnet.allcomp():
+            parent_empty = self.bnet.get_parents(x).isempty()
+            if parent_empty or self.find_node_rv_out(x) is not None:
+                xm = reg_out_map[x.get_name()]
+                if isinstance(xm, CompArray):
+                    for txm in (xm[1:] if parent_empty else xm):
+                        if txm.isempty():
+                            continue
+                        series_parent = bnet_out.get_parents(txm).ispresent(rv_series)
+                        if series_parent:
+                            continue
+                        rvnats += txm
+                        if convexify is not False:
+                            bnet_out += (convexify, txm)
+                        else:
+                            if not txm.ispresent(rv_series[0]):
+                                if convexify_test:
+                                    # print((rv_series[0], txm))
+                                    return True
+                                bnet_out += (rv_series[0], txm)
+        
+        
+        # print(rv_series)
         
         for x in self.bnet.allcomp():
             if self.bnet.is_fcn(x):
                 xm = reg_out_map[x.get_name()]
                 bnet_out.set_fcn(xm)
-                
-        # print(bnet_out)
+            elif node_fcn and self.find_node_rv_out(x) is not None:
+                xm = reg_out_map[x.get_name()]
+                if isinstance(xm, CompArray):
+                    for txm in xm:
+                        if txm.isempty():
+                            continue
+                        series_parent = bnet_out.get_parents(txm).ispresent(rv_series)
+                        if node_fcn_force or convexify is not False or series_parent:
+                            bnet_out.set_fcn(txm)
+                            # print(txm)
+                else:
+                    bnet_out.set_fcn(xm)
         
-        r = bnet_out.get_region() & self.reg
+        bnet_out = bnet_out.scc()
+        
+        if convexify_test:
+            return False
+        
+        # print(bnet_out)
+        self.bnet_out = bnet_out
+        self.bnet_out_arrays = []
+        for x in self.bnet.allcomp():
+            xm = reg_out_map[x.get_name()]
+            if isinstance(xm, CompArray):
+                t = xm.swapped_id(0, 1).allcomp()
+                if len(t) > 1:
+                    self.bnet_out_arrays.append(t)
+        
+        r = bnet_out.get_region()
+        
+        if not self.reg.isuniverse():
+            # r = r & self.reg
+            r = r.and_cause_consequence(self.reg)
+            
         if not oneshot and future and add_csiszar_sum:
             # r &= csiszar_sum(*(list(x for _, x in reg_out_map.items())))
             r &= csiszar_sum(*to_csiszar)
         
         if convexify is not False:
             reg_out_aux += convexify
-            for x in self.bnet.allcomp():
-                xm = reg_out_map[x.get_name()]
-                if len(xm) >= 2:
-                    r &= Expr.Hc(convexify, xm[1]) == 0
-                if len(xm) >= 3:
-                    r &= Expr.Hc(convexify, xm[2]) == 0
+            for x in rv_series:
+                r &= Expr.Hc(convexify, x) == 0
         
         reg_out_aux += bnet_out.allcomp() - self.bnet.allcomp()
 
@@ -18326,6 +19128,9 @@ class CodingModel:
                 r.edge(a.get_name(), b.get_name())
             
         return r
+        
+    def graph_outer(self, **kwargs):
+        return self.bnet_out.graph(groups = self.bnet_out_arrays, **kwargs)
     
 
 class CommEnc:
@@ -19094,11 +19899,11 @@ def rv(*args, **kwargs):
     return r
     
 def rv_seq(name, st, en = None):
-    """Array of random variables"""
+    """Sequence of random variables"""
     return Comp.array(name, st, en)
     
 def rv_array(name, st, en = None):
-    """List of random variables"""
+    """Array of random variables"""
     return CompArray.make(*(Comp.array(name, st, en)))
     
 def real(*args):
@@ -19107,10 +19912,16 @@ def real(*args):
         return Expr.real(args[0])
     return ExprArray([Expr.real(a) for a in args])
     
-def real_list(name, st, en = None):
-    """List of random variables"""
+def real_array(name, st, en = None):
+    """Array of random variables"""
     t = rv_seq(name, st, en)
     return ExprArray([Expr.real(a.name) for a in t.varlist])
+    
+def real_seq(name, st, en = None):
+    """Array of random variables"""
+    t = rv_seq(name, st, en)
+    return ExprArray([Expr.real(a.name) for a in t.varlist])
+
 
 def rv_empty():
     """Empty random variable"""
@@ -19272,6 +20083,29 @@ def iidseq_across(*args):
     n = min([len(a) for a in args])
     vec = [[a[i] for a in args] for i in range(n)]
     return indep(*vec) & eqdist(*vec)
+
+
+@fcn_list_to_list
+def sfrl_cons(x, y, u, k = None, gap = None):
+    """Strong functional representation lemma. 
+    Li, C. T., & El Gamal, A. (2018). Strong functional representation lemma and
+    applications to coding theorems. IEEE Trans. Info. Theory, 64(11), 6967-6978.
+    """
+    if k is None:
+        r = (Expr.Hc(y, x + u) == 0) & (Expr.I(x, u) == 0)
+        if gap is not None:
+            if not isinstance(gap, Expr):
+                gap = Expr.const(gap)
+            r &= Expr.Ic(x, u, y) <= gap
+        return r
+    else:
+        r = (Expr.Hc(k, x + u) == 0) & (Expr.Hc(y, u + k) == 0) & (Expr.I(x, u) == 0)
+        if gap is not None:
+            if not isinstance(gap, Expr):
+                gap = Expr.const(gap)
+            r &= Expr.H(k) <= Expr.I(x, y) + gap
+        return r
+
 
 
 @fcn_list_to_list
@@ -19951,7 +20785,7 @@ def ent_region(n, real_name = "R", var_name = "X"):
     """
     xs = rv_seq(var_name, 0, n)
     cv = comp_vector(*xs)
-    re = real_list(real_name, 1, 1 << n)
+    re = real_array(real_name, 1, 1 << n)
     return (re == H(cv)).exists(xs)
 
 
