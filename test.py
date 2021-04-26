@@ -66,7 +66,7 @@ class TestPsitip(unittest.TestCase):
             "  R0+R1+R2 <= I(U0,U2;Y2)+I(U1;Y1|U0)-I(U1;U2|U0),\n"
             "  2R0+R1+R2 <= I(U0,U1;Y1)+I(U0,U2;Y2)-I(U1;U2|U0),\n"
             "  I(U0,U1,U2;Y1,Y2|X) == 0,\n"
-            "  I(U1;Y1|U0)+I(U2;Y2|U0) >= I(U1;U2|U0) } , exists U0,U1,U2")
+            "  I(U1;U2|U0) <= I(U1;Y1|U0)+I(U2;Y2|U0) } , exists U0,U1,U2")
             )
         
         
@@ -153,9 +153,9 @@ class TestPsitip(unittest.TestCase):
         X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
         
         # Defining Wyner's common information etc. explicitly
-        eci = markov(X, U, Y).exists(U).minimum(H(U))
-        wci = markov(X, U, Y).exists(U).minimum(I(U & X+Y))
-        gkci = ((H(U|X) == 0) & (H(U|Y) == 0)).exists(U).maximum(H(U))
+        eci = markov(X, U, Y).minimum(H(U), U)
+        wci = markov(X, U, Y).minimum(I(U & X+Y), U)
+        gkci = ((H(U|X) == 0) & (H(U|Y) == 0)).maximum(H(U), U)
         
         self.assertTrue(exact_ci(X & Y) == eci)
         self.assertTrue(wyner_ci(X & Y) == wci)
@@ -193,7 +193,7 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(region_str, 
            ("{ RK >= 0,\n"
-            "  RG >= RJ,\n"
+            "  RJ <= RG,\n"
             "  RG <= H(X),\n"
             "  RG <= H(Y),\n"
             "  RK <= I(X;Y),\n"
@@ -425,7 +425,7 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(
             (markov(X, Y, Z) & indep(X+Z, Y)).exists(Y, toreal = True)
-            ), "{ I(X;Z) == 0 }")
+            ), "I(X;Z) == 0")
         
         # Mutual information region outer bound [Li-El Gamal 2017]
         self.assertEqual((
@@ -433,8 +433,8 @@ class TestPsitip(unittest.TestCase):
         ).exists(U, toreal = True).tostring(tosort = True, lhsvar = IX+IY+IXY),
             ("{ IX >= 0,\n"
             "  IY >= 0,\n"
-            "  IXY >= IX,\n"
-            "  IXY >= IY,\n"
+            "  IX <= IXY,\n"
+            "  IY <= IXY,\n"
             "  IXY-IX <= H(Y|X),\n"
             "  IXY-IY <= H(X|Y),\n"
             "  IX+IY-IXY <= I(X;Y) }")
@@ -442,7 +442,7 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(
             (markov(X, Y, U, W) & (H(U) == 0)).exists(U, toreal = True)),
-            ("{ I(X,Y;W) == 0 }")
+            ("I(X,Y;W) == 0")
         )
         
         # This currently fails
@@ -530,7 +530,7 @@ class TestPsitip(unittest.TestCase):
                         (mutual_dep(X & Y & Z) == emin(I(X & Y), I(Y & Z))))
         
         # Intrinsic mutual information [Maurer-Wolf 1999]
-        self.assertTrue(intrinsic_mi(X & Y | Z) == markov(X+Y, Z, U).exists(U).minimum(I(X & Y | U)))
+        self.assertTrue(intrinsic_mi(X & Y | Z) == markov(X+Y, Z, U).minimum(I(X & Y | U), U))
         self.assertTrue(intrinsic_mi(X & Y | Z) <= I(X & Y | Z))
         self.assertFalse(intrinsic_mi(X & Y | Z) >= I(X & Y | Z))
         
@@ -611,6 +611,22 @@ class TestPsitip(unittest.TestCase):
         self.assertTrue(((I(X&Y) == 0) & (I(X+Y&W|Z) <= 0)).get_bayesnet().check_ic(I(X&Y)))
         self.assertTrue(((I(X&Y) == 0) & (I(X+Y&W|Z) <= 0)).get_bayesnet().check_ic(I(X&W|Z)))
         self.assertFalse(((I(X&Y) == 0) & (I(X+Y&W|Z) <= 0)).get_bayesnet().check_ic(I(X&Y|W)))
+        
+        b = BayesNet([(X, Z), (Y, Z), (Z, W, U)])
+        b.set_fcn(Z+W)
+        self.assertFalse(b.check_ic(H(U|X)))
+        self.assertTrue(b.check_ic(H(W|Z)))
+        self.assertFalse(b.check_ic(H(W|X)))
+        self.assertTrue(b.check_ic(H(W|X+Y)))
+        self.assertTrue(b.check_ic(I(X & Y)))
+        self.assertTrue(b.check_ic(I(W & W|X+Y)))
+        self.assertTrue(b.check_ic(I(W & X+W|X+Y)))
+        self.assertTrue(b.check_ic(I(W & W+Z|X+Y)))
+        self.assertTrue(b.check_ic(I(W & Z|X+Y)))
+        self.assertTrue(b.check_ic(I(U & Z|X+Y)))
+        self.assertFalse(b.check_ic(I(X & Y | Z)))
+        self.assertFalse(b.check_ic(I(U & U | Z)))
+        self.assertTrue(b.check_ic(I(X & U | W)))
 
 
     def test_markov(self):
@@ -792,7 +808,7 @@ class TestPsitip(unittest.TestCase):
         self.assertEqual(str((H(X+Y) - H(X) - H(Y)).simplified()), "-I(Y;X)")
         self.assertTrue((H(X+Y) - H(X) - H(Y)) == (H(X+Y) - H(X) - H(Y)).simplified())
         
-        self.assertEqual(str(((H(X) >= 0) & (I(X & Y | Z) + H(W) >= 0)).simplified()), "{ }")
+        self.assertEqual(str(((H(X) >= 0) & (I(X & Y | Z) + H(W) >= 0)).simplified()), "")
         
         self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
             & (-2*H(U) - 3*I(Y & W) == 0)).simplified()),
@@ -806,18 +822,18 @@ class TestPsitip(unittest.TestCase):
         #     "{ I(W;U)+I(Y;U)+I(Y;W)+I(Z;W|X)+H(X)+H(U) <= 0 }")
         
         self.assertEqual(str(((H(X | Y) == 0) & (I(X & Y) <= 0)).simplified()),
-            "{ H(X) == 0 }")
+            "H(X) == 0")
     
         self.assertEqual(str(((H(X) == H(X|Y)) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (H(X+Y+Z) == H(X+Y)+H(Z))).simplified()),
                          "{ I(X;Y) == 0,\n  I(Z;X,Y) == 0 }")
         self.assertTrue(((I(X & Y) == 0) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (I(X+Y & Z) == 0))
         == ((I(X & Y) == 0) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (I(X+Y & Z) == 0)).simplified())
         
-        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X))).simplified()), "{ H(Y) == H(X) }")
-        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) == H(X))).simplified()), "{ H(Y) == H(X) }")
-        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y))).simplified()), "{ H(Y) == H(X) }")
+        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X))).simplified()), "H(X) == H(Y)")
+        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) == H(X))).simplified()), "H(X) == H(Y)")
+        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y))).simplified()), "H(X) == H(Y)")
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y)) & (H(Y) <= H(Z)) & (H(Y) == H(Z))).simplified()),
-                         "{ H(Y) == H(Z),\n  H(Y) == H(X) }")
+                         "{ H(Z) == H(Y),\n  H(X) == H(Y) }")
     
         
     def test_eliminate(self):
@@ -827,18 +843,18 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(
                 (((R >= H(Y)) & (R <= H(Z)))).exists(R)),
-                "{ H(Z) >= H(Y) }")
+                "H(Y) <= H(Z)")
         
         self.assertEqual(str(
                 (((R >= H(Y)) & (R <= H(Z)) & (R == H(W)))).exists(R)),
-                ("{ H(Z) >= H(W),\n"
-                "  H(W) >= H(Y) }"))
+                ("{ H(W) <= H(Z),\n"
+                "  H(Y) <= H(W) }"))
         
         self.assertEqual(str(
                 ((R == H(X)) >> ((R >= H(Y)) & (R <= H(Z)) & (R == H(W)))).forall(R)),
-                ("{ H(Z) >= H(X),\n"
-                "  H(X) >= H(Y),\n"
-                "  H(W) == H(X) }"))
+                ("{ H(X) <= H(Z),\n"
+                "  H(Y) <= H(X),\n"
+                "  H(X) == H(W) }"))
         
         
     
@@ -981,6 +997,44 @@ class TestPsitip(unittest.TestCase):
         self.assertTrue(s2 >> s1)
         
     
+    def test_evalrepr(self):
+        X, Y, Z, U, V, W = rv("X, Y, Z, U, V, W")
+        
+        print("test_evalrepr")
+        
+        r = markov(X, Y, Z) & markov(U, V, W)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = markov(X, Y, Z) & markov(U, V, W) & indep(X+Y+Z, U+V+W)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = indep(X+Y, Z, U+V+W)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = markov(X+Y, Z, U+V+W)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = markov(X+Y, Z, U, V+W)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = markov(X, Y, Z) & markov(U, V, W) & indep(X+Y+Z, U+V+W) & (H(X+U) == 1)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = markov(X, Y, Z) & markov(U, V, W) & indep(X+Y+Z, U+V+W) & (H(X|U) == 0)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = markov(X+Y, Z, V+W) & indep(X, U+W)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+    
+    
     def test_performance(self):
         
         ls = [(3, 6), (6, 2), (9, 1)]
@@ -1008,7 +1062,7 @@ class TestPsitip(unittest.TestCase):
 PsiOpts.set_setting(solver = "pyomo.glpk")
 #PsiOpts.set_setting(pulp_solver = pulp.solvers.GUROBI(mip = False, msg = 0))
 
-PsiOpts.set_setting(str_style = "std")
+PsiOpts.set_setting(str_style = PsiOpts.STR_STYLE_STANDARD)
 
 unittest.main(verbosity=2)
 

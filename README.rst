@@ -19,6 +19,8 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - Non-Shannon-type inequalities.
 
+- `Integration with Jupyter Notebook and LaTeX output`_.
+
 - Generation of `human-readable proofs`_.
 
 - Drawing `Information diagrams`_.
@@ -28,77 +30,318 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 - `Bayesian network optimization`_. Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
 
 
-Examples:
+Examples with Jupyter Notebook `(ipynb file)<https://github.com/cheuktingli/psitip/blob/master/demo_readme.ipynb>`_ :
 
-.. code-block:: python
+
+.. code:: ipython3
 
     from psitip import *
-    PsiOpts.setting(solver = "pyomo.glpk")
-    X, Y, Z, W, U, M, S = rv("X", "Y", "Z", "W", "U", "M", "S") # declare random variables
+    PsiOpts.setting(solver = "pyomo.glpk")  # Set linear programming solver
+    PsiOpts.setting(repr_latex = True)      # Turn on Jupyter Notebook LaTeX display
+    PsiOpts.setting(venn_latex = True)      # Turn on LaTeX in diagrams
+
+.. code:: ipython3
+
+    X, Y, Z, W, U, M, S = rv("X, Y, Z, W, U, M, S") # Declare random variables
+
+.. code:: ipython3
+
+    H(X+Y) - H(X) - H(Y)  # Simplify H(X,Y) - H(X) - H(Y)
 
 
-    # ******** Basics ********
 
-    print(bool(H(X) + I(Y & Z | X) >= I(Y & Z))) # H(X)+I(Y;Z|X)>=I(Y;Z) is True
-    print(markov(X, Y, Z).implies(H(X | Y) <= H(X | Z))) # returns True
-    print((H(X+Y) - H(X) - H(Y)).simplified()) #gives -I(Y;X) (X+Y means joint RV (X,Y))
 
-    # Defining Wyner's common information [Wyner 1975]
-    wci = markov(X, U, Y).exists(U).minimum(I(U & X+Y))
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block6.png
+   :scale: 50
 
-    # Defining Gács-Körner common information [Gács-Körner 1973]
-    gkci = ((H(U|X) == 0) & (H(U|Y) == 0)).exists(U).maximum(H(U))
+.. code:: ipython3
 
-    print(bool(emin(H(X), H(Y)) >= wci)) # min(H(X),H(Y)) >= Wyner is True
-    print(bool(wci >= I(X & Y)))         # Wyner >= I(X;Y) is True
-    print(bool(I(X & Y) >= gkci))        # I(X;Y) >= Gács-Körner is True
+    bool(H(X) + I(Y & Z | X) >= I(Y & Z))  # Check H(X) + I(Y;Z|X) >= I(Y;Z)
+
+
+
+
+.. parsed-literal::
+
+    True
+
+
+
+.. code:: ipython3
+
+    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).display_bool() # Implication
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block10.png
+   :scale: 50
+
+.. code:: ipython3
+
+    # Information diagram that shows the above implication
+    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).venn()
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_6_0.png
+
+
+
+.. parsed-literal::
+
+    <Figure size 432x288 with 0 Axes>
+
+
+.. code:: ipython3
+
+    # The condition "X is independent of Y and X-Y-Z forms a
+    # Markov chain" can be simplified to "X is independent of (Y,Z)"
+    markov(X, Y, Z) & indep(X, Y)
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block15.png
+   :scale: 50
+
+.. code:: ipython3
+
+    # The condition "there exists Y independent of X such that 
+    # X-Y-Z forms a Markov chain" can be simplified to "X,Z independent"
+    (markov(X, Y, Z) & indep(X, Y)).exists(Y).simplified()
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block17.png
+   :scale: 50
+
+--------------
+
+User-defined information quantities
+-----------------------------------
+
+.. code:: ipython3
+
+    # Define Gács-Körner common information [Gács-Körner 1973]
+    gkci = ((H(U|X) == 0) & (H(U|Y) == 0)).maximum(H(U), U)
+    
+    # Define Wyner's common information [Wyner 1975]
+    wci = markov(X, U, Y).minimum(I(U & X+Y), U)
+    
+    # Define common entropy [Kumar-Li-El Gamal 2014]
+    eci = markov(X, U, Y).minimum(H(U), U)
+
+.. code:: ipython3
+
+    (gkci <= I(X & Y)).display_bool()        # Gács-Körner <= I(X;Y)
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block23.png
+   :scale: 50
+
+.. code:: ipython3
+
+    (I(X & Y) <= wci).display_bool()         # I(X;Y) <= Wyner
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block25.png
+   :scale: 50
+
+.. code:: ipython3
+
+    (wci <= emin(H(X), H(Y))).display_bool() # Wyner <= min(H(X),H(Y))
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block27.png
+   :scale: 50
+
+.. code:: ipython3
+
+    # Automatically discover inequalities among quantities
+    universe().discover([X, Y, gkci, wci, eci])
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block29.png
+   :scale: 50
+
+.. code:: ipython3
 
     # The meet or Gács-Körner common part [Gács-Körner 1973] between X and Y
     # is a function of the GK common part between X and (Y,Z)
-    print(bool(H(meet(X, Y) | meet(X, Y + Z)) == 0)) # returns True
-
-    # The condition "there exists Y independent of X such that 
-    #  X-Y-Z forms a Markov chain" can be simplified to "X,Z independent"
-    print((markov(X, Y, Z) & indep(X, Y)).exists(Y).simplified()) # gives I(X;Z)==0
+    (H(meet(X, Y) | meet(X, Y + Z)) == 0).display_bool()
 
 
 
-    # ******** Automated inner and outer bound for network information theory ********
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block31.png
+   :scale: 50
 
-    # Channel with noncausal state information at encoder
-    R = real("R")
+--------------
+
+Automatic inner/outer bound for degraded broadcast channel
+----------------------------------------------------------
+
+.. code:: ipython3
+
+    X, Y, Z = rv("X, Y, Z")
+    M1, M2 = rv_array("M", 1, 3)
+    R1, R2 = real_array("R", 1, 3)
+    
     model = CodingModel()
-    model.add_node(M+S, X) # Encoder produces X given message M and state S
-    model.add_edge(X+S, Y) # Channel output Y depends on X, S
-    model.add_node(Y, M)   # Decoder produces M given Y
-    model.set_rate(M, R)   # Rate of M is R
+    model.add_node(M1+M2, X)  # Encoder maps M1,M2 to X
+    model.add_edge(X, Y)      # Channel X -> Y -> Z
+    model.add_edge(Y, Z)
+    model.add_node(Y, M1)     # Decoder1 maps Y to M1
+    model.add_node(Z, M2)     # Decoder2 maps Z to M2
+    model.set_rate(M1, R1)    # Rate of M1 is R1
+    model.set_rate(M2, R2)    # Rate of M2 is R2
 
-    # Automatic inner bound via [Lee-Chung 2015], recovers [Gel'fand-Pinsker 1980]
+.. code:: ipython3
+
+    model.graph()             # Draw diagram
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_18_0.svg
+
+
+
+.. code:: ipython3
+
+    # Inner bound via [Lee-Chung 2015], give superposition region [Bergmans 1973], [Gallager 1974]
     r = model.get_inner()
-    print(r)
-
-    # Automated converse proof, print auxiliary random variables
-    print((model.get_outer() >> r).check_getaux())
+    r
 
 
 
-    # ******** Non-Shannon-type Inequalities ********
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block39.png
+   :scale: 50
+
+.. code:: ipython3
+
+    r.maximum(R1 + R2, [R1, R2])          # Max sum rate
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block41.png
+   :scale: 50
+
+.. code:: ipython3
+
+    r.maximum(emin(R1, R2), [R1, R2])     # Max symmetric rate
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block43.png
+   :scale: 50
+
+.. code:: ipython3
+
+    r.maximum(R1 / 2 + R2, [R1, R2])      # Max weighted sum rate
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block45.png
+   :scale: 50
+
+.. code:: ipython3
+
+    r.exists(R1)   # Eliminate R1, same as r.projected(R2)
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block47.png
+   :scale: 50
+
+.. code:: ipython3
+
+    # Eliminate Z, i.e., taking union of the region over all choices of Z
+    # The program correctly deduces that it suffices to consider Z = Y
+    r.exists(Z).simplified()
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block49.png
+   :scale: 50
+
+.. code:: ipython3
+
+    r_out = model.get_outer() # Automatic outer bound
+    model.graph_outer()       # Bayesian network of past/future variables
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_25_0.svg
+
+
+
+.. code:: ipython3
+
+    # Converse proof, print auxiliary random variables
+    CompArray((r_out >> r).check_getaux())
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block53.png
+   :scale: 50
+
+--------------
+
+Non-Shannon-type Inequalities
+-----------------------------
+
+.. code:: ipython3
 
     # Zhang-Yeung inequality [Zhang-Yeung 1998] cannot be proved by Shannon-type inequalities
-    print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns False
+    (2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).display_bool()
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.png
+   :scale: 50
+
+.. code:: ipython3
 
     # Using copy lemma [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011]
     with copylem().assumed():
         
         # Prove Zhang-Yeung inequality
-        print(bool(2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y))) # returns True
+        (2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).display_bool()
 
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.png
+   :scale: 50
+
+.. code:: ipython3
 
     # State the copy lemma
     r = eqdist([X, Y, U], [X, Y, Z]) & markov(Z+W, X+Y, U)
-
+    
     # Automatically discover non-Shannon-type inequalities using copy lemma
-    print(r.discover(mi_cells(X, Y, Z, W)))
+    r.discover(mi_cells(X, Y, Z, W))
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.png
+   :scale: 50
+
+
 
 
 About
@@ -108,7 +351,7 @@ Author: Cheuk Ting Li ( https://www.ie.cuhk.edu.hk/people/ctli.shtml ). The sour
 
 The deduction system in Psitip is based on the concept of existential information inequalities in:
 
-\C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," arXiv preprint, available: https://arxiv.org/pdf/2101.12370.pdf , 2021.
+- \C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," arXiv preprint, available: https://arxiv.org/pdf/2101.12370.pdf , 2021.
 
 If you find Psitip useful in your research, please consider citing the above article.
 
@@ -155,17 +398,20 @@ The default solver is Scipy, though it is highly recommended to switch to anothe
     PsiOpts.setting(solver = "pyomo.glpk")
     PsiOpts.setting(solver = "pulp.cbc") # Not recommended
 
-PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following line to set the solver to any supported solver:
+PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following line to set the solver to any supported solver (replace ??? with the desired solver):
 
 .. code-block:: python
 
-    PsiOpts.setting(pulp_solver = pulp.solvers.GLPK(msg = 0)) # Or another solver
+    PsiOpts.setting(solver = "pulp.???")
+    PsiOpts.setting(pulp_solver = pulp.solvers.GLPK(msg = 0)) # If the above does not work
 
 For Pyomo (see https://pyomo.readthedocs.io/en/stable/solving_pyomo_models.html#supported-solvers ), use the following line (replace ??? with the desired solver):
 
 .. code-block:: python
 
     PsiOpts.setting(solver = "pyomo.???")
+
+See `Options`_ for options for the solver.
 
 WARNING: It is possible for inaccuracies in the solver to result in wrong output in Psitip. Try switching to another solver if a problem is encountered.
 
@@ -177,7 +423,7 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - **Random variables** are declared as :code:`X = rv("X")`. The name "X" passed to "rv" must be unique. Variables with the same name are treated as being the same. The return value is a :code:`Comp` object (compound random variable).
 
- - As a shorthand, you may declare multiple random variables in the same line as :code:`X, Y = rv("X", "Y")`.
+ - As a shorthand, you may declare multiple random variables in the same line as :code:`X, Y = rv("X, Y")`. Variable names are separated by :code:`", "` (the space cannot be omitted).
 
 - The joint random variable (X,Y) is expressed as :code:`X + Y` (a :code:`Comp` object).
 
@@ -221,13 +467,13 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - The constraint that X, Y, Z are **informationally equivalent** (i.e., contain the same information) is expressed as :code:`equiv(X, Y, Z)` (a :code:`Region` object). The function :code:`equiv` can take any number of arguments. Note that :code:`equiv(X, Y)` is the same as :code:`(H(X|Y) == 0) & (H(Y|X) == 0)`.
 
-- The :code:`rv_seq` method constructs an array of random variables. For example, :code:`X = rv_seq("X", 10)` gives a :code:`Comp` object consisting of X0, X1, ..., X9.
+- The :code:`rv_seq` method constructs a sequence of random variables. For example, :code:`X = rv_seq("X", 10)` gives a :code:`Comp` object consisting of X0, X1, ..., X9.
 
- - An array can be used by itself to represent the joint random variable of the variables in the array. For example, :code:`H(X)` gives H(X0,...,X9).
+ - A sequence can be used by itself to represent the joint random variable of the variables in the sequence. For example, :code:`H(X)` gives H(X0,...,X9).
 
- - An array can be indexed using :code:`X[i]` (returns a :code:`Comp` object). The slice notation in Python also works, e.g., :code:`X[5:-1]` gives X5,X6,X7,X8 (a :code:`Comp` object).
+ - A sequence can be indexed using :code:`X[i]` (returns a :code:`Comp` object). The slice notation in Python also works, e.g., :code:`X[5:-1]` gives X5,X6,X7,X8 (a :code:`Comp` object).
 
- - The region where the random variables in the array are mutually independent can be given by :code:`indep(*X)`. The region where the random variables form a Markov chain can be given by :code:`markov(*X)`. 
+ - The region where the random variables in the sequence are mutually independent can be given by :code:`indep(*X)`. The region where the random variables form a Markov chain can be given by :code:`markov(*X)`. 
 
 - :code:`Expr` and :code:`Region` objects have a :code:`simplify()` method, which simplify the expression/region in place. The :code:`simplified()` method returns the simplified expression/region without modifying the object. For example, :code:`(H(X+Y) - H(X) - H(Y)).simplified()` gives :code:`-I(Y & X)`.
 
@@ -273,17 +519,17 @@ Advanced
  - Currently, calling :code:`forall` on real variables is not supported.
 
 
-- The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`.
+- The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`. To replace :code:`x1` by :code:`y1`, and :code:`x2` by :code:`y2`, use :code:`r.substituted({x1: y1, x2: y2})` or :code:`r.substituted(x1 = y1, x2 = y2)` (the latter only works if :code:`x1` has name :code:`"x1"`).
 
  - Call :code:`substituted_aux` instead of :code:`substituted` to stop treating :code:`x` as an auxiliary in the region :code:`r` (useful in substituting a known value of an auxiliary).
 
   .. _information bottleneck:
 
-- **Minimization / maximization** over an expression subject to the constraints in a region is represented by the :code:`minimum` / :code:`maximum` method of :code:`Region` respectively (which returns an :code:`Expr` object). This method usually follows an :code:`exists` call to mark the dummy variables in the optimization. For example, Wyner's common information [Wyner 1975] is represented by:
+- **Minimization / maximization** over an expression :code:`expr` over variables :code:`v` (:code:`Comp`, :code:`Expr`, or list of :code:`Comp` and/or :code:`Expr`) subject to the constraints in region :code:`r` is represented by the :code:`r.minimum(expr, v)` / :code:`r.maximum(expr, v)` respectively (which returns an :code:`Expr` object). For example, Wyner's common information [Wyner 1975] is represented by:
 
   .. code-block:: python
 
-    markov(X, U, Y).exists(U).minimum(I(U & X+Y))
+    markov(X, U, Y).minimum(I(U & X+Y), U)
 
 - It is simple to define new information quantities. For example, to define the information bottleneck [Tishby-Pereira-Bialek 1999]:
 
@@ -291,7 +537,7 @@ Advanced
 
     def info_bot(X, Y, t):
         U = rv("U")
-        return (markov(U, X, Y) & (I(Y & U) >= t)).exists(U).minimum(I(X & U))
+        return (markov(U, X, Y) & (I(Y & U) >= t)).minimum(I(X & U), U)
     
     X, Y = rv("X", "Y")
     t1, t2 = real("t1", "t2")
@@ -303,7 +549,7 @@ Advanced
 
 - The **absolute value** of an :code:`Expr` object is represented by the :code:`abs` function. For example, :code:`bool(abs(H(X) - H(Y)) <= H(X) + H(Y))` returns True.
 
-- The **projection** of a :code:`Region` :code:`r` onto the real variable :code:`a` is given by :code:`r.projected(a)`. All real variables in :code:`r` other than :code:`a` will be eliminated. For projection along the diagonal :code:`a + b`, use :code:`r.projected(c == a + b)` (where :code:`a`, :code:`b`, :code:`c` are all real variables, and :code:`c` is a new real variable not in :code:`r`). The function :code:`Region.projected` accepts any number of arguments (:code:`Expr` objects for real variables, or :code:`Region` objects for linear combinations of real variables). For example:
+- The **projection** of a :code:`Region` :code:`r` onto the real variable :code:`a` is given by :code:`r.projected(a)`. All real variables in :code:`r` other than :code:`a` will be eliminated. For projection along the diagonal :code:`a + b`, use :code:`r.projected(c == a + b)` (where :code:`a`, :code:`b`, :code:`c` are all real variables, and :code:`c` is a new real variable not in :code:`r`). To project onto multiple coordinates, use :code:`r.projected([a, b])` (where a, b are :code:`Expr` objects for real variables, or :code:`Region` objects for linear combinations of real variables). For example:
 
   .. code-block:: python
     
@@ -316,7 +562,7 @@ Advanced
     print(r.projected(R == R1 + R2)) # Project onto diagonal to get sum rate
     # Gives ( ( R <= I(X+Y&Z) ) & ( I(X&Y) == 0 ) )
 
-  See `Fourier-Motzkin elimination`_ for another example.
+  See `Fourier-Motzkin elimination`_ for another example. For a projection operation that also eliminates random variables, see `Discover inequalities`_.
 
 - While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments (returns None if :code:`bool(r)` is False). For example:
 
@@ -361,7 +607,7 @@ Advanced
 Information diagrams
 ~~~~~~~~~~~~~~~~~~~~
 
-The :code:`venn` method of :code:`Comp`, :code:`Expr`, :code:`Region` and :code:`ConcModel` draws the information diagram of that object. The :code:`venn` method takes any number of arguments (:code:`Comp`, :code:`Expr`, :code:`Region` or :code:`ConcModel`) which are drawn together. For :code:`Region.venn`, only the nonzero cells of the region will be drawn (the others are in black). The ordering of the random variables is decided by the first :code:`Comp` argument (or automatically if no :code:`Comp` argument is supplied). To draw a Gray-coded table instead of a Venn diagram, use :code:`table` instead of :code:`venn`. The methods :code:`venn` and :code:`table` take a :code:`style` argument, which is a string with the following options (multiple options are separated by ","):
+The :code:`venn` method of :code:`Comp`, :code:`Expr`, :code:`Region` and :code:`ConcModel` draws the information diagram of that object. The :code:`venn` method takes any number of arguments (:code:`Comp`, :code:`Expr`, :code:`Region` or :code:`ConcModel`) which are drawn together. For :code:`Region.venn`, only the nonzero cells of the region will be drawn (the others are in black). The ordering of the random variables is decided by the first :code:`Comp` argument (or automatically if no :code:`Comp` argument is supplied). To draw a Karnaugh map instead of a Venn diagram, use :code:`table` instead of :code:`venn`. The methods :code:`venn` and :code:`table` take a :code:`style` argument, which is a string with the following options (multiple options are separated by ","):
 
 - :code:`blend`: Blend the colors in overlapping areas. Default for :code:`venn`.
 
@@ -374,6 +620,9 @@ The :code:`venn` method of :code:`Comp`, :code:`Expr`, :code:`Region` and :code:
 - :code:`nosign`: Hide the signs of each cell (+/-) on the bottom of each cell.
 
 - :code:`nolegend`: Hide the legends.
+
+- Add the line :code:`PsiOpts.setting(venn_latex = True)` at the beginning to turn on LaTeX in the diagram.
+
 
 Examples:
 
@@ -888,7 +1137,19 @@ Example 3: Lossy source coding with side information at decoder
         print(PsiOpts.get_proof())         # Print tightness proof
 
 
+|
+|
 
+Integration with Jupyter Notebook and LaTeX output
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Psitip can be used within Jupyter Notebook.
+
+- Add the line :code:`PsiOpts.setting(repr_latex = True)` at the beginning to turn on LaTeX output.
+
+- Alternatively, use :code:`x.display()` to display an object (:code:`Comp`, :code:`Expr` or :code:`Region`) using LaTeX. For the LaTeX code, use use :code:`x.latex()`.
+
+- For a region :code:`x`, use :code:`x.display_bool()` to display both the region and its truth value.
 
 
 |
@@ -1102,7 +1363,7 @@ The following are :code:`Expr` objects (real-valued functions).
 
     # Definition
     print(bool(gacs_korner(X & Y) == 
-        ((H(U|X) == 0) & (H(U|Y) == 0)).exists(U).maximum(H(U))))
+        ((H(U|X) == 0) & (H(U|Y) == 0)).maximum(H(U), U)))
     print(bool(gacs_korner(X & Y) == H(meet(X, Y))))
 
     # Properties
@@ -1116,7 +1377,7 @@ The following are :code:`Expr` objects (real-valued functions).
   .. code-block:: python
 
     # Definition
-    print(bool(wyner_ci(X & Y) == markov(X, U, Y).exists(U).minimum(I(U & X+Y))))
+    print(bool(wyner_ci(X & Y) == markov(X, U, Y).minimum(I(U & X+Y), U)))
 
     # Properties
     print(bool(markov(X, Y, Z) >> (wyner_ci(X & Y) >= wyner_ci(X & Z))))
@@ -1131,7 +1392,7 @@ The following are :code:`Expr` objects (real-valued functions).
   .. code-block:: python
 
     # Definition
-    print(bool(exact_ci(X & Y) == markov(X, U, Y).exists(U).minimum(H(U))))
+    print(bool(exact_ci(X & Y) == markov(X, U, Y).minimum(H(U), U)))
 
     # Properties
     print(bool(markov(X, Y, Z) >> (exact_ci(X & Y) >= exact_ci(X & Z))))
@@ -1225,11 +1486,17 @@ Some of the options are:
 
 - :code:`ent_base` : The base of logarithm for entropy. Default is 2.
 
+- :code:`eps` : Epsilon used for comparing floating point numbers. Default is 1e-10.
+
 - :code:`truth` : Specify a region that is assumed to be true in all deductions. For example, use :code:`truth = sfrl(logg)` to assume the strong functional representation lemma with logarithmic gap given by :code:`logg = real("logg")`. Default is None.
 
 - :code:`truth_add` : Add another assumption (:code:`Region` object) to :code:`truth`.
 
 - :code:`solver` : The solver used (e.g. :code:`"pulp.glpk"`, :code:`"pyomo.glpk"`, :code:`"pulp.cbc"`, :code:`"scipy"`).
+
+- :code:`pyomo_options` : Dictionary of options for Pyomo solver (see https://pyomo.readthedocs.io/en/stable/working_models.html#sending-options-to-the-solver ).
+
+- :code:`pulp_options` : List of options for PuLP solver (see https://coin-or.github.io/pulp/technical/solvers.html ).
 
 - :code:`solver_scipy_maxsize` : For linear programming problems with number of variables less than or equal to this value, the scipy solver will be used (regardless of the :code:`solver` option). This can lead to significant speed-up for small problems. Default is -1 (disabled).
 
@@ -1251,45 +1518,56 @@ Some of the options are:
 
 - :code:`str_style` : The style of string conversion :code:`str(x)` and verbose output. Values are :code:`"standard"` (e.g. :code:`3I(X,Y;Z|W)-H(X) >= 0`, default), :code:`"code"` (e.g. :code:`3*I(X+Y&Z|W)-H(X) >= 0`, consistent with the Psitip syntax so the output can be copied back to the code), or :code:`"latex"` (e.g. :code:`3I(X,Y;Z|W)-H(X) \ge 0`, for LaTeX equations).
 
-- :code:`verbose_lp` : Set to True to output linear programming problem sizes and results. Default is False.
+- :code:`str_eqn_prefer_ge` : Whether "a >= b" is preferred over "b <= a" in string conversion. Default is False.
 
-- :code:`verbose_lp_cons` : Set to True to output the constraints in the linear program. Default is False. For example:
+- :code:`repr_simplify` : Whether the repr of an :code:`Expr` or :code:`Region` object is simplified (useful for console and Jupyter Notebook). Default is True.
 
-  .. code-block:: python
-
-    with PsiOpts(lptype = "H", verbose_lp = True, verbose_lp_cons = True):
-        bool(H(X) * 2 >= I(X & Y))
-
- gives::
-
-    ============ LP constraints ============
-    { H(X,Y)-H(Y) >= 0,
-      H(X,Y)-H(X) >= 0,
-      H(X)+H(Y)-H(X,Y) >= 0 }
-    ============  LP objective  ============
-    -H(X)+H(Y)-H(X,Y)
-    ========================================
-    LP nrv=2 nreal=0 nvar=3/3 nineq=3 neq=0 solver=pyomo.glpk
-      status=Optimal optval=0.0
+- :code:`repr_check` : Whether the repr of a :code:`Region` object returns its truth value instead of the region itself (useful for console and Jupyter Notebook). Default is False.
 
 
-- :code:`verbose_auxsearch` : Set to True to output each problem of auxiliary random variable searching. Default is False.
+- :code:`latex_???` : LaTeX code for various symbols. The :code:`???` can be :code:`mi_delim` (delimiter for mutual information; common choices are :code:`";"`, :code:`"\wedge"` and :code:`":"`), :code:`rv_delim` (delimiter for joint random variable; common choices are :code:`","` and :code:`" "`), :code:`cond` (the :code:`"|"` for conditional entropy), :code:`H` (entropy), :code:`I` (mutual information), :code:`quantifier_sep` (symbol after existentially or universally quantified variables; common choices are :code:`":"`, :code:`"."` and :code:`"\;"`), :code:`exists`, :code:`forall`, :code:`indep` (independent random variables; common choices are :code:`"{\\perp\\!\\!\\!\\perp}"` and :code:`"\\perp"`), :code:`markov` (Markov chain; common choices are :code:`"\\leftrightarrow"`, :code:`"\\to"` and :code:`"-"`), :code:`and`, :code:`or`, :code:`matimplies` (material implication), :code:`equiv` (logical equivalence), :code:`implies` (logical implication), :code:`times` (multiplication), :code:`prob` (probability), :code:`rv_empty` (the empty random variable), :code:`region_universe` (the universe region), :code:`region_empty` (the empty region).
 
-- :code:`verbose_auxsearch_step` : Set to True to output each step in auxiliary searching. Default is False.
+- :code:`verbose_???` : Verbose options:
 
-- :code:`verbose_auxsearch_result` : Set to True to output the final result of auxiliary searching. Default is False.
+  - :code:`verbose_lp` : Set to True to output linear programming problem sizes and results. Default is False.
 
-- :code:`verbose_auxsearch_all` : Set to True to turn on :code:`verbose_auxsearch`, :code:`verbose_auxsearch_step` and :code:`verbose_auxsearch_result`.
+  - :code:`verbose_lp_cons` : Set to True to output the constraints in the linear program. Default is False. For example:
 
-- :code:`verbose_auxsearch_cache` : Set to True to output each event in which the cache of auxiliary searching is discarded. Default is False.
+    .. code-block:: python
 
-- :code:`verbose_subset` : Set to True to output each implication problem. Default is False.
+      with PsiOpts(lptype = "H", verbose_lp = True, verbose_lp_cons = True):
+          bool(H(X) * 2 >= I(X & Y))
 
-- :code:`verbose_sfrl` : Set to True to output strong functional representation lemma searching steps. Default is False.
+    gives::
 
-- :code:`verbose_flatten` : Set to True to output progress in unfolding user-defined information quantities. Default is False.
+      ============ LP constraints ============
+      { H(X,Y)-H(Y) >= 0,
+        H(X,Y)-H(X) >= 0,
+        H(X)+H(Y)-H(X,Y) >= 0 }
+      ============  LP objective  ============
+      -H(X)+H(Y)-H(X,Y)
+      ========================================
+      LP nrv=2 nreal=0 nvar=3/3 nineq=3 neq=0 solver=pyomo.glpk
+        status=Optimal optval=0.0
 
-- :code:`verbose_eliminate_toreal` : Set to True to output progress in eliminating random variables using the :code:`toreal = True` option. Default is False.
+
+  - :code:`verbose_auxsearch` : Set to True to output each problem of auxiliary random variable searching. Default is False.
+
+  - :code:`verbose_auxsearch_step` : Set to True to output each step in auxiliary searching. Default is False.
+
+  - :code:`verbose_auxsearch_result` : Set to True to output the final result of auxiliary searching. Default is False.
+
+  - :code:`verbose_auxsearch_all` : Set to True to turn on :code:`verbose_auxsearch`, :code:`verbose_auxsearch_step` and :code:`verbose_auxsearch_result`.
+
+  - :code:`verbose_auxsearch_cache` : Set to True to output each event in which the cache of auxiliary searching is discarded. Default is False.
+
+  - :code:`verbose_subset` : Set to True to output each implication problem. Default is False.
+
+  - :code:`verbose_sfrl` : Set to True to output strong functional representation lemma searching steps. Default is False.
+
+  - :code:`verbose_flatten` : Set to True to output progress in unfolding user-defined information quantities. Default is False.
+
+  - :code:`verbose_eliminate_toreal` : Set to True to output progress in eliminating random variables using the :code:`toreal = True` option. Default is False.
 
 
 License
