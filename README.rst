@@ -33,18 +33,18 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 Examples with Jupyter Notebook `(ipynb file)<https://github.com/cheuktingli/psitip/blob/master/demo_readme.ipynb>`_ :
 
 
-.. code:: ipython3
+.. code-block:: python
 
     from psitip import *
     PsiOpts.setting(solver = "pyomo.glpk")  # Set linear programming solver
     PsiOpts.setting(repr_latex = True)      # Turn on Jupyter Notebook LaTeX display
     PsiOpts.setting(venn_latex = True)      # Turn on LaTeX in diagrams
 
-.. code:: ipython3
+.. code-block:: python
 
     X, Y, Z, W, U, M, S = rv("X, Y, Z, W, U, M, S") # Declare random variables
 
-.. code:: ipython3
+.. code:: python
 
     H(X+Y) - H(X) - H(Y)  # Simplify H(X,Y) - H(X) - H(Y)
 
