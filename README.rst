@@ -74,7 +74,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.png
+.. figure:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.png
 --------------
 
 .. code:: python
@@ -106,7 +106,6 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block14.png
 --------------
-
 .. code:: python
 
     # The condition "there exists Y independent of X such that 
@@ -116,7 +115,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
+.. figure:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
 --------------
 
 --------------
