@@ -31,7 +31,7 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 
 Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psitip/blob/master/demo_readme.ipynb>`_ :
-
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
