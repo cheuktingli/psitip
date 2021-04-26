@@ -74,7 +74,7 @@ Examples with Jupyter Notebook `(ipynb file)<https://github.com/cheuktingli/psit
 
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block10.png
-   :scale: 50
+   :scale: 20
 
 .. code:: ipython3
 
@@ -114,7 +114,7 @@ Examples with Jupyter Notebook `(ipynb file)<https://github.com/cheuktingli/psit
 
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block17.png
-   :scale: 50
+   :scale: 20
 
 --------------
 
