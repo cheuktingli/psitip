@@ -116,7 +116,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. figure:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
 --------------
 
 --------------
@@ -344,7 +344,8 @@ Non-Shannon-type Inequalities
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block61.png
 --------------
 
-
+|
+|
 
 
 
@@ -363,6 +364,9 @@ WARNING
 ~~~~~~~
 
 This program comes with ABSOLUTELY NO WARRANTY. This program is a work in progress, and bugs are likely to exist. The deduction system is incomplete, meaning that it may fail to prove true statements (as expected in most automated deduction programs). On the other hand, declaring false statements to be true should be less common. If you encounter a false accept in Psitip, please let the author know.
+
+|
+|
 
 
 Installation
@@ -388,6 +392,8 @@ Other optional dependencies:
 - **Graphviz** (https://graphviz.org/). A Python binding of Graphviz is required for drawing Bayesian networks and communication network model.
 
 
+|
+|
 
 
 Solver
@@ -418,6 +424,9 @@ For Pyomo (see https://pyomo.readthedocs.io/en/stable/solving_pyomo_models.html#
 See `Options`_ for options for the solver.
 
 WARNING: It is possible for inaccuracies in the solver to result in wrong output in Psitip. Try switching to another solver if a problem is encountered.
+
+|
+|
 
 
 Basics
@@ -485,6 +494,8 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - Use :code:`str(x)` to convert :code:`x` (a :code:`Comp`, :code:`Expr` or :code:`Region` object) to string. The :code:`tostring` method of :code:`Comp`, :code:`Expr` and :code:`Region` provides more options. For example, :code:`r.tostring(tosort = True, lhsvar = R)` converts the region :code:`r` to string, sorting all terms and constraints, and putting the real variable :code:`R` to the left hand side of all expressions (and the rest to the right).
 
+|
+|
 
 
 Advanced
@@ -607,6 +618,8 @@ Advanced
 
 - To set a **time limit** to a block of code, start the block with :code:`with PsiOpts(timer = 5000):` (e.g. for a time limit of 5000ms). This is useful for time-consuming tasks, e.g. simplification and optimization.
 
+|
+|
 
 Information diagrams
 ~~~~~~~~~~~~~~~~~~~~
