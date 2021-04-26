@@ -33,15 +33,14 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psitip/blob/master/demo_readme.ipynb>`_ :
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: python
+
+.. code:: python
 
     from psitip import *
     PsiOpts.setting(solver = "pyomo.glpk")  # Set linear programming solver
     PsiOpts.setting(repr_latex = True)      # Turn on Jupyter Notebook LaTeX display
     PsiOpts.setting(venn_latex = True)      # Turn on LaTeX in diagrams
-
-.. code-block:: python
-
+    
     X, Y, Z, W, U, M, S = rv("X, Y, Z, W, U, M, S") # Declare random variables
 
 .. code:: python
@@ -51,11 +50,10 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block6.png
-   :width: 50px
-   :height: 50px
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block5.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     bool(H(X) + I(Y & Z | X) >= I(Y & Z))  # Check H(X) + I(Y;Z|X) >= I(Y;Z)
 
@@ -68,23 +66,25 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. code:: ipython3
+--------------
+
+.. code:: python
 
     (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).display_bool() # Implication
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block10.png
-   :scale: 20
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     # Information diagram that shows the above implication
     (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).venn()
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_6_0.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_5_0.png
 
 
 
@@ -93,7 +93,9 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
     <Figure size 432x288 with 0 Axes>
 
 
-.. code:: ipython3
+--------------
+
+.. code:: python
 
     # The condition "X is independent of Y and X-Y-Z forms a
     # Markov chain" can be simplified to "X is independent of (Y,Z)"
@@ -102,10 +104,10 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block15.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block14.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     # The condition "there exists Y independent of X such that 
     # X-Y-Z forms a Markov chain" can be simplified to "X,Z independent"
@@ -114,15 +116,15 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block17.png
-   :scale: 20
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
+--------------
 
 --------------
 
 User-defined information quantities
 -----------------------------------
 
-.. code:: ipython3
+.. code:: python
 
     # Define Gács-Körner common information [Gács-Körner 1973]
     gkci = ((H(U|X) == 0) & (H(U|Y) == 0)).maximum(H(U), U)
@@ -133,34 +135,34 @@ User-defined information quantities
     # Define common entropy [Kumar-Li-El Gamal 2014]
     eci = markov(X, U, Y).minimum(H(U), U)
 
-.. code:: ipython3
+.. code:: python
 
     (gkci <= I(X & Y)).display_bool()        # Gács-Körner <= I(X;Y)
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block23.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block22.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     (I(X & Y) <= wci).display_bool()         # I(X;Y) <= Wyner
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block25.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block24.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     (wci <= emin(H(X), H(Y))).display_bool() # Wyner <= min(H(X),H(Y))
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block27.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block26.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     # Automatically discover inequalities among quantities
     universe().discover([X, Y, gkci, wci, eci])
@@ -168,10 +170,10 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block29.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block28.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     # The meet or Gács-Körner common part [Gács-Körner 1973] between X and Y
     # is a function of the GK common part between X and (Y,Z)
@@ -179,15 +181,15 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block31.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block30.png
+--------------
 
 --------------
 
 Automatic inner/outer bound for degraded broadcast channel
 ----------------------------------------------------------
 
-.. code:: ipython3
+.. code:: python
 
     X, Y, Z = rv("X, Y, Z")
     M1, M2 = rv_array("M", 1, 3)
@@ -202,18 +204,18 @@ Automatic inner/outer bound for degraded broadcast channel
     model.set_rate(M1, R1)    # Rate of M1 is R1
     model.set_rate(M2, R2)    # Rate of M2 is R2
 
-.. code:: ipython3
+.. code:: python
 
     model.graph()             # Draw diagram
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_18_0.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_17_0.svg
 
 
 
-.. code:: ipython3
+.. code:: python
 
     # Inner bound via [Lee-Chung 2015], give superposition region [Bergmans 1973], [Gallager 1974]
     r = model.get_inner()
@@ -222,50 +224,50 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block39.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block38.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     r.maximum(R1 + R2, [R1, R2])          # Max sum rate
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block41.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block40.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     r.maximum(emin(R1, R2), [R1, R2])     # Max symmetric rate
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block43.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block42.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     r.maximum(R1 / 2 + R2, [R1, R2])      # Max weighted sum rate
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block45.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     r.exists(R1)   # Eliminate R1, same as r.projected(R2)
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block47.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     # Eliminate Z, i.e., taking union of the region over all choices of Z
     # The program correctly deduces that it suffices to consider Z = Y
@@ -274,10 +276,10 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block49.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     r_out = model.get_outer() # Automatic outer bound
     model.graph_outer()       # Bayesian network of past/future variables
@@ -285,11 +287,11 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_25_0.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_24_0.svg
 
 
 
-.. code:: ipython3
+.. code:: python
 
     # Converse proof, print auxiliary random variables
     CompArray((r_out >> r).check_getaux())
@@ -297,25 +299,25 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block53.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.png
+--------------
 
 --------------
 
 Non-Shannon-type Inequalities
 -----------------------------
 
-.. code:: ipython3
+.. code:: python
 
     # Zhang-Yeung inequality [Zhang-Yeung 1998] cannot be proved by Shannon-type inequalities
     (2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).display_bool()
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block57.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     # Using copy lemma [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011]
     with copylem().assumed():
@@ -325,10 +327,10 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block59.png
+--------------
 
-.. code:: ipython3
+.. code:: python
 
     # State the copy lemma
     r = eqdist([X, Y, U], [X, Y, Z]) & markov(Z+W, X+Y, U)
@@ -339,8 +341,9 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.png
-   :scale: 50
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block61.png
+--------------
+
 
 
 
