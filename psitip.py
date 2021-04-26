@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.06
+Version 1.0.7
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -144,6 +144,14 @@ try:
 except ImportError:
     pass
 
+
+try:
+    import IPython
+    import IPython.display
+except ImportError:
+    IPython = None
+
+
 class LinearProgType:
     NIL = 0
     H = 1    # H(X_C)
@@ -179,9 +187,10 @@ class PsiOpts:
     STR_STYLE_STANDARD = 1
     STR_STYLE_PSITIP = 2
     STR_STYLE_LATEX = 4
-    STR_STYLE_LATEX_ARRAY = 8
-    STR_STYLE_LATEX_FRAC = 16
-    STR_STYLE_LATEX_QUANTAFTER = 32
+    STR_STYLE_LATEX_ARRAY = 1 << 5
+    STR_STYLE_LATEX_FRAC = 1 << 6
+    STR_STYLE_LATEX_QUANTAFTER = 1 << 7
+    STR_STYLE_MARKOV = 1 << 8
     
     SFRL_LEVEL_SINGLE = 1
     SFRL_LEVEL_MULTIPLE = 2
@@ -195,9 +204,13 @@ class PsiOpts:
         "max_denom": 1000000,
         "max_denom_mul": 10000,
         
-        "str_style": 2,
+        "str_style": 2 + (1 << 8),
+        "str_style_std": 1 + (1 << 8),
+        "str_style_latex": 4 + (1 << 8),
+        "str_style_repr": 2 + (1 << 8),
         "str_tosort": False,
         "str_lhsreal": True,
+        "str_eqn_prefer_ge": False,
         "rename_char": "_",
         
         "truth": None,
@@ -215,6 +228,8 @@ class PsiOpts:
         "lp_zero_cutoff": -1e-5,
         "fcn_mode": 1,
         "solver_scipy_maxsize": -1,
+        "pulp_options": None,
+        "pyomo_options": {},
         
         "simplify_enabled": True,
         "simplify_quick": False,
@@ -267,6 +282,8 @@ class PsiOpts:
         "auxsearch_op_casesteplimit": 16,
         "auxsearch_op_caselimit": 512,
         
+        "bayesnet_semigraphoid_iter": 1000,
+        
         "proof_enabled": False,
         "proof_nowrite": False,
         "proof_step_dualsum": True,
@@ -274,9 +291,42 @@ class PsiOpts:
         
         "repr_simplify": True,
         "repr_check": False,
+        "repr_latex": False,
+        
+        "venn_latex": False,
         
         "discover_hull_frac_enabled": True,
         "discover_hull_frac_denom": 1000,
+        
+        "latex_H": "H",
+        "latex_I": "I",
+        "latex_rv_delim": ",",
+        "latex_cond": "|",
+        "latex_sup": "\\sup",
+        "latex_inf": "\\inf",
+        "latex_max": "\\max",
+        "latex_min": "\\min",
+        "latex_exists": "\\exists",
+        "latex_forall": "\\forall",
+        "latex_quantifier_sep": ":",
+        "latex_indep": "{\\perp\\!\\!\\!\\perp}",
+        "latex_markov": "\\leftrightarrow",
+        "latex_mi_delim": ";",
+        "latex_list_bracket_l": "[",
+        "latex_list_bracket_r": "]",
+        "latex_matimplies": "\\Rightarrow",
+        "latex_equiv": "\\Leftrightarrow",
+        "latex_implies": "\\Rightarrow",
+        "latex_times": "\\cdot",
+        "latex_prob": "\\mathbf{P}",
+        "latex_rv_empty": "\\emptyset",
+        "latex_region_universe": "\\top",
+        "latex_region_empty": "\\emptyset",
+        "latex_contradiction": "\\bot",
+        "latex_or": "\\vee",
+        "latex_and": "\\wedge",
+        
+        "latex_color": None,
         
         "verbose_lp": False,
         "verbose_lp_cons": False,
@@ -292,6 +342,7 @@ class PsiOpts:
         "verbose_subset": False,
         "verbose_sfrl": False,
         "verbose_flatten": False,
+        "verbose_eliminate": False,
         "verbose_eliminate_toreal": False,
         "verbose_semigraphoid": False,
         "verbose_proof": False,
@@ -339,7 +390,6 @@ class PsiOpts:
                 d["timer_start"] = curtime
                 d["timer_end"] = curtime + float(value)
             
-                    
             
         elif key == "simplify_level":
             d["simplify_enabled"] = value >= 1
@@ -486,9 +536,14 @@ class PsiOpts:
                 raise KeyError("Option '" + str(key) + "' not found.")
             d[key] = value
     
+    
+    def apply_dict(d):
+        IBaseObj.set_repr_latex(d["repr_latex"])
+        
     def set_setting(**kwargs):
         for key, value in kwargs.items():
             PsiOpts.set_setting_dict(PsiOpts.settings, key, value)
+        PsiOpts.apply_dict(PsiOpts.settings)
     
     def setting(**kwargs):
         PsiOpts.set_setting(**kwargs)
@@ -503,13 +558,41 @@ class PsiOpts:
     
     def get_truth():
         return PsiOpts.settings["truth"]
-            
+    
+    def timer_left():
+        if PsiOpts.settings["timer_end"] is None:
+            return None
+        curtime = time.time() * 1000
+        return PsiOpts.settings["timer_end"] - curtime
+    
+    def timer_left_sec():
+        r = PsiOpts.timer_left()
+        if r is None:
+            return None
+        return int(round(r / 1000.0))
+    
     def is_timer_ended():
         if PsiOpts.settings["timer_end"] is None:
             return False
         curtime = time.time() * 1000
         return curtime > PsiOpts.settings["timer_end"]
     
+    def get_pyomo_options():
+        r = dict(PsiOpts.settings["pyomo_options"])
+        
+        timelimit = PsiOpts.timer_left_sec()
+        if timelimit is not None:
+            csolver = iutil.get_solver()
+            if csolver == "pyomo.glpk":
+                r["tmlim"] = timelimit
+            elif csolver == "pyomo.cplex":
+                r["timelimit"] = timelimit
+            elif csolver == "pyomo.gurobi":
+                r["TimeLimit"] = timelimit
+            elif csolver == "pyomo.cbc":
+                r["seconds"] = timelimit
+                
+        return r
         
     def __init__(self, **kwargs):
         """
@@ -531,10 +614,12 @@ class PsiOpts:
     
     def __enter__(self):
         PsiOpts.settings, self.cur_settings = self.cur_settings, PsiOpts.settings
+        PsiOpts.apply_dict(PsiOpts.settings)
         return PsiOpts.settings
     
     def __exit__(self, exc_type, exc_value, exc_traceback):
         PsiOpts.settings, self.cur_settings = self.cur_settings, PsiOpts.settings
+        PsiOpts.apply_dict(PsiOpts.settings)
     
     
 class iutil:
@@ -548,6 +633,20 @@ class iutil:
     
     cur_count = 0
     cur_count_name = {}
+    
+    
+    def display_latex(s, ismath = True, metadata = None):
+        color = PsiOpts.settings["latex_color"]
+        if color is not None:
+            s = "\\color{" + color + "}{" + s + "}"
+        
+        if ismath:
+            r = IPython.display.Math(s, metadata = metadata)
+        else:
+            r = IPython.display.Latex(s, metadata = metadata)
+        IPython.display.display(r)
+        # return r
+    
     
     def float_tostr(x, style = 0, bracket = True):
         if abs(x) <= 1e-10:
@@ -593,6 +692,26 @@ class iutil:
         else:
             return str(x)
 
+    def num_open_brackets(s):
+        return s.count("(") + s.count("[") + s.count("{") - (
+            s.count("}") + s.count("]") + s.count(")"))
+        
+    def split_comma(s, delim = ", "):
+        t = s.split(delim)
+        c = ""
+        r = []
+        for a in t:
+            if c != "":
+                c += delim
+            c += a
+            if iutil.num_open_brackets(c) == 0:
+                r.append(c)
+                c = ""
+        if c != "":
+            r.append(c)
+            
+        return r
+
     def get_count(counter_name = None):
         if counter_name is None:
             iutil.cur_count += 1
@@ -619,13 +738,13 @@ class iutil:
     
     def convert_str_style(style):
         if style == "standard" or style == "std":
-            return PsiOpts.STR_STYLE_STANDARD
+            return PsiOpts.settings["str_style_std"]
         elif style == "psitip" or style == "code":
-            return PsiOpts.STR_STYLE_PSITIP
+            return PsiOpts.settings["str_style_repr"]
         elif style == "latex":
-            return PsiOpts.STR_STYLE_LATEX | PsiOpts.STR_STYLE_LATEX_ARRAY | PsiOpts.STR_STYLE_LATEX_FRAC
+            return PsiOpts.settings["str_style_latex"] | PsiOpts.STR_STYLE_LATEX_ARRAY | PsiOpts.STR_STYLE_LATEX_FRAC
         elif style == "latex_noarray":
-            return PsiOpts.STR_STYLE_LATEX | PsiOpts.STR_STYLE_LATEX_FRAC
+            return PsiOpts.settings["str_style_latex"] | PsiOpts.STR_STYLE_LATEX_FRAC
         else:
             return style
         
@@ -681,6 +800,7 @@ class iutil:
         return ""
     
     def pulp_get_solver(solver):
+        coptions = PsiOpts.settings["pulp_options"]
         copt = solver[solver.index(".") + 1 :].upper()
         if copt == "OTHER":
             return iutil.pulp_solver
@@ -690,11 +810,19 @@ class iutil:
         
         r = None
         if copt == "GLPK":
-            #r = pulp.solvers.GLPK(msg = 0)
-            r = pulp.GLPK(msg = 0)
+            #r = pulp.solvers.GLPK(msg = 0, options = coptions)
+            r = pulp.GLPK(msg = False, timeLimit = PsiOpts.timer_left_sec(), options = coptions)
         elif copt == "CBC" or copt == "PULP_CBC_CMD":
-            #r = pulp.solvers.PULP_CBC_CMD()
-            r = pulp.PULP_CBC_CMD()
+            #r = pulp.solvers.PULP_CBC_CMD(options = coptions)
+            r = pulp.PULP_CBC_CMD(msg = False, timeLimit = PsiOpts.timer_left_sec(), options = coptions)
+        elif copt == "GUROBI":
+            r = pulp.GUROBI(msg = False, timeLimit = PsiOpts.timer_left_sec(), options = coptions)
+        elif copt == "CPLEX":
+            r = pulp.CPLEX(msg = False, timeLimit = PsiOpts.timer_left_sec(), options = coptions)
+        elif copt == "MOSEK":
+            r = pulp.MOSEK(msg = False, timeLimit = PsiOpts.timer_left_sec(), options = coptions)
+        elif copt == "CHOCO_CMD":
+            r = pulp.CHOCO_CMD(msg = False, timeLimit = PsiOpts.timer_left_sec(), options = coptions)
         
         iutil.pulp_solvers[copt] = r
         return r
@@ -807,8 +935,8 @@ class iutil:
                 return True
         return False
         
-    def str_inden(s, ninden):
-        return " " * ninden + s.replace("\n", "\n" + " " * ninden)
+    def str_inden(s, ninden, spacestr = " "):
+        return " " * ninden + s.replace("\n", "\n" + spacestr * ninden)
     
     def enum_partition(n):
         def enum_partition_recur(mask):
@@ -945,30 +1073,31 @@ class iutil:
                 a_single_term = iutil.is_single_term(a)
                 
                 if (i == 0) ^ infix:
-                    if style == PsiOpts.STR_STYLE_STANDARD:
+                    if style & PsiOpts.STR_STYLE_STANDARD:
                         r += name
-                    elif style == PsiOpts.STR_STYLE_PSITIP:
+                    elif style & PsiOpts.STR_STYLE_PSITIP:
                         r += pname or name
-                    elif style == PsiOpts.STR_STYLE_LATEX:
+                    elif style & PsiOpts.STR_STYLE_LATEX:
                         r += lname or name
                 if not infix:
                     if i == 0:
                         r += "("
                     if i:
                         r += ","
+                    
                 else:
-                    if latex_group and style == PsiOpts.STR_STYLE_LATEX:
+                    if latex_group and style & PsiOpts.STR_STYLE_LATEX:
                         r += "{"
                     if not a_single_term:
                         r += "("
                 t = ""
                 if isinstance(a, (IVar, Comp, Term, Expr, Region)):
-                    if style == PsiOpts.STR_STYLE_STANDARD and isinstance(a, Comp):
-                        t = a.tostring(style = style, add_braket = True)
+                    if (style & PsiOpts.STR_STYLE_STANDARD or style & PsiOpts.STR_STYLE_LATEX) and isinstance(a, Comp):
+                        t = a.tostring(style = style, add_bracket = True)
                     else:
                         t = a.tostring(style = style)
                 elif isinstance(a, str):
-                    if style == PsiOpts.STR_STYLE_PSITIP:
+                    if style & PsiOpts.STR_STYLE_PSITIP:
                         t = repr(a)
                     else:
                         t = str(a)
@@ -986,7 +1115,7 @@ class iutil:
                 else:
                     if not a_single_term:
                         r += ")"
-                    if latex_group and style == PsiOpts.STR_STYLE_LATEX:
+                    if latex_group and style & PsiOpts.STR_STYLE_LATEX:
                         r += "}"
         return r
     
@@ -1026,6 +1155,10 @@ class iutil:
             return delim.join(iutil.tostring_join(a, style, delim) for a in x)
         if hasattr(x, "tostring"):
             return x.tostring(style = style)
+        
+        if style & PsiOpts.STR_STYLE_LATEX:
+            return "\\text{" + str(x) + "}"
+        
         return str(x)
     
     
@@ -1171,6 +1304,36 @@ class MHashSet:
         return hash(frozenset(self.s))
     
     
+def fcn_substitute(fcn):
+    
+    @functools.wraps(fcn)
+    def wrapper(cself, *args, **kwargs):
+        i = 0
+        while i < len(args):
+            if isinstance(args[i], dict):
+                for key, val in args[i].items():
+                    fcn(cself, key, val)
+                i += 1
+            elif isinstance(args[i], list):
+                for key, val in args[i]:
+                    fcn(cself, key, val)
+                i += 1
+            elif i + 1 < len(args):
+                fcn(cself, args[i], args[i + 1])
+                i += 2
+            else:
+                i += 1
+        
+        for key, val in kwargs.items():
+            found = cself.find_name(key)
+            if isinstance(found, Comp) and not found.isempty():
+                fcn(cself, found, val)
+            elif isinstance(found, Expr) and not found.iszero():
+                fcn(cself, found, val)
+                
+                
+    return wrapper
+
     
 def fcn_list_to_list(fcn):
     
@@ -1250,7 +1413,47 @@ class IVarType:
     RV = 1
     REAL = 2
     
-class IVar:
+    
+class IBaseObj:
+    """Base class of objects
+    """
+    def __init__(self):
+        pass
+        
+    def _latex_(self):
+        return ""
+        
+    def latex(self, skip_simplify = False):
+        """LaTeX code
+        """
+        if skip_simplify:
+            r = ""
+            with PsiOpts(repr_simplify = False):
+                r = self._latex_()
+            return r
+        
+        return self._latex_()
+    
+    def display(self, skip_simplify = False):
+        """IPython display
+        """
+        iutil.display_latex(self.latex(skip_simplify = skip_simplify))
+    
+    def display_bool(self, s = "{region} \\;\\mathrm{{is}}\\;\\mathrm{{{truth}}}", skip_simplify = True):
+        """IPython display, show truth value
+        """
+        iutil.display_latex(s.format(region = self.latex(skip_simplify = skip_simplify), 
+                                            truth = str(bool(self))))
+    
+    def set_repr_latex(enabled):
+        hasa = hasattr(IBaseObj, "_repr_latex_")
+        if enabled and not hasa:
+            setattr(IBaseObj, "_repr_latex_", lambda s: "$" + s.latex() + "$")
+        if not enabled and hasa:
+            delattr(IBaseObj, "_repr_latex_")
+    
+    
+class IVar(IBaseObj):
     """Random variable or real variable
     Do NOT use this class directly. Use Comp instead
     """
@@ -1288,8 +1491,11 @@ class IVar:
         return self.tostring(PsiOpts.settings["str_style"])
     
     def __repr__(self):
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
-        
+        return self.tostring(PsiOpts.settings["str_style_repr"])
+    
+    def _latex_(self):
+        return self.tostring(iutil.convert_str_style("latex"))
+    
     def __hash__(self):
         return hash(self.name)
         
@@ -1305,7 +1511,7 @@ class IVar:
                     False, None if self.markers is None else self.markers[:])
 
     
-class Comp:
+class Comp(IBaseObj):
     """Compound random variable or real variable
     """
     
@@ -1591,6 +1797,9 @@ class Comp:
         
     def __imul__(self, other):
         ceps = PsiOpts.settings["eps"]
+        if isinstance(other, bool) and not other:
+            self.varlist = []
+            return self
         if isinstance(other, int) and other == 0:
             self.varlist = []
             return self
@@ -1753,7 +1962,7 @@ class Comp:
             name += "(" + repr(self) + ")"
         name += ".prob(" + ",".join(str(b) for b in args) + ")"
         name += "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@"
-        name += "P(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(self, args)) + ")"
+        name += PsiOpts.settings["latex_prob"] + "(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(self, args)) + ")"
             
         def fcncall(xdist):
             return xdist[args]
@@ -1771,7 +1980,7 @@ class Comp:
             r[xs] = self.prob(*xs)
         return r
     
-    def tostring(self, style = 0, tosort = False, add_braket = False):
+    def tostring(self, style = 0, tosort = False, add_bracket = False):
         """Convert to string
         Parameters:
             style   : Style of string conversion
@@ -1782,24 +1991,26 @@ class Comp:
         
         namelist = [a.tostring(style) for a in self.varlist]
         if len(namelist) == 0:
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 return "rv_empty()"
             elif style & PsiOpts.STR_STYLE_LATEX:
-                return "\\emptyset"
+                return PsiOpts.settings["latex_rv_empty"]
             return "!"
             
         if tosort:
             namelist.sort()
         r = ""
-        if add_braket and len(namelist) > 1:
+        if add_bracket and len(namelist) > 1:
             r += "("
             
-        if style == PsiOpts.STR_STYLE_PSITIP:
+        if style & PsiOpts.STR_STYLE_PSITIP:
             r += "+".join(namelist)
+        elif style & PsiOpts.STR_STYLE_LATEX:
+            r += (PsiOpts.settings["latex_rv_delim"] + " ").join(namelist)
         else:
             r += ",".join(namelist)
             
-        if add_braket and len(namelist) > 1:
+        if add_bracket and len(namelist) > 1:
             r += ")"
         
         return r
@@ -1811,7 +2022,11 @@ class Comp:
                              tosort = PsiOpts.settings["str_tosort"])
     
     def __repr__(self):
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
+        return self.tostring(PsiOpts.settings["str_style_repr"])
+    
+    def _latex_(self):
+        return self.tostring(iutil.convert_str_style("latex"))
+        
         
     def __hash__(self):
         #return hash(self.tostring(tosort = True))
@@ -1861,6 +2076,7 @@ class Comp:
                 a.reg.rename_map(namemap)
         return self
     
+    @fcn_substitute
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound)"""
         
@@ -1892,10 +2108,10 @@ class Comp:
             if a.reg is not None:
                 a.reg.substitute(v0, v1)
     
-    def substituted(self, v0, v1):
+    def substituted(self, *args, **kwargs):
         """Substitute variable v0 by v1 (v1 can be compound), return result"""
         r = self.copy()
-        r.substitute(v0, v1)
+        r.substitute(*args, **kwargs)
         return r
         
     def substitute_list(a, vlist, suffix = "", isaux = False):
@@ -1931,7 +2147,7 @@ class Comp:
     
         
     def table(self, *args, **kwargs):
-        """Plot the information diagram as a Gray-coded table.
+        """Plot the information diagram as a Karnaugh map.
         """
         return universe().table(self, *args, **kwargs)
         
@@ -2056,7 +2272,7 @@ class TermType:
     REAL = 2
     REGION = 3
     
-class Term:
+class Term(IBaseObj):
     """A term in an expression
     Do NOT use this class directly. Use Expr instead
     """
@@ -2081,6 +2297,10 @@ class Term:
         
     def zero():
         return Term([], Comp.empty())
+    
+    def isempty(self):
+        """Whether self is empty."""
+        return len(self.x) == 0 or any(len(a) == 0 for a in self.x)
     
     def setzero(self):
         self.x = []
@@ -2200,6 +2420,13 @@ class Term:
             return True
         return False
         
+    def isihc2(self):
+        if self.get_type() == TermType.IC:
+            if len(self.x) != 2:
+                return False
+            return True
+        return False
+        
     def ish(self):
         if self.get_type() == TermType.IC:
             if len(self.x) != 1:
@@ -2258,7 +2485,7 @@ class Term:
         name += "(" + "&".join(repr(a) for a in cx) + "|" + repr(self.z) + ")"
         name += ".prob(" + ",".join(str(b) for b in args) + ")"
         name += "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@"
-        name += "P(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(cx, args[len(self.z):])) + "|"
+        name += PsiOpts.settings["latex_prob"] + "(" + ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(cx, args[len(self.z):])) + "|"
         name += ",".join((a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "=" + str(b)) for a, b in zip(self.z, args[:len(self.z)])) + ")"
             
         def fcncall(xdist):
@@ -2386,25 +2613,113 @@ class Term:
         elif termType == TermType.IC:
             r = ""
             if len(self.x) == 1:
-                r += "H"
+                if style & PsiOpts.STR_STYLE_LATEX:
+                    r += PsiOpts.settings["latex_H"]
+                else:
+                    r += "H"
             else:
-                r += "I"
+                if style & PsiOpts.STR_STYLE_LATEX:
+                    r += PsiOpts.settings["latex_I"]
+                else:
+                    r += "I"
             r += "("
             
             namelist = [a.tostring(style = style, tosort = tosort) for a in self.x]
             if tosort:
                 namelist.sort()
                 
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 r += "&".join(namelist)
+            elif style & PsiOpts.STR_STYLE_LATEX:
+                r += (PsiOpts.settings["latex_mi_delim"] + " ").join(namelist)
             else:
                 r += ";".join(namelist)
+                
             if self.z.size() > 0:
-                r += "|" + self.z.tostring(style = style, tosort = tosort)
+                if style & PsiOpts.STR_STYLE_LATEX:
+                    r += PsiOpts.settings["latex_cond"]
+                else:
+                    r += "|" 
+                r += self.z.tostring(style = style, tosort = tosort)
             r += ")"
             return r
+        
         elif termType == TermType.REGION:
-            return self.x[0].tostring(style = style, tosort = tosort)
+            if self.x[0].varlist[0].name.find("@@") >= 0:
+                return self.x[0].tostring(style = style, tosort = tosort)
+            
+            reg = self.reg
+            sn = self.sn
+            bds = [self.copy_noreg()]
+            
+            rsb = self.get_reg_sgn_bds()
+            if rsb is not None and (not style & PsiOpts.STR_STYLE_PSITIP
+                                    or len(rsb[2]) == 1 or rsb[0].isuniverse()):
+                reg, sn, bds = rsb
+            # elif rsb is not None and rsb[0].isuniverse():
+            #     reg, sn, bds = rsb
+            #     sn *= -1
+            reg_universe = reg.isuniverse()
+                
+            if style & PsiOpts.STR_STYLE_LATEX:
+                r = ""
+                if not reg_universe:
+                    if sn > 0:
+                        r += PsiOpts.settings["latex_sup"]
+                    else:
+                        r += PsiOpts.settings["latex_inf"]
+                    r += "_{"
+                    r += reg.tostring(style = style & ~PsiOpts.STR_STYLE_LATEX_ARRAY, 
+                                      tosort = tosort, small = True, skip_outer_exists = True)
+                    r += "}"
+                    
+                if len(bds) > 1:
+                    if sn > 0:
+                        r += PsiOpts.settings["latex_min"]
+                    else:
+                        r += PsiOpts.settings["latex_max"]
+                    r += "\\left("
+                r += ",\\, ".join(b.tostring(style = style, tosort = tosort, add_bracket = len(bds) == 1) for b in bds)
+                
+                if len(bds) > 1:
+                    r += "\\right)"
+                    
+                return r
+            else:
+                r = ""
+                if not reg_universe:
+                    r += "("
+                    r += reg.tostring(style = style, tosort = tosort, small = True)
+                    r += ")"
+                    if sn > 0:
+                        r += ".maximum"
+                    else:
+                        r += ".minimum"
+                    r += "("
+                    
+                if len(bds) > 1:
+                    if style & PsiOpts.STR_STYLE_PSITIP:
+                        if sn > 0:
+                            r += "emin"
+                        else:
+                            r += "emax"
+                    else:
+                        if sn > 0:
+                            r += "min"
+                        else:
+                            r += "max"
+                            
+                    r += "("
+                    
+                r += ", ".join(b.tostring(style = style, tosort = tosort) for b in bds)
+                
+                if len(bds) > 1:
+                    r += ")"
+                    
+                if not reg_universe:
+                    r += ")"
+                return r
+            
         
         return ""
     
@@ -2414,7 +2729,11 @@ class Term:
                              tosort = PsiOpts.settings["str_tosort"])
     
     def __repr__(self):
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
+        return self.tostring(PsiOpts.settings["str_style_repr"])
+    
+    def _latex_(self):
+        return self.tostring(iutil.convert_str_style("latex"))
+        
         
     def __hash__(self):
         #return hash(self.tostring(tosort = True))
@@ -2458,6 +2777,13 @@ class Term:
                         else:
                             j += 1
                         
+                if len(self.x) == 3:
+                    for i in range(len(self.x)):
+                        if bnet.check_ic(Expr.Ic(self.x[(i + 1) % 3], 
+                                                 self.x[(i + 2) % 3],
+                                                 self.x[i] + self.z)):
+                            self.x.pop(i)
+                            break
                 
                 
         return self
@@ -2652,6 +2978,7 @@ class Term:
         self.z.rename_map(namemap)
         return self
     
+    @fcn_substitute
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound)"""
         if self.get_type() == TermType.REGION:
@@ -2680,7 +3007,7 @@ class Term:
     
     
     
-class Expr:
+class Expr(IBaseObj):
     """An expression
     """
     
@@ -2812,15 +3139,20 @@ class Expr:
         
     def __imul__(self, other):
         if isinstance(other, Expr):
-            other = other.get_const()
-            if other is None:
+            tother = other.get_const()
+            if tother is None:
                 return self * other
                 # raise ValueError("Multiplication with non-constant expression is not supported.")
+            else:
+                other = tother
         self.terms = [(a, c * other) for (a, c) in self.terms]
         self.mhash = None
         return self
         
     def __mul__(self, other):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return NotImplemented
+        
         if isinstance(other, int) or isinstance(other, float):
             if other == 0:
                 return Expr.zero()
@@ -2828,10 +3160,14 @@ class Expr:
         if isinstance(other, Expr):
             tother = other.get_const()
             if tother is None:
-                # raise ValueError("Multiplication with non-constant expression is not supported.")
-                return Expr.fromterm(Term(Comp.real(
-                    iutil.fcn_name_maker("*", [self, other], lname = "\\cdot", infix = True)
-                    ), reg = Region.universe(), fcncall = "*", fcnargs = [self, other]))
+                tself = self.get_const()
+                if tself is None:
+                    # raise ValueError("Multiplication with non-constant expression is not supported.")
+                    return Expr.fromterm(Term(Comp.real(
+                        iutil.fcn_name_maker("*", [self, other], lname = PsiOpts.settings["latex_times"] + " ", infix = True)
+                        ), reg = Region.universe(), fcncall = "*", fcnargs = [self, other]))
+                else:
+                    return other * tself
             else:
                 other = tother
         return Expr([(a.copy(), c * other) for (a, c) in self.terms])
@@ -2846,13 +3182,16 @@ class Expr:
             if tother is None:
                 # raise ValueError("Multiplication with non-constant expression is not supported.")
                 return Expr.fromterm(Term(Comp.real(
-                    iutil.fcn_name_maker("*", [other, self], lname = "\\cdot", infix = True)
+                    iutil.fcn_name_maker("*", [other, self], lname = PsiOpts.settings["latex_times"] + " ", infix = True)
                     ), reg = Region.universe(), fcncall = "*", fcnargs = [other, self]))
             else:
                 other = tother
         return Expr([(a.copy(), c * other) for (a, c) in self.terms])
         
     def __itruediv__(self, other):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return NotImplemented
+        
         if isinstance(other, Expr):
             tother = other.get_const()
             if tother is None:
@@ -2865,6 +3204,8 @@ class Expr:
         return self
     
     def __pow__(self, other):
+        if isinstance(other, CompArray) or isinstance(other, ExprArray):
+            return NotImplemented
         return Expr.fromterm(Term(Comp.real(
             iutil.fcn_name_maker("**", [self, other], lname = "^", infix = True, latex_group = True)
             ), reg = Region.universe(), fcncall = "**", fcnargs = [self, other]))
@@ -3069,7 +3410,7 @@ class Expr:
         return (reg, sn, [b + rest for b in bds])
         
         
-    def tostring(self, style = 0, tosort = False):
+    def tostring(self, style = 0, tosort = False, add_bracket = False):
         """Convert to string
         Parameters:
             style   : Style of string conversion
@@ -3083,7 +3424,15 @@ class Expr:
             termlist = sorted(termlist, key=lambda a: (-round(a[1] * 1000.0), 
                                    a[0].tostring(style = style, tosort = tosort)))
         
+        use_bracket = add_bracket and len(termlist) >= 2
+        
         r = ""
+        if use_bracket:
+            if style & PsiOpts.STR_STYLE_LATEX:
+                r += "\\left("
+            else:
+                r += "("
+                
         first = True
         for (a, c) in termlist:
             if abs(c) <= PsiOpts.settings["eps"]:
@@ -3099,13 +3448,20 @@ class Expr:
                     r += "-"
                 else:
                     r += iutil.float_tostr(c, style)
-                    if style == PsiOpts.STR_STYLE_PSITIP:
+                    if style & PsiOpts.STR_STYLE_PSITIP:
                         r += "*"
                 r += a.tostring(style = style, tosort = tosort)
             first = False
             
         if r == "":
             return "0"
+        
+        if use_bracket:
+            if style & PsiOpts.STR_STYLE_LATEX:
+                r += "\\right)"
+            else:
+                r += ")"
+                
         return r
         
     def __str__(self):
@@ -3114,9 +3470,16 @@ class Expr:
     
     def __repr__(self):
         if PsiOpts.settings.get("repr_simplify", False):
-            return self.simplified().tostring(PsiOpts.STR_STYLE_PSITIP)
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
+            return self.simplified().tostring(PsiOpts.settings["str_style_repr"])
+        return self.tostring(PsiOpts.settings["str_style_repr"])
         
+    
+    def _latex_(self):
+        if PsiOpts.settings.get("repr_simplify", False):
+            return self.simplified().tostring(iutil.convert_str_style("latex"))
+        return self.tostring(iutil.convert_str_style("latex"))
+        
+    
     def __hash__(self):
         if self.mhash is None:
             #self.mhash = hash(self.tostring(tosort = True))
@@ -3125,7 +3488,7 @@ class Expr:
         return self.mhash
         
     def table(self, *args, **kwargs):
-        """Plot the information diagram as a Gray-coded table.
+        """Plot the information diagram as a Karnaugh map.
         """
         return universe().table(*args, self, **kwargs)
         
@@ -3474,6 +3837,7 @@ class Expr:
             self += v1 * c
         return self
         
+    @fcn_substitute
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), in place"""
         self.mhash = None
@@ -3494,10 +3858,10 @@ class Expr:
                 a.substitute(v0, v1)
         return self
 
-    def substituted(self, v0, v1):
+    def substituted(self, *args, **kwargs):
         """Substitute variable v0 by v1 (v1 can be compound), return result"""
         r = self.copy()
-        r.substitute(v0, v1)
+        r.substitute(*args, **kwargs)
         return r
 
     def condition(self, b):
@@ -3572,13 +3936,16 @@ class Expr:
         rhs = []
         for (a, c) in self.terms:
             if c > 0:
-                lhs.append((a, c))
-            else:
                 rhs.append((a, c))
+            else:
+                lhs.append((a, c))
         return (Expr(lhs), Expr(rhs))
         
     
-    def tostring_eqn(self, eqnstr, style = 0, tosort = False, lhsvar = None):
+    def tostring_eqn(self, eqnstr, style = 0, tosort = False, lhsvar = None, prefer_ge = None):
+        if prefer_ge is None:
+            prefer_ge = PsiOpts.settings["str_eqn_prefer_ge"]
+        
         style = iutil.convert_str_style(style)
         lhs = self
         rhs = Expr.zero()
@@ -3587,16 +3954,14 @@ class Expr:
             
             if lhs.iszero() or rhs.iszero():
                 lhs, rhs = self.split_posneg()
+                if prefer_ge:
+                    lhs, rhs = rhs, lhs
                 if lhs.iszero():
                     lhs, rhs = rhs, lhs
                 elif lhs.get_const() is not None:
                     lhs, rhs = rhs, lhs
-                    rhs *= -1.0
-                else:
-                    rhs *= -1.0
                 
-            else:
-                rhs *= -1.0
+            rhs *= -1.0
                 
             if lhs.coeff_sum() < 0 or (abs(lhs.coeff_sum()) <= PsiOpts.settings["eps"] and rhs.coeff_sum() < 0):
                 lhs *= -1.0
@@ -3607,7 +3972,7 @@ class Expr:
         + iutil.eqnstr_style(eqnstr, style) + " " + rhs.tostring(style = style, tosort = tosort))
         
         
-class BayesNet:
+class BayesNet(IBaseObj):
     """Bayesian network"""
     
     def __init__(self, edges = None):
@@ -3876,14 +4241,66 @@ class BayesNet:
     def iscyclic(self):
         return self.tsorted() is None
             
+    def check_hc_mask(self, x, z):
+        n = self.index.comprv.size()
+        cstack = []
+        vis = [False] * n
+        
+        x &= ~z
+        
+        for i in range(n):
+            if x & (1 << i):
+                cstack.append(i)
+                vis[i] = True
+            if z & (1 << i):
+                vis[i] = True
+        
+        while cstack:
+            i = cstack.pop()
+            if not self.fcn[i]:
+                return False
+            for j in self.parent[i]:
+                if not vis[j]:
+                    cstack.append(j)
+                    vis[j] = True
+        
+        return True
+    
+    def fcn_descendants_mask(self, x):
+        n = self.index.comprv.size()
+        did = True
+        while did:
+            did = False
+            for i in range(n):
+                if self.fcn[i] and not x & (1 << i):
+                    if all(x & j for j in self.parent[i]):
+                        x |= 1 << i
+                        did = True
+        return x
+        
+    def fcn_descendants(self, x):
+        return self.index.from_mask(self.fcn_descendants_mask(self.index.get_mask(x)))
+    
     def check_ic_mask(self, x, y, z):
         if x < 0 or y < 0 or z < 0:
             return False
         
+        z = self.fcn_descendants_mask(z)
+        
         x &= ~z
         y &= ~z
+        
         if x & y != 0:
+            # if not self.check_hc_mask(x & y, z):
+            #     return False
+            # z |= x & y
+            # x &= ~z
+            # y &= ~z
+            
             return False
+        
+        if x == 0 or y == 0:
+            return True
         
         n = self.index.comprv.size()
         desc = z
@@ -3924,13 +4341,19 @@ class BayesNet:
         return True
         
     def check_ic(self, icexpr):
-        for (a, c) in icexpr.terms:
-            if not a.isic2():
+        for a, c in icexpr.terms:
+            if a.isihc2():
+                if not self.check_ic_mask(self.index.get_mask(a.x[0]), 
+                                          self.index.get_mask(a.x[1]), 
+                                          self.index.get_mask(a.z)):
+                    return False
+            elif a.ishc():
+                if not self.check_hc_mask(self.index.get_mask(a.x[0]), 
+                                          self.index.get_mask(a.z)):
+                    return False
+            else:
                 return False
-            if not self.check_ic_mask(self.index.get_mask(a.x[0]), 
-                                      self.index.get_mask(a.x[1]), 
-                                      self.index.get_mask(a.z)):
-                return False
+            
         return True
     
     def from_ic_inplace(self, icexpr, roots = None):
@@ -4028,9 +4451,121 @@ class BayesNet:
             
     
     def from_ic(icexpr, roots = None):
+        """Construct Bayesian network from the sum of conditional mutual 
+        information terms (Expr).
+        """
         r = BayesNet()
         r.from_ic_inplace(icexpr, roots)
         return r
+    
+    def from_ic_list(icexpr, roots = None):
+        """Construct a list of Bayesian networks from the sum of conditional 
+        mutual information terms (Expr).
+        """
+        r = []
+        icexpr = icexpr.copy()
+        while not icexpr.iszero():
+            
+            t = BayesNet.from_ic(icexpr, roots = roots).tsorted()
+            olen = len(icexpr.terms)
+            icexpr.terms = [(a, c) for a, c in icexpr.terms if not t.check_ic(Expr.fromterm(a))]
+            icexpr.mhash = None
+            
+            if len(icexpr.terms) == olen:
+                tl = BayesNet.from_ic_list(Expr.fromterm(icexpr.terms[0][0]), roots = roots)
+                icexpr.terms = [(a, c) for a, c in icexpr.terms if not any(t.check_ic(Expr.fromterm(a)) for t in tl)]
+                icexpr.mhash = None
+                r += tl
+                continue
+            
+            r.append(t)
+        return r
+    
+    def get_markov(self):
+        """Get Markov chains as a list of lists.
+        """
+            
+        cs = self.tsorted()
+        n = cs.index.comprv.size()
+        r = []
+        
+        def parent_min(i):
+            r = i
+            for j in cs.parent[i]:
+                r = min(r, parent_min(j))
+            return r
+        
+        def parent_segment(i):
+            if not cs.parent[i]:
+                return -1
+            m = min(cs.parent[i])
+            if len(cs.parent[i]) != i - m:
+                return -1
+            
+            for j in range(m + 1, i):
+                if set(cs.parent[j]) != set(cs.parent[m]).union(range(m, j)):
+                    return -1
+            
+            return m
+        
+        def node_segment(i):
+            for j in range(i - 1, -1, -1):
+                if set(cs.parent[i]) != set(cs.parent[j]).union(range(j, i)):
+                    return j + 1
+            return 0
+        
+        def recur(st, en):
+            if st >= en:
+                return
+            
+            i = en - 1
+            
+            cms = [en, parent_min(i)]
+            if cms[-1] > st:
+                while cms[-1] > st:
+                    t = parent_min(cms[-1] - 1)
+                    cms.append(t)
+                tl = []
+                for i in range(len(cms) - 1):
+                    if i:
+                        tl.append([])
+                    tl.append(list(range(cms[i + 1], cms[i])))
+                r.append(tl)
+                for i in range(len(cms) - 1):
+                    recur(cms[i + 1], cms[i])
+                
+                return
+            
+            if len(cs.parent[i]) >= i - st:
+                recur(st, i)
+                return
+            
+            m = node_segment(i)
+            t = [list(range(m, i + 1))]
+            i = m
+            
+            while i >= st:
+                t.append(cs.parent[i])
+                m = parent_segment(i)
+                if m < 0:
+                    break
+                i = m
+                
+            t.append([j for j in range(st, i) if j not in cs.parent[i]])
+            
+            while not t[-1]:
+                t.pop()
+                
+            if len(t) >= 3:
+                r.append(t)
+            
+            recur(st, i)
+        
+        recur(0, n)
+        
+        return [[sum((cs.index.comprv[a] for a in b), Comp.empty()) for b in reversed(tl)]
+                for tl in reversed(r)]
+    
     
     def get_ic_sorted(self):
         n = self.index.comprv.size()
@@ -4085,6 +4620,10 @@ class BayesNet:
     
     def __repr__(self):
         return self.tostring()
+    
+    def _latex_(self):
+        return self.tostring()
+        
         
     def __hash__(self):
         return hash(self.tostring())
@@ -4144,12 +4683,14 @@ class ValIndex:
         return self.vmap.get(x, -1)
     
     
-class ConcDist:
+class ConcDist(IBaseObj):
     """Concrete distributions / conditional distributions of random variables."""
     
     def convert_shape(x):
         if x is None:
             return tuple()
+        if isinstance(x, int):
+            return (x,)
         if isinstance(x, Comp):
             return x.get_shape()
         if isinstance(x, ConcDist):
@@ -4159,6 +4700,8 @@ class ConcDist:
     def convert_shape_pair(x):
         if x is None:
             return (tuple(), tuple())
+        if isinstance(x, int):
+            return (tuple(), (x,))
         if isinstance(x, Term):
             return (x.z.get_shape(), sum((t.get_shape() for t in x.x), tuple()))
         if isinstance(x, Comp) or isinstance(x, ConcDist):
@@ -4821,6 +5364,29 @@ class ConcDist:
         shape_in, shape_out = ConcDist.convert_shape_pair(shape)
         return ConcDist(ExprArray.fcn(fcncall, shape_in + shape_out), shape_in = shape_in, shape_out = shape_out)
         
+    def det_fcn(fcncall, shape, isvar = False):
+        shape_in, shape_out = ConcDist.convert_shape_pair(shape)
+        p = numpy.zeros(shape_in + shape_out)
+        for xs in itertools.product(*[range(x) for x in shape_in]):
+            
+            t = fcncall(*xs)
+            
+            # t = 0
+            # if len(xs) == 1:
+            #     t = fcncall(xs[0])
+            # else:
+            #     t = fcncall(xs)
+            
+            if isinstance(t, (bool, float)):
+                t = int(t)
+                
+            if isinstance(t, int):
+                t = (t,)
+            p[xs + t] = 1.0
+            
+        return ConcDist(p, num_in = len(shape_in), isvar = isvar)
+        
+    
     def valid_region(self, skip_simplify = False):
         """For a symbolic distribution, returns the region where this is a
         valid distribution.
@@ -4947,7 +5513,7 @@ class ConcDist:
         
     
     
-class ConcReal:
+class ConcReal(IBaseObj):
     """Concrete real variable."""
     
     def __init__(self, x = None, lbound = None, ubound = None, scale = 1.0, isvar = False, isint = False, randomize = False):
@@ -5150,7 +5716,7 @@ class ConcReal:
         return r
     
     
-class RealRV:
+class RealRV(IBaseObj):
     """Discrete real-valued random variable."""
     
     def __init__(self, x, fcn = None, supp = None):
@@ -5163,7 +5729,7 @@ class RealRV:
         return self.comp
     
     
-class ConcModel:
+class ConcModel(IBaseObj):
     """Concrete distributions of random variables and values of real variables."""
     
     def __init__(self, bnet = None, istorch = None):
@@ -5298,6 +5864,11 @@ class ConcModel:
                                           isvar = isvar, randomize = randomize, isfcn = isfcn))
             return
         
+        
+        if isinstance(p, collections.Callable) and not isinstance(p, (ConcDist, list, ExprArray)):
+            dist = ConcDist.det_fcn(p, self.convert_shape_pair(x))
+            self.set_prob(x, dist)
+            return
         
         self.bnet += x
         cin, cout = self.comp_to_pair(x)
@@ -5460,6 +6031,8 @@ class ConcModel:
     def convert_shape(self, x):
         if x is None:
             return tuple()
+        if isinstance(x, int):
+            return (x,)
         if isinstance(x, Comp):
             return tuple(self.get_card_default(a) for a in x)
         if isinstance(x, ConcDist):
@@ -5469,6 +6042,8 @@ class ConcModel:
     def convert_shape_pair(self, x):
         if x is None:
             return (tuple(), tuple())
+        if isinstance(x, int):
+            return (tuple(), (x,))
         if isinstance(x, Term):
             return (self.convert_shape(x.z), sum((self.convert_shape(t) for t in x.x), tuple()))
         if isinstance(x, Comp) or isinstance(x, ConcDist):
@@ -5482,6 +6057,19 @@ class ConcModel:
         p = self.get_prob(x)
         return p.entropy().x
         
+    def get_ent_vector(self, x):
+        n = len(x)
+        r = []
+        for mask in range(1 << n):
+            r.append(self.get_H(x.from_mask(mask)))
+        return r
+    
+    def discover(self, x, eps = None, skip_simplify = False):
+        """Discover conditional independence among variables in x.
+        """
+        v = self.get_ent_vector(x)
+        return Region.ent_vector_discover_ic(v, x, eps, skip_simplify)
+    
     def get_region(self):
         return self.bnet.get_region()
         
@@ -6004,6 +6592,9 @@ class ConcModel:
         
         cs = self.copy_shallow()
         
+        if isinstance(expr, (int, float)):
+            expr = Expr.const(expr)
+        
         # if reg is not None or expr.isregtermpresent():
         #     tvaropt = Expr.real("#TMPVAROPT")
         #     reg = reg & (tvaropt * sgn <= expr * sgn)
@@ -6504,7 +7095,7 @@ class ConcModel:
         return self.bnet.copy()
     
     def table(self, *args, **kwargs):
-        """Plot the information diagram as a Gray-coded table.
+        """Plot the information diagram as a Karnaugh map.
         """
         return universe().table(*args, self, **kwargs)
         
@@ -7586,7 +8177,11 @@ class LinearProg:
                         
             if cexpr is not None:
                 prob.setObjective(cexpr)
-                res = prob.solve(iutil.pulp_get_solver(self.solver))
+                try:
+                    res = prob.solve(iutil.pulp_get_solver(self.solver))
+                except Exception as err:
+                    warnings.warn(str(err), RuntimeWarning)
+                    res = 0
                 
                 if pulp.LpStatus[res] == "Optimal":
                     
@@ -7596,6 +8191,7 @@ class LinearProg:
             
         
         elif self.solver.startswith("pyomo."):
+            coptions = PsiOpts.get_pyomo_options()
             opt = self.solver_param["opt"]
             model = self.solver_param["model"]
             
@@ -7614,9 +8210,13 @@ class LinearProg:
             
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                res = opt.solve(model)
+                try:
+                    res = opt.solve(model, options = coptions)
+                except Exception as err:
+                    warnings.warn(str(err), RuntimeWarning)
+                    res = None
 
-            if (res.solver.status == pyo.SolverStatus.ok 
+            if (res is not None and res.solver.status == pyo.SolverStatus.ok 
                 and res.solver.termination_condition == pyo.TerminationCondition.optimal):
                     
                 return (model.o(), [model.x[i + 1]() for i in range(self.nxvar)])
@@ -7808,7 +8408,12 @@ class LinearProg:
                         
             if cexpr is not None:
                 prob.setObjective(cexpr)
-                res = prob.solve(iutil.pulp_get_solver(self.solver))
+                try:
+                    res = prob.solve(iutil.pulp_get_solver(self.solver))
+                except Exception as err:
+                    warnings.warn(str(err), RuntimeWarning)
+                    res = 0
+                    
                 if verbose:
                     print("  status=" + pulp.LpStatus[res] + " optval=" + str(prob.objective.value()))
                 
@@ -7863,6 +8468,7 @@ class LinearProg:
             
         
         elif self.solver.startswith("pyomo."):
+            coptions = PsiOpts.get_pyomo_options()
             opt = self.solver_param["opt"]
             model = self.solver_param["model"]
             
@@ -7881,16 +8487,20 @@ class LinearProg:
             
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                res = opt.solve(model)
+                try:
+                    res = opt.solve(model, options = coptions)
+                except Exception as err:
+                    warnings.warn(str(err), RuntimeWarning)
+                    res = None
 
-            if verbose:
+            if verbose and res is not None:
                 print("  status=" + ("OK" if res.solver.status == pyo.SolverStatus.ok else "NO"))
             
-            if self.affine_present and self.lp_bounded and res.solver.termination_condition == pyo.TerminationCondition.infeasible:
+            if res is not None and self.affine_present and self.lp_bounded and res.solver.termination_condition == pyo.TerminationCondition.infeasible:
                 return True
             
             #print("save_res = " + str(self.save_res))
-            if (res.solver.status == pyo.SolverStatus.ok 
+            if (res is not None and res.solver.status == pyo.SolverStatus.ok 
                 and res.solver.termination_condition == pyo.TerminationCondition.optimal):
                     
                 self.optval = model.o() + c1
@@ -8258,7 +8868,7 @@ class LinearProg:
     
     
     def table(self, *args, **kwargs):
-        """Plot the information diagram as a Gray-coded table.
+        """Plot the information diagram as a Karnaugh map.
         """
         return universe().table(*args, self, **kwargs)
         
@@ -8277,7 +8887,7 @@ class RegionType:
     UNION = 2
     INTER = 3
     
-class Region:
+class Region(IBaseObj):
     """A region consisting of equality and inequality constraints"""
     
     def __init__(self, exprs_ge, exprs_eq, aux, inp, oup, exprs_gei = None, exprs_eqi = None, auxi = None):
@@ -8549,6 +9159,7 @@ class Region:
         self.auxi.rename_map(namemap)
         return self
     
+    @fcn_substitute
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), in place"""
         for x in self.exprs_ge:
@@ -8567,12 +9178,13 @@ class Region:
             self.auxi.substitute(v0, v1)
         return self
         
-    def substituted(self, v0, v1):
+    def substituted(self, *args, **kwargs):
         """Substitute variable v0 by v1 (v1 can be compound), return result"""
         r = self.copy()
-        r.substitute(v0, v1)
+        r.substitute(*args, **kwargs)
         return r
 
+    @fcn_substitute
     def substitute_aux(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), and remove auxiliary v0, in place"""
         for x in self.exprs_ge:
@@ -8591,10 +9203,10 @@ class Region:
             self.auxi -= v0
         return self
         
-    def substituted_aux(self, v0, v1):
+    def substituted_aux(self, *args, **kwargs):
         """Substitute variable v0 by v1 (v1 can be compound), and remove auxiliary v0, return result"""
         r = self.copy()
-        r.substitute_aux(v0, v1)
+        r.substitute_aux(*args, **kwargs)
         return r
 
     def remove_present(self, v):
@@ -8654,7 +9266,7 @@ class Region:
             
     
     def find_name(self, *args):
-        return self.allcomp().find_name(*args)
+        r = self.allcomp().find_name(*args)
         
     def placeholder(*args):
         r = Expr.zero()
@@ -9421,6 +10033,11 @@ class Region:
         cs.flatten(minmax_elim = minmax_elim)
         for x in args:
             cs.flatten_term(x)
+        
+        t = cs.tosimple()
+        if t is not None:
+            return t
+        
         return cs
     
     def incorporate_tmp(self, x, tmplink):
@@ -9658,12 +10275,20 @@ class Region:
         return self
         
     
-    def optimum(self, v, sn):
+    def optimum(self, v, b, sn):
         """Return the variable obtained from maximizing (sn=1)
-        or minimizing (sn=-1) the expression v
+        or minimizing (sn=-1) the expression v over variables b (Comp, Expr or list)
         """
         if v.size() == 1 and v.terms[0][0].get_type() == TermType.REAL:
-            return Expr.fromterm(Term(v.terms[0][0].copy().x, Comp.empty(), self, sn))
+            coeff = v.terms[0][1]
+            if coeff < 0:
+                sn *= -1
+                
+            cs = self.copy()
+            if b is not None:
+                cs.eliminate(b)
+            
+            return Expr.fromterm(Term(v.terms[0][0].copy().x, Comp.empty(), cs, sn)) * coeff
         
         tmpstr = ""
         if sn > 0:
@@ -9673,21 +10298,31 @@ class Region:
         tmpstr += str(iutil.hash_short(self))
         tmpvar = Expr.real(tmpstr + "(" + str(v) + ")")
         cs = self.copy()
+        
+        toadd = Region.universe()
         if sn > 0:
-            cs.exprs_ge.append(v - tmpvar)
+            toadd.exprs_ge.append(v - tmpvar)
         else:
-            cs.exprs_ge.append(tmpvar - v)
-        return cs.optimum(tmpvar, sn)
+            toadd.exprs_ge.append(tmpvar - v)
+        
+        toadd = toadd.flattened(minmax_elim = True)
+        # cs = cs & toadd
+        
+        cs.iand_norename(toadd)
+        
+        return cs.optimum(tmpvar, b, sn)
     
-    def maximum(self, v):
-        """Return the variable obtained from maximizing the expression v
+    def maximum(self, expr, vs = None):
+        """Return the variable obtained from maximizing the expression expr
+        over variables vs (Comp, Expr or list)
         """
-        return self.optimum(v, 1)
+        return self.optimum(expr, vs, 1)
     
-    def minimum(self, v):
-        """Return the variable obtained from minimizing the expression v
+    def minimum(self, expr, vs = None):
+        """Return the variable obtained from minimizing the expression expr
+        over variables vs (Comp, Expr or list)
         """
-        return self.optimum(v, -1)
+        return self.optimum(expr, vs, -1)
     
     def init_prog(self, index = None, lptype = None, save_res = False, lp_bounded = None, dual_enabled = None, val_enabled = None):
         if index is None:
@@ -11296,10 +11931,12 @@ class Region:
         return None
     
         
-    def add_sfrl_imp(self, x, y, gap = None, noaux = True):
+    def add_sfrl_imp(self, x, y, gap = None, noaux = True, name = None):
         ccomp = self.allcomprv() - self.aux
         
-        newvar = Comp.rv(self.name_avoid(y.tostring(add_braket = True) + "%" + x.tostring(add_braket = True)))
+        if name is None:
+            name = self.name_avoid(y.tostring(add_bracket = True) + "%" + x.tostring(add_bracket = True))
+        newvar = Comp.rv(name)
         self.exprs_gei.append(-Expr.I(x, newvar))
         self.exprs_gei.append(-Expr.Hc(y, x + newvar))
         others = ccomp - x - y
@@ -11315,9 +11952,10 @@ class Region:
         
         return newvar
     
-    def add_sfrl(self, x, y, gap = None, noaux = True):
+    @fcn_list_to_list
+    def add_sfrl(self, x, y, gap = None, noaux = True, name = None):
         self.imp_flip()
-        r = self.add_sfrl_imp(x, y, gap, noaux)
+        r = self.add_sfrl_imp(x, y, gap, noaux, name)
         self.imp_flip()
         return r
         
@@ -11330,8 +11968,8 @@ class Region:
         
         ccomp = self.allcomprv() - self.aux
         
-        newvar = Comp.rv(self.name_avoid(y.tostring(add_braket = True) + "%" + x.tostring(add_braket = True)))
-        newvark = Comp.rv(self.name_avoid(y.tostring(add_braket = True) + "%" + x.tostring(add_braket = True) + "_K"))
+        newvar = Comp.rv(self.name_avoid(y.tostring(add_bracket = True) + "%" + x.tostring(add_bracket = True)))
+        newvark = Comp.rv(self.name_avoid(y.tostring(add_bracket = True) + "%" + x.tostring(add_bracket = True) + "_K"))
         self.exprs_gei.append(-Expr.I(x, newvar))
         self.exprs_gei.append(-Expr.Hc(newvark, x + newvar))
         self.exprs_gei.append(-Expr.Hc(y, newvar + newvark))
@@ -11598,6 +12236,11 @@ class Region:
         for rr in (self <= other).check_getaux_gen(hint_pair, hint_aux):
             yield rr
         
+    
+    def equiv(self, other):
+        """Whether self is equivalent to other"""
+        return (self <= other).check() and (other <= self).check()
+    
     def allcomp(self):
         index = IVarIndex()
         self.record_to(index)
@@ -11635,11 +12278,7 @@ class Region:
         self.auxi = Comp.empty()
         return self
         
-    def completed_semigraphoid(self, max_iter = None):
-        """ Use semi-graphoid axioms to deduce more conditional independence.
-        Judea Pearl and Azaria Paz, "Graphoids: a graph-based logic for reasoning 
-        about relevance relations", Advances in Artificial Intelligence (1987), pp. 357--363.
-        """
+    def completed_semigraphoid_ic(self, max_iter = None):
         verbose = PsiOpts.settings.get("verbose_semigraphoid", False)
         
         def mask_impl(a, b):
@@ -11788,8 +12427,17 @@ class Region:
         r = Expr.zero()
         for a0, a1, az in icl:
             r += Expr.Ic(index.from_mask(a0), index.from_mask(a1), index.from_mask(az))
-        return r <= 0
-                
+        return r
+               
+    
+    def completed_semigraphoid(self, max_iter = None):
+        """ Use semi-graphoid axioms to deduce more conditional independence.
+        Judea Pearl and Azaria Paz, "Graphoids: a graph-based logic for reasoning 
+        about relevance relations", Advances in Artificial Intelligence (1987), pp. 357--363.
+        """ 
+        
+        return self.completed_semigraphoid_ic(max_iter = max_iter) <= 0
+    
     
     def eliminated_ic(self, w):
         
@@ -12191,7 +12839,7 @@ class Region:
         else:
             return r.simplified()
         
-    def simplify_bayesnet(self, reg = None):
+    def simplify_bayesnet(self, reg = None, reduce_ic = False):
         
         if isinstance(reg, RegionOp):
             reg = reg.tosimple_noaux()
@@ -12215,12 +12863,35 @@ class Region:
         
         
         for x in self.exprs_ge:
+            
+            # Prevent circular simplification
             if not x.isnonpos():
                 x.simplify(bnet = bnet)
         
         for x in self.exprs_eq:
+            
+            # Prevent circular simplification
             if not (x.isnonpos() or x.isnonneg()):
                 x.simplify(bnet = bnet)
+        
+        if reduce_ic:
+            for x in self.exprs_ge:
+                if x.isnonpos():
+                    if bnet.check_ic(-x):
+                        x.setzero()
+                        
+            for x in self.exprs_eq:
+                if x.isnonpos():
+                    if bnet.check_ic(-x):
+                        x.setzero()
+                elif x.isnonneg():
+                    if bnet.check_ic(x):
+                        x.setzero()
+            
+            self.exprs_ge = [x for x in self.exprs_ge if not x.iszero()]
+            self.exprs_eq = [x for x in self.exprs_eq if not x.iszero()]
+            
+            self.iand_norename(bnet.get_region())
         
         return self
         
@@ -12405,62 +13076,72 @@ class Region:
         if reg is None:
             reg = Region.universe()
             
-        did = False
-        index = IVarIndex()
-        self.record_to(index)
-        reg.record_to(index)
+        did = True
         
-        taux = self.aux.copy()
-        taux2 = taux.copy()
-        tauxi = self.auxi.copy()
-        self.aux = Comp.empty()
-        self.auxi = Comp.empty()
-        
-        # print(self)
-        for a in taux:
-            if PsiOpts.is_timer_ended():
+        while did:
+            if self.aux.isempty():
                 break
-            a2 = Comp.rv(index.name_avoid(a.get_name()))
-            cs = (self.consonly().substituted(a, a2) & reg) >> self.exists(a)
-            #hint_aux_avoid = self.get_aux_avoid_list()
-            hint_aux_avoid = [(a, a2)]
-            # print(cs)
-            for rr in cs.check_getaux_inplace_gen(hint_aux_avoid = hint_aux_avoid, leaveone = leaveone):
-                stype = iutil.signal_type(rr)
-                if stype == "":
-                    # print(rr)
-                    ar = a.copy()
-                    Comp.substitute_list(ar, rr)
-                    if ar == a:
-                        continue
-                    # print(self)
-                    self.substitute(a, ar)
-                    # print(self)
-                    taux2 -= a
-                    did = True
+            
+            did = False
+        
+            index = IVarIndex()
+            self.record_to(index)
+            reg.record_to(index)
+            
+            taux = self.aux.copy()
+            taux2 = taux.copy()
+            tauxi = self.auxi.copy()
+            self.aux = Comp.empty()
+            self.auxi = Comp.empty()
+            
+            # print(self)
+            
+            
+            for a in taux:
+                if PsiOpts.is_timer_ended():
                     break
-                elif stype == "leaveone" and cases is not None:
-                    ar = a.copy()
-                    Comp.substitute_list(ar, rr[1])
-                    if ar == a:
-                        continue
-                    tr = self.copy()
-                    # tr.iand_norename(rr[2] <= 0)
-                    tr.substitute(a, ar)
+                a2 = Comp.rv(index.name_avoid(a.get_name()))
+                cs = (self.consonly().substituted(a, a2) & reg) >> self.exists(a)
+                #hint_aux_avoid = self.get_aux_avoid_list()
+                hint_aux_avoid = [(a, a2)]
+                # print(cs)
+                for rr in cs.check_getaux_inplace_gen(hint_aux_avoid = hint_aux_avoid, leaveone = leaveone):
+                    stype = iutil.signal_type(rr)
+                    if stype == "":
+                        # print(rr)
+                        ar = a.copy()
+                        Comp.substitute_list(ar, rr)
+                        if ar == a:
+                            continue
+                        # print(self)
+                        self.substitute(a, ar)
+                        # print(self)
+                        taux2 -= a
+                        did = True
+                        break
+                    elif stype == "leaveone" and cases is not None:
+                        ar = a.copy()
+                        Comp.substitute_list(ar, rr[1])
+                        if ar == a:
+                            continue
+                        tr = self.copy()
+                        # tr.iand_norename(rr[2] <= 0)
+                        tr.substitute(a, ar)
+                        
+                        tr.aux = taux2 - a
+                        tr.auxi = tauxi.copy()
+                        tr.simplify_quick()
+                        tr.simplify_aux(reg, cases)
+                        
+                        cases.append(tr)
+                        self.iand_norename(rr[2] >= 0)
+                        did = True
                     
-                    tr.aux = taux2 - a
-                    tr.auxi = tauxi.copy()
-                    tr.simplify_quick()
-                    tr.simplify_aux(reg, cases)
-                    
-                    cases.append(tr)
-                    self.iand_norename(rr[2] >= 0)
-                    did = True
-                
-        self.aux = taux2
-        self.auxi = tauxi
-        if did:
-            self.simplify_quick()
+            self.aux = taux2
+            self.auxi = tauxi
+            
+            if did:
+                self.simplify_quick()
         
         return self
     
@@ -12787,27 +13468,85 @@ class Region:
         
         return (r0, r1)
         
+    
     def get_ic(self, skip_simplify = False):
         cs = self
         if not skip_simplify:
             cs = self.simplified_quick(zero_group = 2)
-        icexpr = Expr.zero()
+            
+        # icexpr = Expr.zero()
+        # for x in cs.exprs_ge:
+        #     if x.isnonpos():
+        #         icexpr += x
+        # for x in cs.exprs_eq:
+        #     if x.isnonpos():
+        #         icexpr += x
+        #     elif x.isnonneg():
+        #         icexpr -= x
+        # return icexpr
+            
+        exprs = []
+        r = Expr.zero()
         for x in cs.exprs_ge:
             if x.isnonpos():
-                icexpr += x
+                exprs.append(x)
+                
         for x in cs.exprs_eq:
-            if x.isnonpos():
-                icexpr += x
-            elif x.isnonneg():
-                icexpr -= x
-        return icexpr
+            if x.isnonpos() or x.isnonneg():
+                exprs.append(x)
+                
+        for x in exprs:
+            for a, c in x.terms:
+                if a.isic2():
+                    r += Expr.fromterm(a)
+        return r
     
-    def get_bayesnet(self, roots = None, skip_simplify = False):
+    
+    def remove_ic(self):
+        exprs = []
+        r = Expr.zero()
+        for x in self.exprs_ge:
+            if x.isnonpos():
+                exprs.append(x)
+                
+        for x in self.exprs_eq:
+            if x.isnonpos() or x.isnonneg():
+                exprs.append(x)
+                
+        for x in exprs:
+            tterms = []
+            for a, c in x.terms:
+                if a.isic2():
+                    r += Expr.fromterm(a)
+                else:
+                    tterms.append((a, c))
+            x.terms = tterms
+            x.mhash = None
+            
+                
+        self.exprs_ge = [x for x in self.exprs_ge if not x.iszero()]
+        self.exprs_eq = [x for x in self.exprs_eq if not x.iszero()]
+        
+        return r
+    
+    
+    def get_bayesnet(self, roots = None, semigraphoid_iter = None, get_list = False, skip_simplify = False):
         """Return a Bayesian network containing the conditional independence
         conditions in this region
         """
+        
+        if semigraphoid_iter is None:
+            semigraphoid_iter = PsiOpts.settings["bayesnet_semigraphoid_iter"]
+        
         icexpr = self.get_ic(skip_simplify)
-        return BayesNet.from_ic(icexpr, roots = roots).tsorted()
+        
+        if semigraphoid_iter > 0:
+            icexpr += self.completed_semigraphoid_ic(max_iter = semigraphoid_iter)
+            
+        if get_list:
+            return BayesNet.from_ic_list(icexpr, roots = roots)
+        else:
+            return BayesNet.from_ic(icexpr, roots = roots).tsorted()
     
     def graph(self, **kwargs):
         """Return the Bayesian network among the random variables as a 
@@ -12833,10 +13572,21 @@ class Region:
                 icexpr -= x
         return BayesNet.from_ic(icexpr).tsorted()
     
-    
-    def table(self, *args, skip_cons = False, plot = True, **kwargs):
-        """Plot the information diagram as a Gray-coded table.
+    def get_markov(self):
+        """Get Markov chains as a list of lists.
         """
+        bnets = self.get_bayesnet(get_list = True)
+        r = []
+        for bnet in bnets:
+            r += bnet.get_markov()
+        return r
+        
+    def table(self, *args, skip_cons = False, plot = True, use_latex = None, **kwargs):
+        """Plot the information diagram as a Karnaugh map.
+        """
+        
+        if use_latex is None:
+            use_latex = PsiOpts.settings["venn_latex"]
         
         imp_r = self.imp_flippedonly_noaux()
         if not imp_r.isuniverse():
@@ -12953,9 +13703,9 @@ class Region:
         # r.nexpr = cnexpr
         
         if plot:
-            r.plot(**kwargs)
-            
-        return r
+            r.plot(use_latex = use_latex, **kwargs)
+        else:
+            return r
     
     
     def venn(self, *args, style = None, **kwargs):
@@ -13042,9 +13792,15 @@ class Region:
         
         
     def eliminate_term(self, w, forall = False):
+        verbose = PsiOpts.settings.get("verbose_eliminate", False)
+        
         el = []
         er = []
         ee = []
+        
+        if verbose:
+            print("=========== Eliminate ===========")
+            print(w)
         
         for x in self.exprs_gei:
             c = x.get_coeff(w)
@@ -13134,6 +13890,10 @@ class Region:
                     else:
                         self.exprs_ge.append(x - y)
             
+        if verbose:
+            print("===========    To     ===========")
+            print(self)
+            
         return self
             
         
@@ -13200,8 +13960,8 @@ class Region:
         If w contains random variables, they will be treated as auxiliary RV.
         """
         
-        if isinstance(w, CompArray):
-            w = w.get_comp()
+        if isinstance(w, CompArray) or isinstance(w, ExprArray):
+            w = w.allcomp()
         
         if isinstance(w, list):
             w = sum((a.allcomp() for a in w), Comp.empty())
@@ -13349,10 +14109,14 @@ class Region:
             if isinstance(a, Expr):
                 compreal -= a.allcomp()
             elif isinstance(a, Region):
-                if r.get_type() == RegionType.NORMAL and a.get_type() == RegionType.NORMAL:
-                    r.iand_norename(a)
+                a2 = a
+                if a2.isregtermpresent():
+                    a2 = a2.flattened(minmax_elim = True)
+                    
+                if r.get_type() == RegionType.NORMAL and a2.get_type() == RegionType.NORMAL:
+                    r.iand_norename(a2)
                 else:
-                    r &= a
+                    r &= a2
         
         # print(r)
         
@@ -13984,7 +14748,8 @@ class Region:
         return r
     
     
-    def tostring(self, style = 0, tosort = False, lhsvar = "real", inden = 0):
+    def tostring(self, style = 0, tosort = False, lhsvar = "real", inden = 0, add_bracket = False,
+                 small = False, skip_outer_exists = False):
         """Convert to string. 
         Parameters:
             style   : Style of string conversion
@@ -14001,131 +14766,230 @@ class Region:
         nlstr = "\n"
         if style & PsiOpts.STR_STYLE_LATEX:
             nlstr = "\\\\\n"
-            
+        
+        spacestr = " "
+        if style & PsiOpts.STR_STYLE_LATEX:
+            spacestr = "\\;"
+        
         imp_pres = False
         if self.exprs_gei or self.exprs_eqi:
             imp_pres = True
-            r += " " * inden + "("
-            r += self.imp_flippedonly_noaux().tostring(style = style, tosort = tosort, lhsvar = lhsvar, inden = inden).lstrip()
-            if style == PsiOpts.STR_STYLE_PSITIP:
-                r += " >>" + nlstr
-            elif style & PsiOpts.STR_STYLE_LATEX:
-                r += "\to" + nlstr
+            inden_inner = inden
+            inden_inner1 = inden + 1
+            inden_inner2 = inden + 3
+            add_bracket_inner = bool(style & PsiOpts.STR_STYLE_PSITIP)
+            r += spacestr * inden
+            if style & PsiOpts.STR_STYLE_LATEX:
+                if add_bracket:
+                    r += "\\left\\{"
+                r += "\\begin{array}{l}\n"
+                if not small:
+                    r += "\displaystyle"
+                r += " "
+                inden_inner = 0
+                inden_inner1 = 0
+                inden_inner2 = 0
             else:
-                r += " ->" + nlstr
+                r += "("
+            r += self.imp_flippedonly_noaux().tostring(style = style, tosort = tosort, 
+                                                       lhsvar = lhsvar, inden = inden_inner1,
+                                                       add_bracket = add_bracket_inner).lstrip()
+            if style & PsiOpts.STR_STYLE_PSITIP:
+                r += nlstr + spacestr * inden_inner + ">> "
+            elif style & PsiOpts.STR_STYLE_LATEX:
+                r += (nlstr + ("\displaystyle " if not small else " ") + spacestr * inden_inner
+                      + PsiOpts.settings["latex_matimplies"] + " " + spacestr + " ")
+            else:
+                r += nlstr + spacestr * inden_inner + "=> "
+            
+            cs = self.copy()
+            cs.exprs_gei = []
+            cs.exprs_eqi = []
+            r += cs.tostring(style = style, tosort = tosort, 
+                             lhsvar = lhsvar, inden = inden_inner2,
+                             add_bracket = add_bracket_inner).lstrip()
+            
+            if style & PsiOpts.STR_STYLE_LATEX:
+                r += nlstr + "\\end{array}"
+                if add_bracket:
+                    r += "\\right\\}"
+            else:
+                r += ")"
+            return r
+            
         
         if not self.auxi.isempty():
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 pass
             else:
                 if style & PsiOpts.STR_STYLE_LATEX:
                     if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += "\\forall "
+                        r += PsiOpts.settings["latex_forall"] + " "
                         r += self.auxi.tostring(style = style, tosort = tosort)
-                        r += ": "
+                        r += PsiOpts.settings["latex_quantifier_sep"] + " "
             
         if not self.aux.isempty():
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 pass
             else:
                 if style & PsiOpts.STR_STYLE_LATEX:
                     if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += "\\exists "
+                        if not skip_outer_exists:
+                            r += PsiOpts.settings["latex_exists"] + " "
                         r += self.aux.tostring(style = style, tosort = tosort)
-                        r += ": "
+                        r += PsiOpts.settings["latex_quantifier_sep"] + " "
                 
+        cs = self
+        bnets = None
         
-        eqnlist = ([x.tostring_eqn(">=", style = style, tosort = tosort, lhsvar = lhsvar) for x in self.exprs_ge]
-        + [x.tostring_eqn("==", style = style, tosort = tosort, lhsvar = lhsvar) for x in self.exprs_eq])
+        if style & PsiOpts.STR_STYLE_MARKOV:
+            cs = cs.copy()
+            tic = cs.remove_ic()
+            bnets = BayesNet.from_ic_list(tic)
+            
+        eqnlist = ([x.tostring_eqn(">=", style = style, tosort = tosort, lhsvar = lhsvar) for x in cs.exprs_ge]
+        + [x.tostring_eqn("==", style = style, tosort = tosort, lhsvar = lhsvar) for x in cs.exprs_eq])
         if tosort:
-            eqnlist = zip(eqnlist, [lhsvar is not None and any(x.ispresent(t) for t in lhsvar) for x in self.exprs_ge]
-                          + [lhsvar is not None and any(x.ispresent(t) for t in lhsvar) for x in self.exprs_eq])
+            eqnlist = zip(eqnlist, [lhsvar is not None and any(x.ispresent(t) for t in lhsvar) for x in cs.exprs_ge]
+                          + [lhsvar is not None and any(x.ispresent(t) for t in lhsvar) for x in cs.exprs_eq])
             eqnlist = sorted(eqnlist, key=lambda a: (not a[1], len(a[0]), a[0]))
             eqnlist = [x for x, t in eqnlist]
         
+        if style & PsiOpts.STR_STYLE_MARKOV:
+            eqnlist2 = []
+            for bnet in bnets:
+                ms = bnet.get_markov()
+                for cm in ms:
+                    if len(cm) % 2 == 1 and all(cm[i].isempty() for i in range(1, len(cm), 2)):
+                        tlist = [cm[i].tostring(style = style, tosort = tosort, 
+                                                add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(0, len(cm), 2)]
+                        
+                        if style & PsiOpts.STR_STYLE_LATEX:
+                            eqnlist2.append((" " + PsiOpts.settings["latex_indep"] + " ").join(tlist))
+                        else:
+                            eqnlist2.append("indep(" + ", ".join(tlist) + ")")
+                    else:
+                        tlist = [cm[i].tostring(style = style, tosort = tosort, 
+                                                add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(len(cm))]
+                        
+                        if style & PsiOpts.STR_STYLE_LATEX:
+                            eqnlist2.append((" " + PsiOpts.settings["latex_markov"] + " ").join(tlist))
+                        else:
+                            eqnlist2.append("markov(" + ", ".join(tlist) + ")")
+                    
+            if tosort:
+                eqnlist2 = sorted(eqnlist2, key = lambda a: len(a))
+            eqnlist += eqnlist2
+            
         first = True
         isplu = not self.aux.isempty() or len(eqnlist) > 1
         
-        if style == PsiOpts.STR_STYLE_PSITIP:
-            r += " " * inden + "("
+        use_bracket = add_bracket or isplu
+        use_array = style & PsiOpts.STR_STYLE_LATEX_ARRAY and len(eqnlist) > 1
+        
+            
+        if style & PsiOpts.STR_STYLE_PSITIP:
+            r += spacestr * inden
+            if use_bracket:
+                r += "("
         elif style & PsiOpts.STR_STYLE_LATEX:
-            if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += " " * inden + "\\left\\{\\begin{array}{l}\n"
-            else:
-                r += " " * inden + "\\{"
+            r += spacestr * inden
+            if use_bracket:
+                r += "\\left\\{"
+            if use_array:
+                r += "\\begin{array}{l}\n"
         else:
-            r += " " * inden + "{"
+            r += spacestr * inden
+            if use_bracket:
+                r += "{"
         
         for x in eqnlist:
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 if first:
-                    r += " "
+                    if use_bracket:
+                        r += " "
                 else:
-                    r += nlstr + " " * inden + " &"
+                    r += nlstr + spacestr * inden + " &"
                 if isplu:
                     r += "("
-                r += " "
+                    
+                if use_bracket:
+                    r += " "
+                    
             elif style & PsiOpts.STR_STYLE_LATEX:
-                if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
+                if use_array:
                     if first:
-                        r += " " * inden + "  "
+                        r += spacestr * inden + "  "
                     else:
-                        r += "," + nlstr + " " * inden + "  "
+                        r += "," + nlstr + spacestr * inden + "  "
+                    if small:
+                        # r += "{\\scriptsize "
+                        pass
                 else:
                     if first:
                         r += " "
                     else:
-                        r += "," + nlstr + " " * inden + "  "
+                        r += "," + spacestr + "  "
             else:
                 if first:
-                    r += " "
+                    if use_bracket:
+                        r += " "
                 else:
-                    r += "," + nlstr + " " * inden + "  "
+                    r += "," + nlstr + spacestr * inden + "  "
             
             r += x
             
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 r += " "
                 if isplu:
                     r += ")"
+            elif style & PsiOpts.STR_STYLE_LATEX:
+                if use_array:
+                    if small:
+                        # r += "}"
+                        pass
                 
             first = False
             
         if len(eqnlist) == 0:
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 r += " universe()"
+            elif style & PsiOpts.STR_STYLE_LATEX:
+                r += " " + PsiOpts.settings["latex_region_universe"]
         
             
-        if style == PsiOpts.STR_STYLE_PSITIP:
-            r += " )"
+        if style & PsiOpts.STR_STYLE_PSITIP:
+            if use_bracket:
+                r += " )"
         elif style & PsiOpts.STR_STYLE_LATEX:
-            if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += nlstr + " " * inden + "\\end{array}\\right\\}"
-            else:
-                r += " \\}"
+            if use_array:
+                r += nlstr + spacestr * inden + "\\end{array}"
+            if use_bracket:
+                r += " \\right\\}"
         else:
-            r += " }"
+            if use_bracket:
+                r += " }"
             
             
         if not self.aux.isempty():
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 pass
             else:
                 if style & PsiOpts.STR_STYLE_LATEX:
                     if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += " , \\exists "
+                        r += " , " + PsiOpts.settings["latex_exists"] + " "
                         r += self.aux.tostring(style = style, tosort = tosort)
                 else:
                     r += " , exists "
                     r += self.aux.tostring(style = style, tosort = tosort)
         
         if not self.auxi.isempty():
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 pass
             else:
                 if style & PsiOpts.STR_STYLE_LATEX:
                     if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += " , \\forall "
+                        r += " , " + PsiOpts.settings["latex_forall"] + " "
                         r += self.auxi.tostring(style = style, tosort = tosort)
                 else:
                     r += " , forall "
@@ -14136,11 +15000,11 @@ class Region:
             
         
         if not self.aux.isempty():
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 r += ".exists(" + self.aux.tostring(style = style, tosort = tosort) + ")"
         
         if not self.auxi.isempty():
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 r += ".forall(" + self.auxi.tostring(style = style, tosort = tosort) + ")"
             
             
@@ -14154,7 +15018,7 @@ class Region:
         return self.tostring(PsiOpts.settings["str_style"], 
                              tosort = PsiOpts.settings["str_tosort"], lhsvar = lhsvar)
     
-    def __repr__(self):
+    def tostring_repr(self, style):
         if PsiOpts.settings.get("repr_check", False):
             #return str(self.check())
             if self.check():
@@ -14165,12 +15029,19 @@ class Region:
             lhsvar = "real"
             
         if PsiOpts.settings.get("repr_simplify", False):
-            return self.simplified_quick().tostring(PsiOpts.STR_STYLE_PSITIP, 
+            return self.simplified_quick().tostring(style, 
                                                     tosort = PsiOpts.settings["str_tosort"], lhsvar = lhsvar)
         
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP, 
+        return self.tostring(style, 
                              tosort = PsiOpts.settings["str_tosort"], lhsvar = lhsvar)
     
+    
+    def __repr__(self):
+        return self.tostring_repr(PsiOpts.settings["str_style_repr"])
+    
+    def _latex_(self):
+        return self.tostring_repr(iutil.convert_str_style("latex"))
+        
         
     def __hash__(self):
         #return hash(self.tostring(tosort = True))
@@ -14183,6 +15054,50 @@ class Region:
             hash(self.aux), hash(self.inp), hash(self.oup), hash(self.auxi)
             ))
         
+    def ent_vector_discover_ic(v, x, eps = None, skip_simplify = False):
+        if eps is None:
+            eps = PsiOpts.settings["eps_check"]
+            
+        n = len(x)
+        mask_all = (1 << n) - 1
+        
+        r = Region.universe()
+        
+        for mask in range(1 << n):
+            for i in range(n):
+                if not (1 << i) & mask:
+                    if v[mask | (1 << i)] - v[mask] <= eps:
+                        r.exprs_eq.append(Expr.Hc(x[i], x.from_mask(mask)))
+                        
+        
+        for mask in range(1, 1 << n):
+            bins = dict()
+            for xmask in igen.subset_mask(mask_all - mask):
+                t = v[mask | xmask] - v[xmask]
+                if t <= eps:
+                    continue
+                
+                tbin0 = int(t / eps + 0.5)
+                
+                for tbin in range(max(tbin0 - 1, 0), tbin0 + 2):
+                    if tbin in bins:
+                        for ymask in bins[tbin]:
+                            if ymask & xmask == ymask and xmask - ymask < mask:
+                                r.exprs_eq.append(Expr.Ic(x.from_mask(mask), 
+                                                          x.from_mask(xmask - ymask), 
+                                                          x.from_mask(ymask)))
+                        if tbin == tbin0:
+                            bins[tbin].append(xmask)
+                    else:
+                        if tbin == tbin0:
+                            bins[tbin] = [xmask]
+        
+        if not skip_simplify:
+            r.simplify_bayesnet(reduce_ic = True)
+            r.simplify()
+        
+        return r
+    
         
 
 class RegionOp(Region):
@@ -14344,6 +15259,7 @@ class RegionOp(Region):
     def getauxs(self):
         return [(x.copy(), c) for x, c in self.auxs]
     
+    @fcn_substitute
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), in place."""
         for x, c in self.regs:
@@ -14353,6 +15269,7 @@ class RegionOp(Region):
                 x.substitute(v0, v1)
         return self
     
+    @fcn_substitute
     def substitute_aux(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), and remove auxiliary v0, in place."""
         for x, c in self.regs:
@@ -16185,8 +17102,11 @@ class RegionOp(Region):
         
     def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False):
         
-        if isinstance(w, CompArray):
-            w = w.get_comp()
+        if isinstance(w, CompArray) or isinstance(w, ExprArray):
+            w = w.allcomp()
+        
+        if isinstance(w, list):
+            w = sum((a.allcomp() for a in w), Comp.empty())
             
         toelim = Comp.empty()
         for v in w.allcomp():
@@ -16227,7 +17147,8 @@ class RegionOp(Region):
         for x in self.regs:
             x.kernel_eliminate(w)
           
-    def tostring(self, style = 0, tosort = False, lhsvar = "real", inden = 0):
+    def tostring(self, style = 0, tosort = False, lhsvar = "real", inden = 0, add_bracket = False,
+                 small = False, skip_outer_exists = False):
         """Convert to string. 
         Parameters:
             style   : Style of string conversion
@@ -16244,85 +17165,94 @@ class RegionOp(Region):
         interstr = ""
         nlstr = "\n"
         notstr = "NOT"
-        if style == PsiOpts.STR_STYLE_PSITIP:
+        spacestr = " "
+        if style & PsiOpts.STR_STYLE_PSITIP:
             notstr = "~"
         elif style & PsiOpts.STR_STYLE_LATEX:
             notstr = "\\lnot"
-            nlstr = "\\\\\n"
+            if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
+                nlstr = "\\\\\n"
+            spacestr = "\\;"
             
         if self.get_type() == RegionType.UNION:
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 interstr = "|"
             elif style & PsiOpts.STR_STYLE_LATEX:
-                interstr = "\\vee"
+                interstr = PsiOpts.settings["latex_or"]
             else:
                 interstr = "OR"
         if self.get_type() == RegionType.INTER:
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 interstr = "&"
             elif style & PsiOpts.STR_STYLE_LATEX:
-                interstr = "\\wedge"
+                interstr = PsiOpts.settings["latex_and"]
             else:
                 interstr = "AND"
         
         if self.isuniverse(sgn = True, canon = True):
-            if style == PsiOpts.STR_STYLE_PSITIP:
-                return " " * inden + "RegionOp.universe()"
+            if style & PsiOpts.STR_STYLE_PSITIP:
+                return spacestr * inden + "RegionOp.universe()"
             elif style & PsiOpts.STR_STYLE_LATEX:
-                return " " * inden + "Universe"
+                return spacestr * inden + PsiOpts.settings["latex_region_universe"]
             else:
-                return " " * inden + "Universe"
+                return spacestr * inden + "Universe"
         
         if self.isuniverse(sgn = False, canon = True):
-            if style == PsiOpts.STR_STYLE_PSITIP:
-                return " " * inden + "RegionOp.empty()"
+            if style & PsiOpts.STR_STYLE_PSITIP:
+                return spacestr * inden + "RegionOp.empty()"
             elif style & PsiOpts.STR_STYLE_LATEX:
-                return " " * inden + "\\emptyset"
+                return spacestr * inden + PsiOpts.settings["latex_region_empty"]
             else:
-                return " " * inden + "{}"
+                return spacestr * inden + "{}"
         
         for x, c in reversed(self.auxs):
             if c:
-                if style == PsiOpts.STR_STYLE_PSITIP:
+                if style & PsiOpts.STR_STYLE_PSITIP:
                     pass
                 elif style & PsiOpts.STR_STYLE_LATEX:
                     if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += "\\exists "
+                        r += PsiOpts.settings["latex_exists"] + " "
                         r += x.tostring(style = style, tosort = tosort)
-                        r += ": "
+                        r += PsiOpts.settings["latex_quantifier_sep"] + " "
             else:
-                if style == PsiOpts.STR_STYLE_PSITIP:
+                if style & PsiOpts.STR_STYLE_PSITIP:
                     pass
                 elif style & PsiOpts.STR_STYLE_LATEX:
                     if not style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += "\\forall "
+                        r += PsiOpts.settings["latex_forall"] + " "
                         r += x.tostring(style = style, tosort = tosort)
-                        r += ": "
+                        r += PsiOpts.settings["latex_quantifier_sep"] + " "
             
                 
-        if style == PsiOpts.STR_STYLE_PSITIP:
-            r += " " * inden + "(" + nlstr
+        inden_inner = inden
+        inden_inner1 = inden + 2
+        
+        if style & PsiOpts.STR_STYLE_PSITIP:
+            r += spacestr * inden + "(" + nlstr
         elif style & PsiOpts.STR_STYLE_LATEX:
             if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
-                r += " " * inden + "\\left\\{\\begin{array}{l}\n"
+                r += spacestr * inden + "\\left\\{\\begin{array}{l}\n"
+                inden_inner = 0
+                inden_inner1 = 0
             else:
-                r += " " * inden + "\\{" + nlstr
+                r += spacestr * inden + "\\{" + nlstr
         else:
-            r += " " * inden + "{" + nlstr
+            r += spacestr * inden + "{" + nlstr
         
-        rlist = [" " * inden + ("" if c else " " + notstr) + 
-                x.tostring(style = style, tosort = tosort, lhsvar = lhsvar, inden = inden + 2)[inden:] 
+        rlist = [spacestr * inden_inner1 + ("" if c else " " + notstr) + 
+                x.tostring(style = style, tosort = tosort, lhsvar = lhsvar, inden = inden_inner1, 
+                           add_bracket = True, small = small).lstrip() 
                 for x, c in self.regs]
         if tosort:
             rlist = zip(rlist, [any(x.ispresent(t) for t in lhsvar) for x, c in self.regs])
             rlist = sorted(rlist, key=lambda a: (not a[1], len(a[0]), a[0]))
             rlist = [x for x, t in rlist]
             
-        r += (nlstr + " " * inden + " " + interstr + nlstr).join(rlist)
+        r += (nlstr + spacestr * inden_inner + " " + interstr + nlstr).join(rlist)
         
                 
-        r += nlstr + " " * inden
-        if style == PsiOpts.STR_STYLE_PSITIP:
+        r += nlstr + spacestr * inden_inner
+        if style & PsiOpts.STR_STYLE_PSITIP:
             r += ")"
         elif style & PsiOpts.STR_STYLE_LATEX:
             if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
@@ -16334,28 +17264,28 @@ class RegionOp(Region):
             
         for x, c in self.auxs:
             if c:
-                if style == PsiOpts.STR_STYLE_PSITIP:
+                if style & PsiOpts.STR_STYLE_PSITIP:
                     r += ".exists("
                 elif style & PsiOpts.STR_STYLE_LATEX:
                     if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += " , \\exists "
+                        r += " , " + PsiOpts.settings["latex_exists"] + " "
                     else:
                         continue
                 else:
                     r += " , exists "
             else:
-                if style == PsiOpts.STR_STYLE_PSITIP:
+                if style & PsiOpts.STR_STYLE_PSITIP:
                     r += ".forall("
                 elif style & PsiOpts.STR_STYLE_LATEX:
                     if style & PsiOpts.STR_STYLE_LATEX_QUANTAFTER:
-                        r += " , \\forall "
+                        r += " , " + PsiOpts.settings["latex_forall"] + " "
                     else:
                         continue
                 else:
                     r += " , forall "
             r += x.tostring(style = style, tosort = tosort)
             
-            if style == PsiOpts.STR_STYLE_PSITIP:
+            if style & PsiOpts.STR_STYLE_PSITIP:
                 r += ")"
             
         return r
@@ -16402,7 +17332,7 @@ class MonotoneSet:
         
     
     
-class IBaseArray:
+class IBaseArray(IBaseObj):
     def __init__(self, x, shape = None):
         cshape = None
         if isinstance(x, type(self).entry_cls):
@@ -16501,10 +17431,10 @@ class IBaseArray:
         for a in args:
             t = cls.entry_convert(a)
             if t is not None:
-                r.x.append(t)
+                r.append(t)
             else:
                 for b in a:
-                    r.x.append(b.copy())
+                    r.append(b.copy())
         return r
     
     @classmethod
@@ -16522,6 +17452,15 @@ class IBaseArray:
     
     def find_name(self, *args):
         return self.allcomp().find_name(*args)
+    
+    def from_mask(self, mask):
+        """Return subset using bit mask."""
+        r = type(self).entry_cls_zero()
+        for i in range(len(self.x)):
+            if mask & (1 << i) != 0:
+                r += self.x[i]
+        return r
+        
     
     def append(self, a):
         if len(self.shape) != 1:
@@ -16541,6 +17480,33 @@ class IBaseArray:
         r = type(self).zeros(tuple(reversed(self.shape)))
         for xs in itertools.product(*[range(t) for t in self.shape]):
             r[tuple(reversed(xs))] = self[xs]
+        return r
+    
+    
+    @fcn_substitute
+    def substitute(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound), in place."""
+        for i in range(len(self.x)):
+            self.x[i].substitute(v0, v1)
+        return self
+    
+    @fcn_substitute
+    def substitute_aux(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound), and remove auxiliary v0, in place."""
+        for i in range(len(self.x)):
+            self.x[i].substitute_aux(v0, v1)
+        return self
+    
+    def substituted(self, *args, **kwargs):
+        """Substitute variable v0 by v1 (v1 can be compound), return result"""
+        r = self.copy()
+        r.substitute(*args, **kwargs)
+        return r
+        
+    def substituted_aux(self, *args, **kwargs):
+        """Substitute variable v0 by v1 (v1 can be compound), and remove auxiliary v0, return result"""
+        r = self.copy()
+        r.substitute_aux(*args, **kwargs)
         return r
     
     def set_len(self, n):
@@ -16789,6 +17755,11 @@ class IBaseArray:
         """
         return sum(self.x, type(self).entry_cls_zero())
     
+    def avg(self):
+        """Average of all entries.
+        """
+        return self.get_sum() / len(self)
+    
     def tostring(self, style = 0, tosort = False):
         """Convert to string
         Parameters:
@@ -16803,26 +17774,26 @@ class IBaseArray:
             
         shape = self.shape
         r = ""
-        add_braket = True
+        add_bracket = True
         list_bracket0 = "["
         list_bracket1 = "]"
         if style & PsiOpts.STR_STYLE_LATEX:
-            list_bracket0 = "\\["
-            list_bracket1 = "\\]"
+            list_bracket0 = PsiOpts.settings["latex_list_bracket_l"]
+            list_bracket1 = PsiOpts.settings["latex_list_bracket_r"]
         
-        if style == PsiOpts.STR_STYLE_PSITIP:
+        if style & PsiOpts.STR_STYLE_PSITIP:
             r += type(self).cls_name + "("
             if len(shape) > 1:
                 r += nlstr
-            add_braket = False
+            add_bracket = False
         
-        # if style == PsiOpts.STR_STYLE_PSITIP:
+        # if style & PsiOpts.STR_STYLE_PSITIP:
         #     r += type(self).cls_name + "([ "
-        #     add_braket = False
+        #     add_bracket = False
         # elif style & PsiOpts.STR_STYLE_LATEX:
         #     if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
         #         r += "\\left\\[\\begin{array}{l}\n"
-        #         add_braket = False
+        #         add_bracket = False
         #     else:
         #         r += "\\[ "
         # else:
@@ -16839,7 +17810,7 @@ class IBaseArray:
                 r += " " * si0 + list_bracket0 * (len(shape) - si0)
             
             if type(self).tostring_bracket_needed:
-                r += self[xs].tostring(style = style, tosort = tosort, add_braket = add_braket)
+                r += self[xs].tostring(style = style, tosort = tosort, add_bracket = add_bracket)
             else:
                 r += self[xs].tostring(style = style, tosort = tosort)
             
@@ -16854,7 +17825,7 @@ class IBaseArray:
                     r += nlstr * (len(shape) - si1)
             
             
-        if style == PsiOpts.STR_STYLE_PSITIP:
+        if style & PsiOpts.STR_STYLE_PSITIP:
             r += ")"
         
         return r
@@ -16864,7 +17835,11 @@ class IBaseArray:
         return self.tostring(PsiOpts.settings["str_style"], PsiOpts.settings["str_tosort"])
     
     def __repr__(self):
-        return self.tostring(PsiOpts.STR_STYLE_PSITIP)
+        return self.tostring(PsiOpts.settings["str_style_repr"])
+    
+    def _latex_(self):
+        return self.tostring(iutil.convert_str_style("latex"))
+        
     
 
 class CompArray(IBaseArray):
@@ -16975,6 +17950,29 @@ class CompArray(IBaseArray):
             return ExprArray([b | a for a, b in zip(self.x, other.x)], shape = self.shape)
         return ExprArray([other | a for a in self.x], shape = self.shape)
         
+    def mark(self, *args):
+        for a in self.x:
+            a.mark(*args)
+        return self
+    
+    def set_card(self, m):
+        for a in self.x:
+            a.set_card(m)
+        return self
+    
+    def get_card(self):
+        return self.get_comp().get_card()
+    
+    def get_shape(self):
+        r = []
+        for a in self.x:
+            t = a.get_card()
+            if t is None:
+                raise ValueError("Cardinality of " + str(a) + " not set. Use " + str(a) + ".set_card(m) to set cardinality.")
+                return
+            r.append(t)
+        return tuple(r)
+        
         
     
 class ExprArray(IBaseArray):
@@ -16988,6 +17986,8 @@ class ExprArray(IBaseArray):
     @staticmethod
     def entry_convert(a):
         if isinstance(a, Expr):
+            return a.copy()
+        elif isinstance(a, Term):
             return a.copy()
         elif isinstance(a, (int, float)):
             return Expr.const(a)
@@ -17098,14 +18098,14 @@ class ExprArray(IBaseArray):
     #         nlstr = "\\\\\n"
             
     #     r = ""
-    #     add_braket = True
-    #     if style == PsiOpts.STR_STYLE_PSITIP:
+    #     add_bracket = True
+    #     if style & PsiOpts.STR_STYLE_PSITIP:
     #         r += "ExprArray([ "
-    #         add_braket = False
+    #         add_bracket = False
     #     elif style & PsiOpts.STR_STYLE_LATEX:
     #         if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
     #             r += "\\left\\[\\begin{array}{l}\n"
-    #             add_braket = False
+    #             add_bracket = False
     #         else:
     #             r += "\\[ "
     #     else:
@@ -17122,7 +18122,7 @@ class ExprArray(IBaseArray):
     #                 r += ", "
     #         r += a.tostring(style = style, tosort = tosort)
             
-    #     if style == PsiOpts.STR_STYLE_PSITIP:
+    #     if style & PsiOpts.STR_STYLE_PSITIP:
     #         r += " ])"
     #     elif style & PsiOpts.STR_STYLE_LATEX:
     #         if style & PsiOpts.STR_STYLE_LATEX_ARRAY:
@@ -17592,12 +18592,19 @@ class CellTable:
                     (1, 0.8, 0.3)][(0 if i is None else i) + color_shift]
         return r
     
-    def plot(self, style = "hsplit", legend = True):
+    def plot(self, style = "hsplit", legend = True, use_latex = True):
         label_interval = 0.32
         label_width = 0.29
         fontsize = self.fontsize
         fontsize_in_mul = 1.0
         linewidth = self.linewidth
+        
+        rcParams_orig = None
+        if use_latex:
+            rcParams_orig = plt.rcParams.copy()
+            plt.rcParams.update({"text.usetex": True,
+                    "font.family": "sans-serif",
+                    "font.sans-serif": ["Helvetica"]})
         
         fig, ax = plt.subplots(figsize = [10, 8])
         # patches = []
@@ -17752,6 +18759,14 @@ class CellTable:
         axlen = [0, 0]
         axslen = [0, 0]
         
+        xstr = []
+        for xi in range(n):
+            if use_latex:
+                xstr.append("$" + self.x[xi].latex() + "$")
+            else:
+                xstr.append(str(self.x[xi]))
+            
+        
         polys = [None] * (1 << n)
         poly_els = [None] * n
         textps = [None] * n
@@ -17759,7 +18774,7 @@ class CellTable:
             polys, textps = ivenn.calc_ellipses(n)
             poly_els = [ivenn.intersect(n, [i == j for j in range(n)]) for i in range(n)]
             for xi in range(n):
-                ax.text(textps[xi][0], textps[xi][1], str(self.x[xi]), 
+                ax.text(textps[xi][0], textps[xi][1], xstr[xi], 
                         horizontalalignment="center", verticalalignment="center", fontsize = fontsize)
                 
             
@@ -17794,7 +18809,7 @@ class CellTable:
                 
                 avgpos[0] /= len(clist)
                 avgpos[1] /= len(clist)
-                ax.text(avgpos[0], avgpos[1], str(self.x[xi]), 
+                ax.text(avgpos[0], avgpos[1], xstr[xi], 
                         horizontalalignment="center", verticalalignment="center", fontsize = fontsize)
                 
                 axlen[cax] += 1
@@ -18021,9 +19036,9 @@ class CellTable:
                             #     vpos = 0.05
                             # rempos = (pos[0] + size[0] * 0.5, pos[1] + size[1] * vpos)
                             rempos = polys[mask][2]
-                            rempos = (rempos[0], rempos[1] + size[1] * 0.02)
+                            rempos = (rempos[0], rempos[1] + size[1] * 0.033)
                         else:
-                            rempos = (pos[0] + size[0] * 0.015, pos[1] + size[1] * 0.015)
+                            rempos = (pos[0] + size[0] * 0.015, pos[1] + size[1] * 0.02)
                         ax.text(rempos[0], rempos[1], remtext, 
                             horizontalalignment="center" if is_venn else "left", verticalalignment="bottom", 
                             fontsize = fontsize * fontsize_in_mul * 0.85)
@@ -18040,7 +19055,10 @@ class CellTable:
                 cexpr = self.exprs[ei].get("expr")
                 if cexpr is not None:
                     with PsiOpts(str_lhsreal = False):
-                        clabel = str(cexpr)
+                        if use_latex:
+                            clabel = "$" + cexpr.latex(skip_simplify = True) + "$"
+                        else:
+                            clabel = str(cexpr)
                     # if isinstance(cexpr, Region):
                     #     clabel = cexpr.tostring(lhsvar = None)
                     # else:
@@ -18072,8 +19090,11 @@ class CellTable:
         plt.ylim([ylim[0] - 0.011, ylim[1] + 0.011])
         plt.show()
         plt.tight_layout()
+        
+        if use_latex:
+            plt.rcParams = rcParams_orig.copy()
 
-class ProofObj:
+class ProofObj(IBaseObj):
     def __init__(self, claim, desc = None, steps = None, parent = None):
         self.claim = claim
         self.desc = desc
@@ -18150,6 +19171,15 @@ class ProofObj:
     
     def tostring(self, style = 0, prefix = ""):
         style = iutil.convert_str_style(style)
+        
+        nlstr = "\n"
+        if style & PsiOpts.STR_STYLE_LATEX:
+            nlstr = "\\\\\n"
+            
+        spacestr = " "
+        if style & PsiOpts.STR_STYLE_LATEX:
+            spacestr = "\\;"
+            
         r = ""
         cinden = 4
         cprefix = prefix
@@ -18162,35 +19192,46 @@ class ProofObj:
                 cprefix += "."
             r += iutil.tostring_join(self.desc, style)
             if self.claim is not None:
-                r += "\n"
+                r += nlstr
                 if isinstance(self.claim, tuple):
                     if self.claim[0] == "equiv":
                         r += self.claim[1].tostring(style = style)
-                        if style == PsiOpts.STR_STYLE_PSITIP:
-                            r += "\n==\n"
+                        if style & PsiOpts.STR_STYLE_PSITIP:
+                            r += nlstr + "==" + nlstr
+                        elif style & PsiOpts.STR_STYLE_LATEX:
+                            r += nlstr + PsiOpts.settings["latex_equiv"] + nlstr
                         else:
-                            r += "\n<=>\n"
+                            r += nlstr + "<=>" + nlstr
                         r += self.claim[2].tostring(style = style)
+                        
                     elif self.claim[0] == "implies":
                         r += self.claim[1].tostring(style = style)
-                        if style == PsiOpts.STR_STYLE_PSITIP:
-                            r += "\n>>\n"
+                        if style & PsiOpts.STR_STYLE_PSITIP:
+                            r += nlstr + ">>" + nlstr
+                        elif style & PsiOpts.STR_STYLE_LATEX:
+                            r += nlstr + PsiOpts.settings["latex_implies"] + nlstr
                         else:
-                            r += "\n=>\n"
+                            r += nlstr + "=>" + nlstr
                         r += self.claim[2].tostring(style = style)
+                        
                 else:
                     r += self.claim.tostring(style = style)
-            r += "\n"
+                    
+            r += nlstr
         for i, x in enumerate(self.steps):
-            r += "\n"
-            r += iutil.str_inden(x.tostring(style, cprefix + str(i + 1)), cinden)
+            r += nlstr
+            r += iutil.str_inden(x.tostring(style, cprefix + str(i + 1)), cinden, spacestr = spacestr)
         return r
         
     def __str__(self):
         return self.tostring(PsiOpts.settings["str_style"])
     
+    
+    def _latex_(self):
+        return self.tostring(iutil.convert_str_style("latex"))
+    
 
-class CodingNode:
+class CodingNode(IBaseObj):
     
     def __init__(self, rv_out, aux_out = None, aux_dec = None, aux_ndec = None, rv_in_causal = None, rv_in_scausal = None, ndec_mode = None):
         
@@ -18251,7 +19292,7 @@ class CodingNode:
             self.aux_ndec.record_to(index)
     
 
-class CodingModel:
+class CodingModel(IBaseObj):
     
     def __init__(self, bnet = None, sublist = None, nodes = None, reg = None):
         if bnet is None:
@@ -19133,7 +20174,7 @@ class CodingModel:
         return self.bnet_out.graph(groups = self.bnet_out_arrays, **kwargs)
     
 
-class CommEnc:
+class CommEnc(IBaseObj):
     
     def __init__(self, rv_out, msgs, rv_in_causal = None):
         # self.rv_in = Comp.empty()
@@ -19163,7 +20204,7 @@ class CommEnc:
                 for y in x:
                     y.record_to(index)
         
-class CommDec:
+class CommDec(IBaseObj):
     
     def __init__(self, rv_in, msgs, msgints = None):
         self.rv_in = rv_in
@@ -19182,7 +20223,7 @@ class CommDec:
                 for y in x:
                     y.record_to(index)
 
-class CommModel:
+class CommModel(IBaseObj):
     
     def __init__(self, bnet = None, reg = None, nature = None):
         if bnet is None:
@@ -19889,6 +20930,8 @@ def anyor(a):
     
 def rv(*args, **kwargs):
     """Random variable"""
+    
+    args = [x for b in args for x in iutil.split_comma(b)]
     r = Comp.empty()
     for a in args:
         r += Comp.rv(a)
@@ -19908,6 +20951,7 @@ def rv_array(name, st, en = None):
     
 def real(*args):
     """Real variable"""
+    args = [x for b in args for x in iutil.split_comma(b)]
     if len(args) == 1:
         return Expr.real(args[0])
     return ExprArray([Expr.real(a) for a in args])
@@ -19956,9 +21000,13 @@ def H(x):
     e.g. use H(X + Y | Z + W) for H(X,Y|Z,W)
     """
     if isinstance(x, Comp):
+        if x.isempty():
+            return Expr.zero()
         return Expr.H(x)
     if isinstance(x, ConcDist):
         return x.entropy()
+    if x.isempty():
+        return Expr.zero()
     return Expr([(x.copy(), 1.0)])
     
 def I(x):
@@ -20348,6 +21396,7 @@ def exists_bit(n = 1):
 def emin(*args):
     """Return the minimum of the expressions."""
     R = real(iutil.fcn_name_maker("min", args, pname = "emin", lname = "\\min"))
+    R = real(str(R))
     r = universe()
     for x in args:
         r &= R <= x
@@ -20357,6 +21406,7 @@ def emin(*args):
 def emax(*args):
     """Return the maximum of the expressions."""
     R = real(iutil.fcn_name_maker("max", args, pname = "emax", lname = "\\max"))
+    R = real(str(R))
     r = universe()
     for x in args:
         r &= R >= x
@@ -20412,7 +21462,7 @@ def sfrl_rv(x, y, gap = None):
     applications to coding theorems. IEEE Trans. Info. Theory, 64(11), 6967-6978.
     """
     U = rv(iutil.fcn_name_maker("sfrl", [x, y], pname = "sfrl_rv"))
-    #U = rv(y.tostring(add_braket = True) + "%" + x.tostring(add_braket = True))
+    #U = rv(y.tostring(add_bracket = True) + "%" + x.tostring(add_bracket = True))
     r = (Expr.Hc(y, x + U) == 0) & (Expr.I(x, U) == 0)
     if gap is not None:
         if not isinstance(gap, Expr):
