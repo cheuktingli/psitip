@@ -52,7 +52,8 @@ Examples with Jupyter Notebook `(ipynb file)<https://github.com/cheuktingli/psit
 
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block6.png
-   :scale: 50
+   :width: 50px
+   :height: 50px
 
 .. code:: ipython3
 
