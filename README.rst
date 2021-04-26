@@ -74,7 +74,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. figure:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.png
 --------------
 
 .. code:: python
@@ -115,7 +115,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. figure:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
 --------------
 
 --------------
