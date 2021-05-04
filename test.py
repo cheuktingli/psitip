@@ -264,8 +264,8 @@ class TestPsitip(unittest.TestCase):
             
         print("test_csie_region")
         print(iutil.list_tostr_std(aux))
-        self.assertEqual(str(aux[0][1]), "M,S_")
-        self.assertEqual(str(aux[1][1]), "M,Y")
+        self.assertEqual(str(aux[0][1]), "M,Y_")
+        self.assertEqual(str(aux[1][1]), "M,S")
         
         
     def test_wz_region(self):
@@ -504,6 +504,7 @@ class TestPsitip(unittest.TestCase):
         
         # The following two requires functional representation lemma to prove
         with sfrl().assumed():
+            # with PsiOpts(flatten_distribute = False):
             self.assertTrue(excess_fi(X, Y) <= exact_ci(X & Y) - I(X & Y))
             self.assertTrue(excess_fi(X, Y) <= H(X | Y))
         
@@ -706,13 +707,33 @@ class TestPsitip(unittest.TestCase):
         self.assertFalse(emin(H(X), H(Y)) >= H(X))
         self.assertTrue(emax(H(X), H(Y)) >= emin(H(X), H(Y)))
         self.assertFalse(emax(H(X), H(Y)) <= emin(H(X), H(Y)))
+        self.assertFalse(emin(H(X), H(Y)) <= emin(H(X), H(Y), H(Z)))
+        self.assertTrue(emin(H(X), H(Y)) >= emin(H(X), H(Y), H(Z)))
         
         self.assertTrue((emin(H(X), H(Y)) == 0) >> (I(X&Y) == 0))
         self.assertTrue((emax(H(X), H(Y)) == 0) >> (I(X&Y) == 0))
         #self.assertTrue(((emin(H(X), H(Y)) <= 0) & (emin(H(Z), H(W)) <= 0))
         #    >> (indep(X,Z) | indep(X,W) | indep(Y,Z) | indep(Y,W))) # This currently fails
-        
+
+        self.assertTrue(emax(H(X), emax(H(Y),H(Z))) >= H(Y))
+        self.assertTrue(emax(H(X), emax(H(Y),H(Z))) >= emax(H(X), H(Y)))
+        self.assertFalse(emax(H(X), emax(H(Y),H(Z))) <= emax(H(X), H(Y)))
             
+            
+    def test_regterm(self):
+            
+        X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
+        R = real("R")
+        a = ((R <= H(X)) & (R <= H(Y))).maximum(R, R, reg_outer = ((R <= H(X)+H(Z)) & (R <= H(Y))))
+        self.assertTrue(a <= H(X)+H(Z))
+        self.assertFalse(a <= H(X))
+        b = ((R >= H(X)) & (R >= H(Y))).minimum(R, R, reg_outer = ((R >= I(X&Z)) & (R <= H(Y))))
+        self.assertTrue(b >= I(X&Z))
+        self.assertFalse(b >= H(X))
+        self.assertFalse(b <= I(X&Z)+H(Y))
+        self.assertTrue(b <= H(X)+H(Y))
+
+
     def test_reals(self):
         
         r = universe()
@@ -812,10 +833,10 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
             & (-2*H(U) - 3*I(Y & W) == 0)).simplified()),
-            ("{ I(Y;W) == 0,\n"
-            "  I(Z;W) == 0,\n"
-            "  H(X) == 0,\n"
-            "  H(U) == 0 }"))
+            ("{ H(X) == 0,\n"
+            "  H(U) == 0,\n"
+            "  I(Y;W) == 0,\n"
+            "  I(Z;W) == 0 }"))
     
         # self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
         #     & (-2*H(U) - 3*I(Y & W) == 0)).simplified(zero_group = 2)),
@@ -830,10 +851,10 @@ class TestPsitip(unittest.TestCase):
         == ((I(X & Y) == 0) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (I(X+Y & Z) == 0)).simplified())
         
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X))).simplified()), "H(X) == H(Y)")
-        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) == H(X))).simplified()), "H(X) == H(Y)")
+        self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) == H(X))).simplified()), "H(Y) == H(X)")
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y))).simplified()), "H(X) == H(Y)")
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y)) & (H(Y) <= H(Z)) & (H(Y) == H(Z))).simplified()),
-                         "{ H(Z) == H(Y),\n  H(X) == H(Y) }")
+                         "{ H(Y) == H(Z),\n  H(X) == H(Y) }")
     
         
     def test_eliminate(self):
@@ -1034,6 +1055,25 @@ class TestPsitip(unittest.TestCase):
         print(repr(r))
         self.assertTrue(r.equiv(eval(repr(r))))
     
+    
+    def test_simplify_aux(self):
+        X, Y, Z, U, V, W = rv("X, Y, Z, U, V, W")
+        R = real("R")
+        
+        print("test_simplify_aux")
+
+        self.assertEqual(repr(((R <= I(U+V & Y)) & indep(U+V, X)).exists(U+V).simplified()),
+            '( ( R <= I(U&Y) )\n &( indep(U, X) ) ).exists(U)')
+
+        self.assertEqual(repr(((R <= I(U+V & Y)) & indep(U+V, X) & indep(U, Z)).exists(U+V).simplified()),
+            '( ( R <= I(V&Y) )\n &( indep(V, X) ) ).exists(V)')
+
+        r = ((H(U|X)==1) & (H(U|Y)==2) & (H(V|X)==3) & (H(V|Y)==4) 
+            & markov(X, U, Y) & markov(X, V, Y) & markov(U, X+Y, V)).exists(U+V)
+
+        self.assertEqual(repr(r.simplified(level = 9)),
+            '( ( H(U|X) <= 1 )\n &( H(U|Y) == 1+H(U|X) )\n &( markov(X, U, Y) ) ).exists(U)')
+
     
     def test_performance(self):
         

@@ -7,7 +7,7 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). See `References`_ for other software based on this method.
 
-- `Automated inner and outer bounds`_ for multiuser settings in network information theory (e.g. see the automated proof of Gel'fand-Pinsker theorem in the example below).
+- `Automated inner and outer bounds`_ for multiuser settings in network information theory (see the `Jupyter Notebook examples <https://github.com/cheuktingli/psitip/blob/master/examples>`_ ).
 
 - `Numerical optimization`_ over distributions, and evaluation of rate regions involving auxiliary random variables (e.g. `Example 1: Degraded broadcast channel`_).
 
@@ -30,6 +30,7 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 - `Bayesian network optimization`_. Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
 
 
+
 Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psitip/blob/master/demo_readme.ipynb>`_ :
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -50,7 +51,8 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block5.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block5.svg
+
 --------------
 
 .. code:: python
@@ -66,6 +68,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
+
 --------------
 
 .. code:: python
@@ -74,7 +77,8 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.svg
+
 --------------
 
 .. code:: python
@@ -93,6 +97,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
     <Figure size 432x288 with 0 Axes>
 
 
+
 --------------
 
 .. code:: python
@@ -104,7 +109,8 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block14.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block14.svg
+
 --------------
 
 .. code:: python
@@ -116,7 +122,8 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.svg
+
 --------------
 
 --------------
@@ -141,7 +148,8 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block22.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block22.svg
+
 --------------
 
 .. code:: python
@@ -150,7 +158,8 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block24.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block24.svg
+
 --------------
 
 .. code:: python
@@ -159,7 +168,8 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block26.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block26.svg
+
 --------------
 
 .. code:: python
@@ -170,7 +180,8 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block28.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block28.svg
+
 --------------
 
 .. code:: python
@@ -181,7 +192,8 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block30.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block30.svg
+
 --------------
 
 --------------
@@ -224,7 +236,8 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block38.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block38.svg
+
 --------------
 
 .. code:: python
@@ -234,7 +247,8 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block40.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block40.svg
+
 --------------
 
 .. code:: python
@@ -244,17 +258,8 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block42.png
---------------
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block42.svg
 
-.. code:: python
-
-    r.maximum(R1 / 2 + R2, [R1, R2])      # Max weighted sum rate
-
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.png
 --------------
 
 .. code:: python
@@ -264,7 +269,8 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
+
 --------------
 
 .. code:: python
@@ -276,30 +282,22 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
+
 --------------
 
 .. code:: python
 
     r_out = model.get_outer() # Automatic outer bound
-    model.graph_outer()       # Bayesian network of past/future variables
-
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_24_0.svg
-
-
-
-.. code:: python
-
+    
     # Converse proof, print auxiliary random variables
-    CompArray((r_out >> r).check_getaux())
+    (r_out >> r).check_getaux_array()
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
+
 --------------
 
 --------------
@@ -314,35 +312,40 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block57.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block53.svg
+
 --------------
 
 .. code:: python
 
     # Using copy lemma [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011]
-    with copylem().assumed():
+    # You may use the built-in "with copylem().assumed():" instead of the below
+    with eqdist([X, Y, U], [X, Y, Z]).exists(U).forall(X+Y+Z).assumed():
         
         # Prove Zhang-Yeung inequality
         (2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).display_bool()
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block59.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block55.svg
+
 --------------
 
 .. code:: python
 
     # State the copy lemma
-    r = eqdist([X, Y, U], [X, Y, Z]) & markov(Z+W, X+Y, U)
+    r = eqdist([X, Y, U], [X, Y, Z]).exists(U)
     
     # Automatically discover non-Shannon-type inequalities using copy lemma
-    r.discover(mi_cells(X, Y, Z, W))
+    r.discover([X, Y, Z, W])
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block61.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block57.svg
+
 --------------
+
 
 |
 |
@@ -470,8 +473,6 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - A region object can be converted to :code:`bool`, returning whether the conditions in the region can be proved to be true (using Shannon-type inequalities). E.g. :code:`bool(H(X) >= I(X & Y))`.
 
-- **Logical implication**. To test whether the conditions in region :code:`r1` implies the conditions in region :code:`r2` (i.e., whether :code:`r1` is a subset of :code:`r2`), use :code:`r1.implies(r2)` (which returns :code:`bool`). E.g. :code:`(I(X & Y) == 0).implies(H(X + Y) == H(X) + H(Y))`.
-
 - The constraint that X, Y, Z are **mutually independent** is expressed as :code:`indep(X, Y, Z)` (a :code:`Region` object). The function :code:`indep` can take any number of arguments.
 
  - The constraint that X, Y, Z are mutually conditionally independent given W is expressed as :code:`indep(X, Y, Z).conditioned(W)`.
@@ -488,9 +489,19 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
  - The region where the random variables in the sequence are mutually independent can be given by :code:`indep(*X)`. The region where the random variables form a Markov chain can be given by :code:`markov(*X)`. 
 
-- :code:`Expr` and :code:`Region` objects have a :code:`simplify()` method, which simplify the expression/region in place. The :code:`simplified()` method returns the simplified expression/region without modifying the object. For example, :code:`(H(X+Y) - H(X) - H(Y)).simplified()` gives :code:`-I(Y & X)`.
+- **Simplification** :code:`Expr` and :code:`Region` objects have a :code:`simplify()` method, which simplifies the expression/region in place. The :code:`simplified()` method returns the simplified expression/region without modifying the object. For example, :code:`(H(X+Y) - H(X) - H(Y)).simplified()` gives :code:`-I(Y & X)`.
 
- - Note that calling :code:`Region.simplify()` can take some time for the detection of redundant constraints. Use :code:`Region.simplify_quick()` instead to skip this step. Use :code:`PsiOpts.setting(simplify_level = ???)` to set the simplification level (integer between 1 and 10, larger means more thorough attempt at simplification, and takes longer).
+ - Note that calling :code:`Region.simplify()` can take some time for the detection of redundant constraints. Use :code:`Region.simplify_quick()` instead to skip this step.
+
+ - Use :code:`r.simplify(level = ???)` to specify the simplification level (integer in 0,...,10). A higher level takes more time. The context manager :code:`PsiOpts.setting(simplify_level = ???):` has the same effect.
+
+- **Logical implication**. To test whether the conditions in region :code:`r1` imply the conditions in region :code:`r2` (i.e., whether :code:`r1` is a subset of :code:`r2`), use :code:`r1.implies(r2)` (which returns :code:`bool`). E.g. :code:`(I(X & Y) == 0).implies(H(X + Y) == H(X) + H(Y))`.
+
+ - Use :code:`r1.implies(r2, aux_hull = True)` to allow rate splitting for auxiliary random variables, which may help proving the implication. This takes considerable computation time.
+
+ - Use :code:`r1.implies(r2, level = ???)` to specify the simplification level (integer in 0,...,10), which may help proving the implication. A higher level takes more time.
+
+- **Logical equivalence**. To test whether the region :code:`r1` is equivalent to the region :code:`r2`, use :code:`r1.equiv(r2)` (which returns :code:`bool`). This uses :code:`implies` internally, and the same options can be used.
 
 - Use :code:`str(x)` to convert :code:`x` (a :code:`Comp`, :code:`Expr` or :code:`Region` object) to string. The :code:`tostring` method of :code:`Comp`, :code:`Expr` and :code:`Region` provides more options. For example, :code:`r.tostring(tosort = True, lhsvar = R)` converts the region :code:`r` to string, sorting all terms and constraints, and putting the real variable :code:`R` to the left hand side of all expressions (and the rest to the right).
 
@@ -595,6 +606,9 @@ Advanced
         <= emin(H(X),H(Y))).check_getaux()
 
   returns :code:`[[(U, X)], [(U, X+Y)], [(U, Y)]]`.
+
+ - The function :code:`check_getaux_dict` returns the results as a :code:`dict`. The function :code:`check_getaux_array` returns the results as a :code:`CompArray`. These two methods should only be used on simple implications (without union, negation and maximization/minimization quantities).
+
 
 - The **meet** or **Gács-Körner common part** [Gács-Körner 1973] between X and Y is denoted as :code:`meet(X, Y)` (a :code:`Comp` object).
 
@@ -971,9 +985,34 @@ Example 4: Parametric distribution
 Automated inner and outer bounds
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+`Index of Jupyter Notebook examples <https://github.com/cheuktingli/psitip/blob/master/examples>`_ :
+
+- `Multiple access channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_multiaccess.ipynb>`_
+
+- `Broadcast channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_broadcast.ipynb>`_
+
+- `Degraded broadcast channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_degradedbc.ipynb>`_
+
+- `Interference channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_interference.ipynb>`_
+
+- `Channel with state <https://github.com/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_
+
+- `Slepian-Wolf coding <https://github.com/cheuktingli/psitip/blob/master/examples/demo_slepianwolf.ipynb>`_
+
+- `Lossy compression with side information <https://github.com/cheuktingli/psitip/blob/master/examples/demo_wynerziv.ipynb>`_
+
+- `Distributed lossy compression <https://github.com/cheuktingli/psitip/blob/master/examples/demo_bergertung.ipynb>`_
+
+- `Gray-Wyner network <https://github.com/cheuktingli/psitip/blob/master/examples/demo_graywyner.ipynb>`_
+
+
 Psitip supports automated achievability and converse proofs in network information theory. The achievability part uses the general coding theorem for network information theory in [Lee-Chung 2015], whereas the converse part follows the general strategy of identifying auxiliaries using past and future random variables pioneered by Gallager [Gallager 1974], using Csiszár sum identity [Körner-Marton 1977], [Csiszár-Körner 1978].
 
 A setting in network information theory is represented by a :code:`CodingModel` object. To specify a setting, use the following four functions (here we let :code:`model = CodingModel()`):
+
+- :code:`model.set_rate(M, R)` specifies that M (:code:`Comp`) is a message with rate R (:code:`Expr`).
+
+ - **Caution.** :code:`model.set_rate` must be called **before** all calls of :code:`model.add_node` and :code:`model.add_edge`.
 
 - :code:`model.add_node(M, X)` specifies that there is an encoder/decoder which observes M (a :code:`Comp` object) and outputs X (:code:`Comp`).
 
@@ -981,15 +1020,11 @@ A setting in network information theory is represented by a :code:`CodingModel` 
 
  - For strictly causal observation, use the argument :code:`rv_in_scausal`. E.g. :code:`model.add_node(M+Y, X, rv_in_scausal = Y)` means that the encoder produces Xi using only M,Y1,...,Y[i-1]. This is useful, for example, in communication with feedback. Note that this is used only in the computation of outer bounds, and is ignored in inner bounds.
 
- - Passing the argument :code:`ndec_mode = "min"` to :code:`add_node` instructs the algorithm to avoid using simultaneous nonunique decoding. The argument :code:`ndec_mode = "max"` instructs the algorithm to use simultaneous nonunique decoding whenever possible. The default is to try all possibilities and output the inner bound as the union, which can be quite slow.
+ - Passing the argument :code:`rv_ndec_force = x` to :code:`add_node` instructs the algorithm to use simultaneous nonunique decoding on the message :code:`x` (:code:`Comp`) on this node. Passing the argument :code:`ndec_mode = "min"` to :code:`add_node` instructs the algorithm to avoid using simultaneous nonunique decoding (except those marked using :code:`rv_ndec_force = x`). The argument :code:`ndec_mode = "max"` instructs the algorithm to use simultaneous nonunique decoding whenever possible. The default is to try all possibilities and output the inner bound as the union, which can be quite slow.
 
 - :code:`model.add_edge(X, Y)` specifies that Y (:code:`Comp`) is produced by a channel with input X (:code:`Comp`). The random variable Y is conditionally independent of all previously added random variables given X, and hence edges are also needed between correlated sources.
 
  - **Caution.** Random variables must be added in the order they are generated in the setting (e.g. channel outputs after channel inputs, decoders after encoders).
-
-- :code:`model.set_rate(M, R)` specifies that M (:code:`Comp`) is a message with rate R (:code:`Expr`).
-
- - **Caution.** :code:`model.set_rate` must be called **after** all calls of :code:`model.add_node` and :code:`model.add_edge`.
 
 - (Optional) :code:`model &= r` specifies that the model satisfies the conditions in r (:code:`Region`). E.g. see `Example 2: Less noisy and more capable broadcast channel`_.
 
@@ -1010,8 +1045,11 @@ After a setting is specified, call:
 
 - :code:`model.graph()` to obtain a graphical representation of the setting (Graphviz graph).
 
+**WARNING:** The program makes an implicit assumption that the empirical joint distribution of random variables (channel input/output, source) is fixed. It cannot optimize over channel input distributions. See <https://github.com/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_ for an example.
 
-An example (channel with noncausal state information at encoder) is given at the beginning. More examples:
+`Jupyter Notebook examples... <https://github.com/cheuktingli/psitip/blob/master/examples>`_
+
+More examples:
 
 
 Example 1: Degraded broadcast channel
@@ -1032,13 +1070,13 @@ Example 1: Degraded broadcast channel
     R1, R2 = real("R1", "R2")
 
     model = CodingModel()
+    model.set_rate(M1, R1)    # Rate of M1 is R1
+    model.set_rate(M2, R2)    # Rate of M2 is R2
     model.add_node(M1+M2, X)  # Encoder maps M1,M2 to X
     model.add_edge(X, Y)      # Channel X -> Y -> Z
     model.add_edge(Y, Z)
     model.add_node(Y, M1)     # Decoder1 maps Y to M1
     model.add_node(Z, M2)     # Decoder2 maps Z to M2
-    model.set_rate(M1, R1)    # Rate of M1 is R1
-    model.set_rate(M2, R2)    # Rate of M2 is R2
     # display(model.graph())  # Draw the model
 
     r = model.get_inner()     # Get inner bound, recovers superposition region 
@@ -1094,13 +1132,13 @@ Example 2: Less noisy and more capable broadcast channel
     R1, R2 = real("R1", "R2")
 
     model = CodingModel()
+    model.set_rate(M1, R1)    # Rate of M1 is R1
+    model.set_rate(M2, R2)    # Rate of M2 is R2
     model.add_node(M1+M2, X)  # Encoder maps M1,M2 to X
     model.add_edge(X, Y)      # Channel X -> Y
     model.add_edge(X, Z)      # Channel X -> Z
     model.add_node(Y, M1)     # Decoder1 maps Y to M1
     model.add_node(Z, M2)     # Decoder2 maps Z to M2
-    model.set_rate(M1, R1)    # Rate of M1 is R1
-    model.set_rate(M2, R2)    # Rate of M2 is R2
     # display(model.graph())  # Draw the model
 
     # More capable BC [Körner-Marton 1975], [El Gamal 1979]
@@ -1138,12 +1176,12 @@ Example 3: Lossy source coding with side information at decoder
     R = real("R")
 
     model = CodingModel()
+    model.set_rate(M, R)      # The rate of M is R
     model.add_edge(X, Y)      # X and Y are correlated
     model.add_node(X, M)      # Encoder observes X, produces M
     model.add_node(M+Y, Z)    # Decoder observes M,Y, produces Z
     # model.add_node(M+Y, Z, rv_in_causal = Y) # Use this instead if 
                                               # Y observed causally
-    model.set_rate(M, R)      # The rate of M is R
 
     r = model.get_inner()     # Get inner bound, recovers Wyner-Ziv
     print(r)
