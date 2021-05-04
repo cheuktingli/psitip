@@ -16,7 +16,7 @@
 <!-- enc_M1+M2_X -->
 <g id="node8" class="node"><title>enc_M1+M2_X</title>
 <polygon fill="none" stroke="black" points="144,-63 90,-63 90,-27 144,-27 144,-63"/>
-<text text-anchor="middle" x="117" y="-41.3" font-family="Times New Roman,serif" font-size="14.00"> </text>
+<text text-anchor="middle" x="117" y="-41.3" font-family="Times New Roman,serif" font-size="14.00">1</text>
 </g>
 <!-- M1@@4@@M_1&#45;&gt;enc_M1+M2_X -->
 <g id="edge1" class="edge"><title>M1@@4@@M_1&#45;&gt;enc_M1+M2_X</title>
@@ -57,7 +57,7 @@
 <!-- enc_Y_M1? -->
 <g id="node9" class="node"><title>enc_Y_M1?</title>
 <polygon fill="none" stroke="black" points="414,-36 360,-36 360,-0 414,-0 414,-36"/>
-<text text-anchor="middle" x="387" y="-14.3" font-family="Times New Roman,serif" font-size="14.00"> </text>
+<text text-anchor="middle" x="387" y="-14.3" font-family="Times New Roman,serif" font-size="14.00">2</text>
 </g>
 <!-- Y&#45;&gt;enc_Y_M1? -->
 <g id="edge4" class="edge"><title>Y&#45;&gt;enc_Y_M1?</title>
@@ -67,7 +67,7 @@
 <!-- enc_Z_M2? -->
 <g id="node10" class="node"><title>enc_Z_M2?</title>
 <polygon fill="none" stroke="black" points="504,-90 450,-90 450,-54 504,-54 504,-90"/>
-<text text-anchor="middle" x="477" y="-68.3" font-family="Times New Roman,serif" font-size="14.00"> </text>
+<text text-anchor="middle" x="477" y="-68.3" font-family="Times New Roman,serif" font-size="14.00">3</text>
 </g>
 <!-- Z&#45;&gt;enc_Z_M2? -->
 <g id="edge6" class="edge"><title>Z&#45;&gt;enc_Z_M2?</title>
