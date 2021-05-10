@@ -7,9 +7,11 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). See `References`_ for other software based on this method.
 
-- `Automated inner and outer bounds`_ for multiuser settings in network information theory (see the `Jupyter Notebook examples <https://github.com/cheuktingli/psitip/blob/master/examples>`_ ).
+- `Automated inner and outer bounds`_ for multiuser settings in network information theory (see the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ ).
 
 - `Numerical optimization`_ over distributions, and evaluation of rate regions involving auxiliary random variables (e.g. `Example 1: Degraded broadcast channel`_).
+
+- `Interactive mode and Parsing LaTeX code`_.
 
 - `Finding examples`_ of distributions where a set of constraints is satisfied.
 
@@ -375,7 +377,7 @@ This program comes with ABSOLUTELY NO WARRANTY. This program is a work in progre
 Installation
 ~~~~~~~~~~~~
 
-Download `psitip.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/psitip.py>`_ and place it in the same directory as your code, or open an IPython shell in the same directory as psitip.py. The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ contains examples of usages of Psitip. Use :code:`from psitip import *` in your code to import all functions in psitip.
+Download `psitip.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/psitip.py>`_ and place it in the same directory as your code, or open an IPython shell in the same directory as psitip.py. The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ and the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ contain examples of usages of Psitip. Use :code:`from psitip import *` in your code to import all functions in psitip.
 
 Python 3 and numpy are required to run psitip. It also requires at least one of the following for sparse linear programming:
 
@@ -389,10 +391,11 @@ See the Solver section for details.
 
 Other optional dependencies:
 
-- **Pycddlib** (https://github.com/mcmtroffaes/pycddlib/), a Python wrapper for Komei Fukuda's cddlib (https://people.inf.ethz.ch/fukudak/cdd_home/). Needed only for the convex hull method for polyhedron projection.
-- **PyTorch** (https://pytorch.org/). Needed only for numerical optimization over probability distributions.
-- **Matplotlib** (https://matplotlib.org/). Required for drawing information diagrams.
+- **Pycddlib** (https://github.com/mcmtroffaes/pycddlib/), a Python wrapper for Komei Fukuda's cddlib (https://people.inf.ethz.ch/fukudak/cdd_home/). Needed only for the convex hull method for polyhedron projection (`Discover inequalities`_).
+- **PyTorch** (https://pytorch.org/). Needed only for `Numerical optimization`_ over probability distributions.
+- **Matplotlib** (https://matplotlib.org/). Required for drawing `Information diagrams`_.
 - **Graphviz** (https://graphviz.org/). A Python binding of Graphviz is required for drawing Bayesian networks and communication network model.
+- **Lark** (https://github.com/lark-parser/lark). A parsing toolkit. Required for `Interactive mode and Parsing LaTeX code`_.
 
 
 |
@@ -495,6 +498,8 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
  - Use :code:`r.simplify(level = ???)` to specify the simplification level (integer in 0,...,10). A higher level takes more time. The context manager :code:`PsiOpts.setting(simplify_level = ???):` has the same effect.
 
+ - The simplify method always tries to convert the region to an equivalent form which is **weaker a priori** (e.g. removing redundant constraints and converting equality constraints to inequalities if possible). If a **stronger** form is desired, use :code:`r.simplify(strengthen = True)`.
+
 - **Logical implication**. To test whether the conditions in region :code:`r1` imply the conditions in region :code:`r2` (i.e., whether :code:`r1` is a subset of :code:`r2`), use :code:`r1.implies(r2)` (which returns :code:`bool`). E.g. :code:`(I(X & Y) == 0).implies(H(X + Y) == H(X) + H(Y))`.
 
  - Use :code:`r1.implies(r2, aux_hull = True)` to allow rate splitting for auxiliary random variables, which may help proving the implication. This takes considerable computation time.
@@ -542,7 +547,9 @@ Advanced
 
     (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))).forall(U)
 
- - Currently, calling :code:`forall` on real variables is not supported.
+ - Calling :code:`forall` on real variables is supported, e.g. :code:`(((R == H(X)) | (R == H(Y))) >> (R == H(Z))).forall(R)` gives :code:`(H(X) == H(Z)) & (H(Y) == H(Z))`.
+
+ - Ordering of :code:`forall` and :code:`exists` among random variables are respected, i.e., :code:`r.exists(X1).forall(X2)` is different from :code:`r.forall(X2).exists(X1)`. Ordering of :code:`forall` and :code:`exists` among real variables are also respected. Nevertheless, ordering between random variables and real variables are **not** respected, and real variables are always processed first (e.g., it is impossible to have :code:`(H(X) - H(Y) == R).exists(X+Y).forall(R)`, since it will be interpreted as :code:`(H(X) - H(Y) == R).forall(R).exists(X+Y)`).
 
 
 - The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`. To replace :code:`x1` by :code:`y1`, and :code:`x2` by :code:`y2`, use :code:`r.substituted({x1: y1, x2: y2})` or :code:`r.substituted(x1 = y1, x2 = y2)` (the latter only works if :code:`x1` has name :code:`"x1"`).
@@ -631,6 +638,43 @@ Advanced
  - A solver which supports outputting dual variables is required for proof generation, e.g. :code:`PsiOpts.setting(solver = "pyomo.glpk")`.
 
 - To set a **time limit** to a block of code, start the block with :code:`with PsiOpts(timer = 5000):` (e.g. for a time limit of 5000ms). This is useful for time-consuming tasks, e.g. simplification and optimization.
+
+|
+|
+
+Interactive mode and Parsing LaTeX code
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Interactive mode can be entered by calling the main function of the Psitip package (if the Psitip package is installed, type :code:`python -m psitip` in the terminal). It has a lax syntax, accepting the Psitip syntax, common notations and LaTeX input. Common functions are :code:`check` (checking the conditions), :code:`implies` (material implication), :code:`simplify`, :code:`assume` (assume a region is true; assumption can be accessed via :code:`assumption`, and cleared via :code:`clear assume`) and :code:`latex` (latex output). Parsing can also be accessed using :code:`Expr.parse("3I(X,Y;Z)")` and :code:`Region.parse("3I(X,Y;Z) \le 2")` in Python code (`Jupyter Notebook example <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_latex.ipynb>`_). Interactive mode examples:
+
+.. code-block:: text
+
+    > a = I(X ; Y Z)
+    I(X&Y+Z)
+
+    > check a = 0 implies exists U st H(U) = I(X ; Y | U) <= 0
+    True
+
+    > latex simplify \exists U : H(U | Y, Z) = 0, R \ge H(X | U)
+    R \ge H(X|Y, Z)
+
+    > assume X -> (Y,Z) -> W
+    markov(X, Y+Z, W) 
+
+    > assumption      
+    markov(X, Y+Z, W) 
+
+    > check H(Y Z) >= I(X;W) 
+    True
+
+    > I(X;W|Y,Z) 
+    0
+
+    > clear assume
+
+    > assumption
+    universe()
+
 
 |
 |
@@ -985,25 +1029,25 @@ Example 4: Parametric distribution
 Automated inner and outer bounds
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-`Index of Jupyter Notebook examples <https://github.com/cheuktingli/psitip/blob/master/examples>`_ :
+`Index of Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ :
 
-- `Multiple access channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_multiaccess.ipynb>`_
+- `Multiple access channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_multiaccess.ipynb>`_
 
-- `Broadcast channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_broadcast.ipynb>`_
+- `Broadcast channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_broadcast.ipynb>`_
 
-- `Degraded broadcast channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_degradedbc.ipynb>`_
+- `Degraded broadcast channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_degradedbc.ipynb>`_
 
-- `Interference channel <https://github.com/cheuktingli/psitip/blob/master/examples/demo_interference.ipynb>`_
+- `Interference channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_interference.ipynb>`_
 
-- `Channel with state <https://github.com/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_
+- `Channel with state <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_
 
-- `Slepian-Wolf coding <https://github.com/cheuktingli/psitip/blob/master/examples/demo_slepianwolf.ipynb>`_
+- `Slepian-Wolf coding <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_slepianwolf.ipynb>`_
 
-- `Lossy compression with side information <https://github.com/cheuktingli/psitip/blob/master/examples/demo_wynerziv.ipynb>`_
+- `Lossy compression with side information <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_wynerziv.ipynb>`_
 
-- `Distributed lossy compression <https://github.com/cheuktingli/psitip/blob/master/examples/demo_bergertung.ipynb>`_
+- `Distributed lossy compression <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_bergertung.ipynb>`_
 
-- `Gray-Wyner network <https://github.com/cheuktingli/psitip/blob/master/examples/demo_graywyner.ipynb>`_
+- `Gray-Wyner network <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_graywyner.ipynb>`_
 
 
 Psitip supports automated achievability and converse proofs in network information theory. The achievability part uses the general coding theorem for network information theory in [Lee-Chung 2015], whereas the converse part follows the general strategy of identifying auxiliaries using past and future random variables pioneered by Gallager [Gallager 1974], using Csiszár sum identity [Körner-Marton 1977], [Csiszár-Körner 1978].
@@ -1045,9 +1089,9 @@ After a setting is specified, call:
 
 - :code:`model.graph()` to obtain a graphical representation of the setting (Graphviz graph).
 
-**WARNING:** The program makes an implicit assumption that the empirical joint distribution of random variables (channel input/output, source) is fixed. It cannot optimize over channel input distributions. See <https://github.com/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_ for an example.
+**WARNING:** The program makes an implicit assumption that the empirical joint distribution of random variables (channel input/output, source) is fixed. It cannot optimize over channel input distributions. See <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_ for an example.
 
-`Jupyter Notebook examples... <https://github.com/cheuktingli/psitip/blob/master/examples>`_
+`Jupyter Notebook examples... <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_
 
 More examples:
 
@@ -1760,3 +1804,5 @@ Results used as examples above:
 - \A. El Gamal, "The capacity of a class of broadcast channels," IEEE Transactions on Information Theory, vol. 25, no. 2, pp. 166-169, 1979.
 
 - Ahlswede, Rudolf. "Multi-way communication channels." Second International Symposium on Information Theory: Tsahkadsor, Armenian SSR, Sept. 2-8, 1971.
+
+- \G. R. Kumar, C. T. Li, and A. El Gamal, "Exact common information," in Proc. IEEE Symp. Info. Theory. IEEE, 2014, pp. 161-165.

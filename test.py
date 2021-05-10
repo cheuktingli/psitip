@@ -539,7 +539,7 @@ class TestPsitip(unittest.TestCase):
         # Information bottleneck [Tishby-Pereira-Bialek 1999]
         def info_bot(X, Y, t):
             U = rv("U")
-            return (markov(U, X, Y) & (I(Y & U) >= t)).exists(U).minimum(I(X & U))
+            return (markov(U, X, Y) & (I(Y & U) >= t)).minimum(I(X & U), U)
         
         t1, t2 = real("t1", "t2")
         self.assertTrue((t1 <= t2) >> (info_bot(X, Y, t1) <= info_bot(X, Y, t2)))
@@ -872,10 +872,10 @@ class TestPsitip(unittest.TestCase):
                 "  H(Y) <= H(W) }"))
         
         self.assertEqual(str(
-                ((R == H(X)) >> ((R >= H(Y)) & (R <= H(Z)) & (R == H(W)))).forall(R)),
-                ("{ H(X) <= H(Z),\n"
-                "  H(Y) <= H(X),\n"
-                "  H(X) == H(W) }"))
+                ((R == H(X)) >> ((R >= H(Y)) & (R <= H(Z)) & (R == H(W)))).forall(R).simplified()),
+                ("{ H(Y) <= H(X),\n"
+                "  H(X) <= H(Z),\n"
+                "  H(W) == H(X) }"))
         
         
     
@@ -1055,6 +1055,26 @@ class TestPsitip(unittest.TestCase):
         print(repr(r))
         self.assertTrue(r.equiv(eval(repr(r))))
     
+    
+    def test_latex(self):
+        X, Y, Z, U, V, W = rv("X, Y, Z, U, V, W")
+        R, R1, R2 = real("R, R1, R2")
+
+        ex = R + H(X+Y+Z+W) + I(X&Y&U)
+        self.assertTrue(ex.equiv(Expr.parse(ex.latex())))
+
+        ex = R*3 - H(X+Y+Z+W|Y) + I(X&Y+Z&U|W)
+        self.assertTrue(ex.equiv(Expr.parse(ex.latex())))
+
+        r = markov(X+Y, Z, V+W) & indep(X, U+W)
+        self.assertTrue(r.equiv(Region.parse(r.latex())))
+
+        r = indep(X, Y+Z, W+U) & (R >= H(X+Y+Z|W))
+        self.assertTrue(r.equiv(Region.parse(r.latex())))
+
+        r = ((R == H(X+Y)) | (R >= H(Z))).exists(X+Y+Z)
+        self.assertTrue(r.equiv(Region.parse(r.latex())))
+
     
     def test_simplify_aux(self):
         X, Y, Z, U, V, W = rv("X, Y, Z, U, V, W")
