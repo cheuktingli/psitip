@@ -72,18 +72,18 @@ class TestPsitip(unittest.TestCase):
         
     def test_implication(self):
         
-        X, Y1, Y2, U = rv("X", "Y1", "Y2", "U")
+        X, Y1, Y2, U, V = rv("X", "Y1", "Y2", "U", "V")
         
         # Degraded broadcast channel [Cover 1972]
         r_deg = markov(X, Y1, Y2)
         
         # Less noisy  [Korner-Marton 1975]
         # Reads: For all marginal distr. of X, for all U, markov(U,X,Y1+Y2) implies I(U & Y1) >= I(U & Y2)
-        r_ln = (markov(U,X,Y1+Y2) >> (I(U & Y1) >= I(U & Y2))).forall(U).marginal_forall(X).convexified(forall = True)
+        r_ln = (markov(U+V,X,Y1+Y2) >> (I(U & Y1 | V) >= I(U & Y2 | V))).forall(U+V)
         
         # More capable  [Korner-Marton 1975]
         # Reads: For all marginal distr. of X, I(X & Y1) >= I(X & Y2)
-        r_mc = (I(X & Y1) >= I(X & Y2)).marginal_forall(X).convexified(forall = True)
+        r_mc = (markov(V,X,Y1+Y2) >> (I(X & Y1 | V) >= I(X & Y2 | V))).forall(V)
         
         self.assertTrue(r_deg.implies(r_ln))
         self.assertTrue(r_ln.implies(r_mc))
@@ -196,9 +196,15 @@ class TestPsitip(unittest.TestCase):
             "  RJ <= RG,\n"
             "  RG <= H(X),\n"
             "  RG <= H(Y),\n"
-            "  RK <= I(X;Y),\n"
-            "  RJ >= I(X;Y) }")
+            "  RJ >= I(X;Y),\n"
+            "  RK <= I(X;Y) }")
             )
+        #    ("{ RK >= 0,\n"
+        #     "  RJ <= RG,\n"
+        #     "  RG <= H(X),\n"
+        #     "  RG <= H(Y),\n"
+        #     "  RK <= I(X;Y),\n"
+        #     "  RJ >= I(X;Y) }")
         
     def test_new_rv(self):
         
@@ -264,7 +270,7 @@ class TestPsitip(unittest.TestCase):
             
         print("test_csie_region")
         print(iutil.list_tostr_std(aux))
-        self.assertEqual(str(aux[0][1]), "M,Y_")
+        self.assertEqual(str(aux[0][1]), "M,Y_1")
         self.assertEqual(str(aux[1][1]), "M,S")
         
         
@@ -312,7 +318,7 @@ class TestPsitip(unittest.TestCase):
         
         # More capable [Korner-Marton 1975]
         # Reads: For all marginal distr. of X, I(X & Y1) >= I(X & Y2)
-        c_mc = (I(X & Y1) >= I(X & Y2)).marginal_forall(X).convexified(forall = True)
+        c_mc = (I(X & Y1) >= I(X & Y2)).marginal_forall(X).convexified(inp = True, forall = True)
         
         print("test_dbc_region")
         
@@ -369,8 +375,9 @@ class TestPsitip(unittest.TestCase):
         print(iutil.list_tostr_std(aux))
         self.assertTrue(aux is not None)
         
-        self.assertEqual(str(aux[0][1]), "U_1")
-        self.assertEqual(str(aux[1][1]), "U_1,X1,X2")
+        self.assertEqual(str(aux[0][1]), "U_2")
+        # self.assertEqual(str(aux[1][1]), "U_1,X1,X2")
+        self.assertEqual(str(aux[1][1]), "U_2,X1")
         
         
     def test_nonshannon(self):
@@ -442,7 +449,7 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(
             (markov(X, Y, U, W) & (H(U) == 0)).exists(U, toreal = True)),
-            ("I(X,Y;W) == 0")
+            ("I(W;X,Y) == 0")
         )
         
         # This currently fails
@@ -461,29 +468,29 @@ class TestPsitip(unittest.TestCase):
         # Multiple access channel region without time sharing [Ahlswede 1971], [Liao 1972]
         r = ((R1 <= I(X1 & Y | X2)) & (R2 <= I(X2 & Y | X1))
             & (R1 + R2 <= I(X1 + X2 & Y)) & (I(X1 & X2) == 0)).marginal_exists(X1 + X2)
-        self.assertFalse(r.isconvex())
+        self.assertFalse(r.isconvex(inp = True))
         
         # Multiple access channel region with time sharing
         r = ((R1 <= I(X1 & Y | X2 + Q)) & (R2 <= I(X2 & Y | X1 + Q))
             & (R1 + R2 <= I(X1 + X2 & Y | Q)) & (I(X1 & X2 | Q) == 0)).exists(Q).marginal_exists(X1 + X2)
-        self.assertTrue(r.isconvex())
+        self.assertTrue(r.isconvex(inp = True))
         
         # Degraded broadcast channel region [Bergmans 1973], [Gallager 1974]
         r = ((R1 <= I(X & Y1 | U)) & (R2 <= I(U & Y2))
             & (R1 + R2 <= I(X & Y1))).exists(U).marginal_exists(X)
-        self.assertTrue(r.isconvex())
+        self.assertTrue(r.isconvex(inp = True))
         
         # Berger-Tung inner bound without time sharing [Berger 1978], [Tung 1978]
         r = ((R1 >= I(X1 & U1 | U2)) & (R2 >= I(X2 & U2 | U1))
             & (R1 + R2 >= I(X1 + X2 & U1 + U2))
             & (I(U1 & X2 + U2 | X1) == 0) & (I(U2 & X1 + U1 | X2) == 0)).kernel_exists(U1+U2)
-        self.assertFalse(r.isconvex())
+        self.assertFalse(r.isconvex(inp = True))
         
         # Berger-Tung inner bound with time sharing
         r = ((R1 >= I(X1 & U1 | U2 + Q)) & (R2 >= I(X2 & U2 | U1 + Q))
             & (R1 + R2 >= I(X1 + X2 & U1 + U2 | Q))
             & (I(U1 & X2 + U2 | X1 + Q) == 0) & (I(U2 & X1 + U1 | X2 + Q) == 0)).exists(Q).kernel_exists(U1+U2)
-        self.assertTrue(r.isconvex())
+        self.assertTrue(r.isconvex(inp = True))
         
         # Berger-Tung outer bound
         r = ((R1 >= I(X1 + X2 & U1 | U2)) & (R2 >= I(X1 + X2 & U2 | U1))
@@ -797,6 +804,19 @@ class TestPsitip(unittest.TestCase):
     def test_simplify(self):
         
         X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
+
+        self.assertEqual(str((H(X|Y) + I(X&Y)).simplified()), "H(X)")
+        self.assertEqual(str((H(X|Y) + H(Y)).simplified()), "H(X,Y)")
+        self.assertEqual(str((H(X) - I(X&Y)).simplified()), "H(X|Y)")
+        self.assertEqual(str((H(X) - H(X|Y)).simplified()), "I(X;Y)")
+        self.assertEqual(str((H(X+Y) - H(X)).simplified()), "H(Y|X)")
+        self.assertEqual(str((H(X+Y) - H(X|Y)).simplified()), "H(Y)")
+
+        bnet = BayesNet([(X, Y, Z)])
+        self.assertEqual(str((H(X|Y) + I(X&Y|Z)).simplified(bnet = bnet)), "H(X|Z)")
+        self.assertEqual(str((H(X|Y) + H(Y|Z)).simplified(bnet = bnet)), "H(X,Y|Z)")
+        self.assertEqual(str((H(X|Z) - H(X|Y)).simplified(bnet = bnet)), "I(X;Y|Z)")
+        self.assertEqual(str((H(X+Y|Z) - H(X|Y)).simplified(bnet = bnet)), "H(Y|Z)")
         
         self.assertEqual(str(I(X & Y+Z & Z+Y & Z+Y+X).simplified()), "I(X;Z,Y)")
         self.assertTrue(I(X & Y+Z & Z+Y & Z+Y+X) == I(X & Y+Z & Z+Y & Z+Y+X).simplified())
@@ -833,10 +853,10 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
             & (-2*H(U) - 3*I(Y & W) == 0)).simplified()),
-            ("{ H(X) == 0,\n"
-            "  H(U) == 0,\n"
-            "  I(Y;W) == 0,\n"
-            "  I(Z;W) == 0 }"))
+            ("{ H(U) == 0,\n"
+            "  H(X) == 0,\n"
+            "  I(W;Y) == 0,\n"
+            "  I(W;Z) == 0 }"))
     
         # self.assertEqual(str(((I(Z & W | X) + I(W & U) <= 0) & (H(X) + I(Y & U) == 0)
         #     & (-2*H(U) - 3*I(Y & W) == 0)).simplified(zero_group = 2)),
@@ -846,7 +866,7 @@ class TestPsitip(unittest.TestCase):
             "H(X) == 0")
     
         self.assertEqual(str(((H(X) == H(X|Y)) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (H(X+Y+Z) == H(X+Y)+H(Z))).simplified()),
-                         "{ I(X;Y) == 0,\n  I(Z;X,Y) == 0 }")
+                         "{ I(X;Y) == 0,\n  I(X,Y;Z) == 0 }")
         self.assertTrue(((I(X & Y) == 0) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (I(X+Y & Z) == 0))
         == ((I(X & Y) == 0) & (I(X & Z) == 0) & (I(Z & Y) == 0) & (I(X+Y & Z) == 0)).simplified())
         
@@ -854,7 +874,7 @@ class TestPsitip(unittest.TestCase):
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) == H(X))).simplified()), "H(Y) == H(X)")
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y))).simplified()), "H(X) == H(Y)")
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y)) & (H(Y) <= H(Z)) & (H(Y) == H(Z))).simplified()),
-                         "{ H(Y) == H(Z),\n  H(X) == H(Y) }")
+                         "{ H(X) == H(Y),\n  H(Y) == H(Z) }")
     
         
     def test_eliminate(self):
@@ -873,8 +893,8 @@ class TestPsitip(unittest.TestCase):
         
         self.assertEqual(str(
                 ((R == H(X)) >> ((R >= H(Y)) & (R <= H(Z)) & (R == H(W)))).forall(R).simplified()),
-                ("{ H(Y) <= H(X),\n"
-                "  H(X) <= H(Z),\n"
+                ("{ H(X) <= H(Z),\n"
+                "  H(Y) <= H(X),\n"
                 "  H(W) == H(X) }"))
         
         
@@ -956,6 +976,21 @@ class TestPsitip(unittest.TestCase):
             
             aux = (((H(U) == H(X)) & (H(X) >= H(Y))) | ((H(U) == H(X+Y)) & (H(X) >= H(Y)))).exists(U).check_getaux()
             self.assertFalse(aux is not None)
+            
+    
+    def test_unique(self):
+
+        X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
+
+        self.assertTrue((H(U) == 0).unique(U))
+        self.assertTrue((H(U) == 0).exists_unique(U))
+        self.assertFalse((H(U) == 1).unique(U))
+
+        self.assertTrue(((H(U | X) == 0) & (H(U) == 2)).exists_unique(U) >> ((H(U | X) == 0) & (H(U) == 2)).unique(U))
+
+        # If X, Y are perfectly resolvable, common part is unique [Prabhakaran-Prabhakaran 2014]
+        self.assertTrue(((H(U | X)==0) & (H(U | Y)==0) & markov(X, U, Y)).unique(U))
+        self.assertFalse(((H(U | X)==0) & (H(U | Y)==0) & markov(X, U, Y)).exists_unique(U))
             
             
     def test_abs(self):
@@ -1092,7 +1127,7 @@ class TestPsitip(unittest.TestCase):
             & markov(X, U, Y) & markov(X, V, Y) & markov(U, X+Y, V)).exists(U+V)
 
         self.assertEqual(repr(r.simplified(level = 9)),
-            '( ( H(U|X) <= 1 )\n &( H(U|Y) == 1+H(U|X) )\n &( markov(X, U, Y) ) ).exists(U)')
+            '( ( H(U|X) <= 1 )\n &( I(U&X) == I(U&Y)+1 )\n &( markov(X, U, Y) ) ).exists(U)')
 
     
     def test_performance(self):
@@ -1216,6 +1251,9 @@ discrete memoryless systems. Cambridge University Press, 2011.
 
 M. Studeny, Multiinformation and the problem of characterization of conditional 
 independence relations, Problems of Control and Information Theory 18 (1989) 3-16.
+
+V. M. Prabhakaran and M. M. Prabhakaran, "Assisted common information with an application to secure 
+two-party sampling," IEEE Transactions on Information Theory, vol. 60, no. 6, pp. 3413-3434, 2014.
 
 """
 

@@ -7,6 +7,8 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). See `References`_ for other software based on this method.
 
+- Proving first-order logic statements on random variables (involving arbitrary combinations of information inequalities, existence, uniqueness, and, or, not, implication, etc).
+
 - `Automated inner and outer bounds`_ for multiuser settings in network information theory (see the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ ).
 
 - `Numerical optimization`_ over distributions, and evaluation of rate regions involving auxiliary random variables (e.g. `Example 1: Degraded broadcast channel`_).
@@ -23,7 +25,7 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - `Integration with Jupyter Notebook and LaTeX output`_.
 
-- Generation of `human-readable proofs`_.
+- Generation of `Human-readable Proof`_.
 
 - Drawing `Information diagrams`_.
 
@@ -40,9 +42,10 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 .. code:: python
 
     from psitip import *
-    PsiOpts.setting(solver = "pyomo.glpk")  # Set linear programming solver
-    PsiOpts.setting(repr_latex = True)      # Turn on Jupyter Notebook LaTeX display
-    PsiOpts.setting(venn_latex = True)      # Turn on LaTeX in diagrams
+    PsiOpts.setting(solver = "pyomo.glpk")     # Set linear programming solver
+    PsiOpts.setting(repr_latex = True)         # Jupyter Notebook LaTeX display
+    PsiOpts.setting(venn_latex = True)         # LaTeX in diagrams
+    PsiOpts.setting(proof_note_color = "blue") # Reasons in proofs are blue
     
     X, Y, Z, W, U, M, S = rv("X, Y, Z, W, U, M, S") # Declare random variables
 
@@ -53,7 +56,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block5.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block7.svg
 
 --------------
 
@@ -79,7 +82,19 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block9.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block11.svg
+
+--------------
+
+.. code:: python
+
+    # Proof of the implication
+    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).proof(detail = True)
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block13.svg
 
 --------------
 
@@ -90,7 +105,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_5_0.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_6_0.png
 
 
 
@@ -111,7 +126,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block14.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block18.svg
 
 --------------
 
@@ -124,9 +139,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.svg
-
---------------
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block20.svg
 
 --------------
 
@@ -150,7 +163,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block22.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block25.svg
 
 --------------
 
@@ -160,7 +173,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block24.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block27.svg
 
 --------------
 
@@ -170,7 +183,18 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block26.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block29.svg
+
+--------------
+
+.. code:: python
+
+    (gkci <= wci).proof(detail = True) # Output proof of Gács-Körner <= Wyner
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block31.svg
 
 --------------
 
@@ -182,7 +206,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block28.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block33.svg
 
 --------------
 
@@ -194,9 +218,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block30.svg
-
---------------
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block35.svg
 
 --------------
 
@@ -225,7 +247,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_17_0.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_19_0.svg
 
 
 
@@ -238,53 +260,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block38.svg
-
---------------
-
-.. code:: python
-
-    r.maximum(R1 + R2, [R1, R2])          # Max sum rate
-
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block40.svg
-
---------------
-
-.. code:: python
-
-    r.maximum(emin(R1, R2), [R1, R2])     # Max symmetric rate
-
-
-
-
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block42.svg
-
---------------
-
-.. code:: python
-
-    r.exists(R1)   # Eliminate R1, same as r.projected(R2)
-
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
-
---------------
-
-.. code:: python
-
-    # Eliminate Z, i.e., taking union of the region over all choices of Z
-    # The program correctly deduces that it suffices to consider Z = Y
-    r.exists(Z).simplified()
-
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
 
 --------------
 
@@ -298,9 +274,65 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
+
+--------------
+
+.. code:: python
+
+    # Output the converse proof
+    (model.get_outer(is_proof = True) >> r).proof()
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
+
+--------------
+
+.. code:: python
+
+    r.maximum(R1 + R2, [R1, R2])          # Max sum rate
+
+
+
+
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
 
 --------------
+
+.. code:: python
+
+    r.maximum(emin(R1, R2), [R1, R2])     # Max symmetric rate
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
+
+--------------
+
+.. code:: python
+
+    r.exists(R1)   # Eliminate R1, same as r.projected(R2)
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
+
+--------------
+
+.. code:: python
+
+    # Eliminate Z, i.e., taking union of the region over all choices of Z
+    # The program correctly deduces that it suffices to consider Z = Y
+    r.exists(Z).simplified()
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
 
 --------------
 
@@ -314,7 +346,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block53.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.svg
 
 --------------
 
@@ -329,7 +361,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block55.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.svg
 
 --------------
 
@@ -339,14 +371,16 @@ Non-Shannon-type Inequalities
     r = eqdist([X, Y, U], [X, Y, Z]).exists(U)
     
     # Automatically discover non-Shannon-type inequalities using copy lemma
-    r.discover([X, Y, Z, W])
+    PsiOpts.setting(discover_max_facet = None) # Unlimited number of facets
+    r.discover([X, Y, Z, W]).simplified()
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block57.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
 
 --------------
+
 
 
 |
@@ -359,7 +393,7 @@ About
 
 Author: Cheuk Ting Li ( https://www.ie.cuhk.edu.hk/people/ctli.shtml ). The source code of Psitip is released under the GNU General Public License v3.0 ( https://www.gnu.org/licenses/gpl-3.0.html ). The author would like to thank Raymond W. Yeung and Chandra Nair for their invaluable comments.
 
-The deduction system in Psitip is based on the concept of existential information inequalities in:
+The working principle of Psitip (existential information inequalities) is described in the following article:
 
 - \C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," arXiv preprint, available: https://arxiv.org/pdf/2101.12370.pdf , 2021.
 
@@ -552,7 +586,16 @@ Advanced
  - Ordering of :code:`forall` and :code:`exists` among random variables are respected, i.e., :code:`r.exists(X1).forall(X2)` is different from :code:`r.forall(X2).exists(X1)`. Ordering of :code:`forall` and :code:`exists` among real variables are also respected. Nevertheless, ordering between random variables and real variables are **not** respected, and real variables are always processed first (e.g., it is impossible to have :code:`(H(X) - H(Y) == R).exists(X+Y).forall(R)`, since it will be interpreted as :code:`(H(X) - H(Y) == R).forall(R).exists(X+Y)`).
 
 
-- The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`. To replace :code:`x1` by :code:`y1`, and :code:`x2` by :code:`y2`, use :code:`r.substituted({x1: y1, x2: y2})` or :code:`r.substituted(x1 = y1, x2 = y2)` (the latter only works if :code:`x1` has name :code:`"x1"`).
+- **Uniqueness** is represented by the :code:`unique` method of :code:`Region` (which returns a :code:`Region`). For example, to check that if X, Y are perfectly resolvable [Prabhakaran-Prabhakaran 2014], then their common part is unique:
+
+  .. code-block:: python
+
+    print(bool(((H(U | X)==0) & (H(U | Y)==0) & markov(X, U, Y)).unique(U)))
+
+ - Uniqueness does not imply existence. For both existence and uniqueness, use :code:`Region.exists_unique`.
+
+
+- **Substitution**. The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`. To replace :code:`x1` by :code:`y1`, and :code:`x2` by :code:`y2`, use :code:`r.substituted({x1: y1, x2: y2})` or :code:`r.substituted(x1 = y1, x2 = y2)` (the latter only works if :code:`x1` has name :code:`"x1"`).
 
  - Call :code:`substituted_aux` instead of :code:`substituted` to stop treating :code:`x` as an auxiliary in the region :code:`r` (useful in substituting a known value of an auxiliary).
 
@@ -570,13 +613,20 @@ Advanced
 
     def info_bot(X, Y, t):
         U = rv("U")
-        return (markov(U, X, Y) & (I(Y & U) >= t)).minimum(I(X & U), U)
-    
-    X, Y = rv("X", "Y")
-    t1, t2 = real("t1", "t2")
+        return (markov(U, X, Y) & (I(X & U) <= t)).maximum(I(Y & U), U)
+
+    X, Y = rv("X, Y")
+    t1, t2 = real("t1, t2")
+
     # Check that info bottleneck is non-decreasing
     print(bool((t1 <= t2) >> (info_bot(X, Y, t1) <= info_bot(X, Y, t2)))) # True
-    
+
+    # Check that info bottleneck is a concave function of t
+    print(info_bot(X, Y, t1).isconcave()) # True
+
+    # It is not convex in t
+    print(info_bot(X, Y, t1).isconvex()) # False
+
 
 - The **minimum / maximum** of two (or more) :code:`Expr` objects is represented by the :code:`emin` / :code:`emax` function respectively. For example, :code:`bool(emin(H(X), H(Y)) >= I(X & Y))` returns True.
 
@@ -623,9 +673,46 @@ Advanced
 
 - The random variable given by the **strong functional representation lemma** [Li-El Gamal 2018] applied on X, Y (:code:`Comp` objects) with a gap term logg (:code:`Expr` object) is denoted as :code:`sfrl_rv(X, Y, logg)` (a :code:`Comp` object). If the gap term is omitted, this will be the ordinary functional representation lemma [El Gamal-Kim 2011].
 
-  .. _human-readable proofs:
+- To set a **time limit** to a block of code, start the block with :code:`with PsiOpts(timelimit = "1h30m10s100ms"):` (e.g. for a time limit of 1 hour 30 minutes 10 seconds 100 milliseconds). This is useful for time-consuming tasks, e.g. simplification and optimization.
 
-- To output a **human-readable proof**, start a block with :code:`with PsiOpts(proof_new = True):`, and end it with :code:`print(PsiOpts.get_proof())` (or use :code:`str(PsiOpts.get_proof())` to obtain the text of the proof). For example,
+- **Stopping signal file**. To stop the execution of a block of code upon the creation of a file named :code:`"stop_file.txt"`, start the block with :code:`with PsiOpts(stop_file = "stop_file.txt"):`. This is useful for functions with long and unpredictable running time (creating the file would stop the function and output the results computed so far).
+
+
+|
+|
+
+Human-readable Proof
+~~~~~~~~~~~~~~~~~~~~
+
+Calling :code:`r.proof()` (where :code:`r` is a :code:`Region`) produces the step-by-step proof of the region :code:`r` (the proof is a :code:`ProofObj` object). Some options:
+
+- :code:`r.proof(shorten = True)` will shorten the proof by enforcing sparsity of dual variables via L1 regularization using a method similar to [Ho-Ling-Tan-Yeung 2020]. This can be quite slow. Default is True.
+
+ - If this is False, then a solver which supports outputting dual variables is required, e.g. :code:`PsiOpts.setting(solver = "pyomo.glpk")`.
+
+- :code:`r.proof(step_bayesnet = True)` will also output steps deduced using conditional independence in the Bayesian network. Setting to False makes the function considerably faster. Default is True.
+
+- :code:`r.proof(step_chain = True)` will display a chain of inequalities (instead of listing each step separately). Setting to False may make the proof more readable. Default is True.
+
+- :code:`r.proof(step_optimize = True)` will order the steps in the simplest manner. Setting to False makes the function considerably faster. Default is True.
+
+- :code:`r.proof(note_skip_trivial = True)` will skip reasons for trivial steps. Setting to False makes the function output reasons even for trivial steps. Default is True.
+
+- :code:`r.proof(step_simplify = True)` will display simplification steps. Default is False.
+
+- :code:`r.proof(step_expand_def = True)` will display steps for expanding definitions of user-defined information quantities. Default is False.
+
+- :code:`r.proof(repeat_implicant = True)` will display the implicant in an implication. Default is False.
+
+- :code:`r.proof(note_newline = ???)` will set the maximum length of a line until the reason is written on a separate line. Set to True/False to always/never write reasons in separate lines. This can also be set via the global setting :code:`PsiOpts.setting(proof_note_newline = ???)`.
+
+ - If breaking all long lines (not only the reasons) is desired, use :code:`PsiOpts.setting(latex_line_len = 80)` to set the maximum line length of LaTeX output.
+
+- :code:`r.proof(note_color = "blue")` will display the reasons of each inequality in blue in LaTeX output (can accept any LaTeX color). This can also be set via the global setting :code:`PsiOpts.setting(proof_note_color = "blue")`.
+
+A :code:`ProofObj` object can be displayed via :code:`print(r.proof())` (plain text), :code:`print(r.proof().latex())` (LaTeX code), or :code:`r.proof().display()` (LaTeX display in Jupyter Notebook).
+
+To construct a longer proof consisting of several steps, start a block with :code:`with PsiOpts(proof_new = True):`, and end it with :code:`print(PsiOpts.get_proof())` (to print the proof in plain text), :code:`print(PsiOpts.get_proof().latex())` (to print the proof in LaTeX) or :code:`PsiOpts.get_proof().display()` (to typeset the proof in LaTeX and display in Jupyter Notebook). For example,
 
   .. code-block:: python
 
@@ -633,11 +720,8 @@ Advanced
         bool(markov(X, Y, Z) >> (H(Y) >= I(X & Z)))
         print(PsiOpts.get_proof())
 
-  Also see `Example 3: Lossy source coding with side information at decoder`_.
+Also see `Example 3: Lossy source coding with side information at decoder`_.
 
- - A solver which supports outputting dual variables is required for proof generation, e.g. :code:`PsiOpts.setting(solver = "pyomo.glpk")`.
-
-- To set a **time limit** to a block of code, start the block with :code:`with PsiOpts(timer = 5000):` (e.g. for a time limit of 5000ms). This is useful for time-consuming tasks, e.g. simplification and optimization.
 
 |
 |
@@ -976,8 +1060,8 @@ Example 3: Finding the most informative bit
     PsiOpts.setting(opt_basinhopping = True)
     PsiOpts.setting(opt_num_iter_mul = 2) # double the number of iterations
 
-    # "timer = 60000" sets time limit 60000ms for code within the block
-    with PsiOpts(timer = 60000):
+    # "timelimit = 60000" sets time limit 60000ms for code within the block
+    with PsiOpts(timelimit = 60000):
         print(P.maximize(I(F & Y), P[F | X]))
     print(P[F | X])
     print(P[I(F & Y)])
@@ -1039,15 +1123,17 @@ Automated inner and outer bounds
 
 - `Interference channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_interference.ipynb>`_
 
-- `Channel with state <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_
+- `Channel with state: Gelfand-Pinsker theorem <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_
 
 - `Slepian-Wolf coding <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_slepianwolf.ipynb>`_
 
-- `Lossy compression with side information <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_wynerziv.ipynb>`_
+- `Lossy compression with side information: Wyner-Ziv theorem <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_wynerziv.ipynb>`_
 
-- `Distributed lossy compression <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_bergertung.ipynb>`_
+- `Distributed lossy compression: Berger-Tung bounds <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_bergertung.ipynb>`_
 
 - `Gray-Wyner network <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_graywyner.ipynb>`_
+
+- `Network coding: Butterfly network and Vámos network <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_networkcoding.ipynb>`_
 
 
 Psitip supports automated achievability and converse proofs in network information theory. The achievability part uses the general coding theorem for network information theory in [Lee-Chung 2015], whereas the converse part follows the general strategy of identifying auxiliaries using past and future random variables pioneered by Gallager [Gallager 1974], using Csiszár sum identity [Körner-Marton 1977], [Csiszár-Körner 1978].
@@ -1079,7 +1165,7 @@ After a setting is specified, call:
 
  - Use :code:`model.get_inner(convexify = True)` instead to convexify the region using a time sharing random variable. Default is automatic (time sharing random variable is added only when it enlarges the inner bound, e.g. for multiple access channel, though the automatic check is not always accurate). The returned region is a valid inner bound regardless of whether :code:`convexify` is turned on or not.
 
- - If this is taking too long, use the option :code:`ndec_mode = "min"` for :code:`model.add_node` mentioned before.
+ - If this is taking too long, use the option :code:`ndec_mode = "min"` for :code:`model.add_node` mentioned before, and use `model.get_inner(skip_simplify = True)` to skip simplification (gives a significant speedup for network coding settings).
 
 - :code:`model.get_outer()` to obtain an outer bound (:code:`Region`). 
 
@@ -1087,9 +1173,13 @@ After a setting is specified, call:
 
  - Use :code:`model.get_outer(convexify = True)` instead to explicitly add the time sharing random variable. Default is automatic (time sharing random variable is added only when it is necessary, e.g. for multiple access channel). The returned region is a valid outer bound regardless of whether :code:`convexify` is turned on or not.
 
+ - Use :code:`model.get_outer(is_proof = True)` to express the outer bound in a way suitable for automated proof (redundant inequalities will be added).
+
 - :code:`model.graph()` to obtain a graphical representation of the setting (Graphviz graph).
 
-**WARNING:** The program makes an implicit assumption that the empirical joint distribution of random variables (channel input/output, source) is fixed. It cannot optimize over channel input distributions. See <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_ for an example.
+ - The :code:`graph` function accepts `Graphviz graph attributes <http://www.graphviz.org/doc/info/attrs.html>`_, e.g. :code:`model.graph(nodesep = 0.15, ranksep = 0.2, resolution = 60)`.
+
+**WARNING:** The program makes an implicit assumption that the empirical joint distribution of random variables (channel input/output, source) is fixed. It cannot optimize over channel input distributions. See `Gelfand-Pinsker Demo <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_ for an example.
 
 `Jupyter Notebook examples... <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_
 
@@ -1301,7 +1391,13 @@ The :code:`exists` method of :code:`Region` with real variable arguments perform
 Discover inequalities
 ~~~~~~~~~~~~~~~~~~~~~
 
-The :code:`discover` method of :code:`Region` accepts a list of variables of interest (:code:`Comp` or :code:`Expr`), and automatically discover inequalities among those variables implied by the region. It either uses the convex hull method for polyhedron projection [Lassez-Lassez 1991], or trial and error in case the region is a :code:`RegionOp` object. For example:
+The :code:`discover` method of :code:`Region` accepts a list of variables of interest (:code:`Comp` or :code:`Expr`), and automatically discover inequalities among those variables implied by the region. It either uses the convex hull method for polyhedron projection [Lassez-Lassez 1991], or trial and error in case the region is a :code:`RegionOp` object. 
+
+- Use :code:`PsiOpts.setting(verbose_discover_terms_outer = True)` to enable output of intermediate results.
+
+- **Caution:** A randomized algorithm will be used if the problem is larger than a threshold (which can be set by :code:`PsiOpts.setting(discover_max_facet = ???)`; default is 100000). In this case, the program will not terminate unless the block is enclosed by :code:`with PsiOpts(timelimit = ???):` or :code:`with PsiOpts(stop_file = ???):`.
+
+Example:
 
 .. code-block:: python
 
@@ -1611,6 +1707,10 @@ Some of the options are:
 
 - :code:`lp_zero_cutoff` : An optimal value larger than :code:`lp_zero_cutoff` is considered nonnegative in a linear program. Default is :code:`-1e-5`. It should be set to a value smaller than all affine constants in the problem.
 
+- :code:`simplify_level` : The simplification level (integer in 0,...,10) for :code:`simplify` calls (which may be called indirectly via other functions, e.g. :code:`exists`). A higher level takes more time.
+
+- :code:`auxsearch_level` : The level of searching (integer in 0,...,10) for deducing implications. A higher level takes more time.
+
 - :code:`auxsearch_leaveone` : Set to True to handle case decomposition in auxiliary search. Default is False.
 
 - :code:`forall_multiuse` : Set to False to only allow one value for variables with universal quantification. Default is True. Note that if this option is True, then the auxiliary search result for variables with universal quantification will be meaningless.
@@ -1623,6 +1723,7 @@ Some of the options are:
 
 - :code:`repr_check` : Whether the repr of a :code:`Region` object returns its truth value instead of the region itself (useful for console and Jupyter Notebook). Default is False.
 
+- :code:`latex_line_len` : Maximum number of characters in a line in LaTeX output. Useful for breaking long lines. Default is None (unlimited).
 
 - :code:`latex_???` : LaTeX code for various symbols. The :code:`???` can be :code:`mi_delim` (delimiter for mutual information; common choices are :code:`";"`, :code:`"\wedge"` and :code:`":"`), :code:`rv_delim` (delimiter for joint random variable; common choices are :code:`","` and :code:`" "`), :code:`cond` (the :code:`"|"` for conditional entropy), :code:`H` (entropy), :code:`I` (mutual information), :code:`quantifier_sep` (symbol after existentially or universally quantified variables; common choices are :code:`":"`, :code:`"."` and :code:`"\;"`), :code:`exists`, :code:`forall`, :code:`indep` (independent random variables; common choices are :code:`"{\\perp\\!\\!\\!\\perp}"` and :code:`"\\perp"`), :code:`markov` (Markov chain; common choices are :code:`"\\leftrightarrow"`, :code:`"\\to"` and :code:`"-"`), :code:`and`, :code:`or`, :code:`matimplies` (material implication), :code:`equiv` (logical equivalence), :code:`implies` (logical implication), :code:`times` (multiplication), :code:`prob` (probability), :code:`rv_empty` (the empty random variable), :code:`region_universe` (the universe region), :code:`region_empty` (the empty region).
 
@@ -1649,6 +1750,7 @@ Some of the options are:
       LP nrv=2 nreal=0 nvar=3/3 nineq=3 neq=0 solver=pyomo.glpk
         status=Optimal optval=0.0
 
+  - :code:`verbose_solver` : Set to True to enable output of the linear programming solver.
 
   - :code:`verbose_auxsearch` : Set to True to output each problem of auxiliary random variable searching. Default is False.
 
@@ -1694,6 +1796,8 @@ theoretic inequality is based on the following work:
 - \R. W. Yeung, "A framework for linear information inequalities," IEEE Trans. Inform. Theory, vol. 43, pp. 1924-1934, Nov 1997.
 
 - \Z. Zhang and R. W. Yeung, "On characterization of entropy function via information inequalities," IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
+
+- \S. W. Ho, L. Ling, C. W. Tan, and R. W. Yeung, "Proving and disproving information inequalities: Theory and scalable algorithms," IEEE Transactions on Information Theory, vol. 66, no. 9, pp. 5522–5536, 2020.
 
 There are several other pieces of software based on the linear programming approach in ITIP, for example, `Xitip <http://xitip.epfl.ch/>`_, `FME-IT <http://www.ee.bgu.ac.il/~fmeit/index.html>`_, `Minitip <https://github.com/lcsirmaz/minitip>`_, `Citip <https://github.com/coldfix/Citip>`_, `AITIP <https://github.com/convexsoft/AITIP>`_ and `CAI <https://github.com/ct2641/CAI>`_.
 
@@ -1806,3 +1910,4 @@ Results used as examples above:
 - Ahlswede, Rudolf. "Multi-way communication channels." Second International Symposium on Information Theory: Tsahkadsor, Armenian SSR, Sept. 2-8, 1971.
 
 - \G. R. Kumar, C. T. Li, and A. El Gamal, "Exact common information," in Proc. IEEE Symp. Info. Theory. IEEE, 2014, pp. 161-165.
+
