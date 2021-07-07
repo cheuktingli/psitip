@@ -47,7 +47,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
     PsiOpts.setting(venn_latex = True)         # LaTeX in diagrams
     PsiOpts.setting(proof_note_color = "blue") # Reasons in proofs are blue
     
-    X, Y, Z, W, U, M, S = rv("X, Y, Z, W, U, M, S") # Declare random variables
+    X, Y, Z, W, U, V, M, S = rv("X, Y, Z, W, U, V, M, S") # Declare random variables
 
 .. code:: python
 
@@ -89,7 +89,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 .. code:: python
 
     # Proof of the implication
-    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).proof(detail = True)
+    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).proof()
 
 
 
@@ -149,7 +149,7 @@ User-defined information quantities
 .. code:: python
 
     # Define Gács-Körner common information [Gács-Körner 1973]
-    gkci = ((H(U|X) == 0) & (H(U|Y) == 0)).maximum(H(U), U)
+    gkci = ((H(V|X) == 0) & (H(V|Y) == 0)).maximum(H(V), V)
     
     # Define Wyner's common information [Wyner 1975]
     wci = markov(X, U, Y).minimum(I(U & X+Y), U)
@@ -266,15 +266,25 @@ Automatic inner/outer bound for degraded broadcast channel
 
 .. code:: python
 
-    r_out = model.get_outer() # Automatic outer bound
-    
-    # Converse proof, print auxiliary random variables
-    (r_out >> r).check_getaux_array()
+    # Automatic outer bound with 1 auxiliary, gives superposition region
+    model.get_outer(1)
 
 
 
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
+
+--------------
+
+.. code:: python
+
+    # Converse proof, print auxiliary random variables
+    (model.get_outer() >> r).check_getaux_array()
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
 
 --------------
 
@@ -286,7 +296,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
 
 --------------
 
@@ -297,7 +307,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
 
 --------------
 
@@ -308,7 +318,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
 
 --------------
 
@@ -319,7 +329,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
 
 --------------
 
@@ -332,7 +342,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block56.svg
 
 --------------
 
@@ -346,7 +356,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.svg
 
 --------------
 
@@ -361,7 +371,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
 
 --------------
 
@@ -377,7 +387,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block64.svg
 
 --------------
 
