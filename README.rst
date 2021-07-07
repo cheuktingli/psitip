@@ -679,7 +679,7 @@ Advanced
  - The function :code:`check_getaux_dict` returns the results as a :code:`dict`. The function :code:`check_getaux_array` returns the results as a :code:`CompArray`. These two methods should only be used on simple implications (without union, negation and maximization/minimization quantities).
 
 
-- To draw the **Bayesian network** of a region :code:`r`, use :code:`r.graph()` (which gives a Graphviz digraph). To draw the Bayesian network only on the random variables in :code:`x` (:code:`Comp` object), use :code:`r.graph(a)`.
+- To draw the **Bayesian network** of a region :code:`r`, use :code:`r.graph()` (which gives a Graphviz digraph). To draw the Bayesian network only on the random variables in :code:`a` (:code:`Comp` object), use :code:`r.graph(a)`.
 
 - The **meet** or **Gács-Körner common part** [Gács-Körner 1973] between X and Y is denoted as :code:`meet(X, Y)` (a :code:`Comp` object).
 
