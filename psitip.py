@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.1.0
+Version 1.1.1
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -344,6 +344,7 @@ class PsiOpts:
         "auxsearch_op_caselimit": 512,
         "auxsearch_sandwich": True,
         "auxsearch_sandwich_inc": False,
+        "auxsearch_max_numupdate_one_if_proof": True,
 
         "flatten_minmax_elim": False,
         "flatten_distribute": True,
@@ -371,11 +372,13 @@ class PsiOpts:
         "proof_step_term_nshuffle": 1,
         "proof_step_bayesnet": True,
         "proof_repeat_implicant": False,
+        "proof_yield_one": False,
         "proof_note": True,
         "proof_note_color": None,
         "proof_note_newline": 80,
         "proof_note_skip_trivial": True,
         "proof_step_expand_def": False,
+        "proof_noskip": False,
         
         "repr_simplify": True,
         "repr_check": False,
@@ -385,7 +388,7 @@ class PsiOpts:
         
         "discover_hull_frac_enabled": True,
         "discover_hull_frac_denom": 1000,
-        "discover_max_facet": 100000,
+        "discover_max_facet": 1000000,
         "discover_num_simplex": 2,
         
         "str_ineq_sep": ",",
@@ -425,6 +428,9 @@ class PsiOpts:
         "latex_eps": "\\epsilon",
         "latex_because": "\\because",
         "latex_therefore": "\\therefore",
+        "latex_subs": ":=",
+        "latex_subs_bracket_l": "\\{",
+        "latex_subs_bracket_r": ".",
         
         "latex_color": None,
         "latex_line_len": None,
@@ -460,6 +466,7 @@ class PsiOpts:
         "verbose_commmodel": False,
         "verbose_codingmodel": False,
         "verbose_proof_step": False,
+        "verbose_aux_reduced": False,
         
         "sfrl_level": 0,
         "sfrl_maxsize": 1,
@@ -599,6 +606,9 @@ class PsiOpts:
                 else:
                     d["truth"] = d["truth"] & value
                     
+        elif key == "cases":
+            d["auxsearch_leaveone"] = value
+
         elif key == "proof_add":
             if d["proof"] is None:
                 d["proof"] = ProofObj.empty()
@@ -629,7 +639,8 @@ class PsiOpts:
 
         elif key == "proof_detail":
             d["lptype_H_if_proof"] = value
-            # PsiOpts.set_setting_dict(d, "lptype", "H")
+            d["proof_noskip"] = value
+            d["proof_step_compress"] = not value
 
         elif key == "proof_option":
             for c in value.split(","):
@@ -721,7 +732,10 @@ class PsiOpts:
 
     @staticmethod
     def set_proof(value):
-        PsiOpts.settings["proof"] = value
+        if PsiOpts.settings["proof"] is None:
+            PsiOpts.settings["proof"] = value
+        else:
+            PsiOpts.settings["proof"].copy_(value)
     
     @staticmethod
     def get_truth():
@@ -1605,9 +1619,9 @@ class iutil:
     
     
     @staticmethod
-    def tostring_join(x, style, delim = ""):
+    def tostring_join(x, style, delim = "", nlstr = "\n"):
         if isinstance(x, list) or isinstance(x, tuple):
-            return delim.join(iutil.tostring_join(a, style, delim) for a in x)
+            return delim.join(iutil.tostring_join(a, style, delim, nlstr) for a in x)
         if hasattr(x, "tostring"):
             return x.tostring(style = style)
         
@@ -1626,6 +1640,9 @@ class iutil:
                 if x == "therefore":
                     return PsiOpts.settings["latex_therefore"]
 
+            if x == "\n":
+                return nlstr
+            
         if style & PsiOpts.STR_STYLE_LATEX:
             return "\\text{" + str(x) + "}"
         
@@ -1728,6 +1745,43 @@ class iutil:
             
         return r
     
+class MHashList:
+    def __init__(self, x = None, ha = None):
+        if x is None:
+            self.x = []
+        else:
+            self.x = x
+        if ha is None:
+            self.ha = []
+        else:
+            self.ha = ha
+    
+    def add(self, y):
+        h = iutil.mhash(y)
+        i = 0
+        while i < len(self.x):
+            if self.ha[i] == h:
+                self.x.pop(i)
+                self.ha.pop(i)
+            else:
+                i += 1
+
+        self.x.append(y)
+        self.ha.append(h)
+        
+    def clear(self):
+        self.x[:] = []
+        self.ha[:] = []
+        
+    def __len__(self):
+        return len(self.x)
+
+    def __getitem__(self, key):
+        return self.x[key]
+
+    def copy(self):
+        return MHashList(self.x[:], self.ha[:])
+
 
 class MHashSet:
     def __init__(self, x = None, s = None):
@@ -1981,6 +2035,18 @@ class IBaseObj:
         """Alias of substituted_aux
         """
         return self.substituted_aux(*args, **kwargs)
+    
+    def substituted_swap(self, x, y = None):
+        """Swap two variablex x, y
+        """
+        if y is not None:
+            x = [(x, y)]
+        return self.substituted(list(x) + [(b, a) for a, b in x])
+
+    def subs_swap(self, *args, **kwargs):
+        """Alias of substituted_swap
+        """
+        return self.substituted_swap(*args, **kwargs)
         
     def reg(self, *args, **kwargs):
         """Alias of get_region
@@ -2787,19 +2853,45 @@ class Comp(IBaseObj):
                         a.substitute(vlist[0], w)
         
     @staticmethod
-    def substitute_list_to_dict(vlist):
+    def substitute_list_to_dict(vlist, multi = False):
+        def add_dict(r, key, value):
+            if isinstance(value, list):
+                for t in value:
+                    add_dict(r, key, t)
+                return
+            if key not in r:
+                r[key] = value
+            else:
+                if not isinstance(r[key], list):
+                    r[key] = [r[key]]
+                if value not in r[key]:
+                    r[key].append(value)
+            
         r = dict()
         if isinstance(vlist, list):
             for v in vlist:
-                r.update(Comp.substitute_list_to_dict(v))
+                t = Comp.substitute_list_to_dict(v, multi = multi)
+                if multi:
+                    for key, value in t.items():
+                        add_dict(r, key, value)
+                else:
+                    r.update(t)
         elif isinstance(vlist, tuple):
             if len(vlist) >= 2:
-                w = vlist[1]
-                if isinstance(w, list):
-                    w = w[0] if len(w) > 0 else Comp.empty()
-                r[vlist[0]] = w
+                if multi:
+                    for w in vlist[1:]:
+                        add_dict(r, vlist[0], w)
+
+                else:
+                    w = vlist[1]
+                    if isinstance(w, list):
+                        w = w[0] if len(w) > 0 else Comp.empty()
+                    r[vlist[0]] = w
         return r
     
+    @staticmethod
+    def substitute_dict_ismulti(d):
+        return any(isinstance(value, list) for key, value in d.items())
 
     def record_to(self, index):
         index.record(self)
@@ -3733,6 +3825,31 @@ class Term(IBaseObj):
                     
         return False
         
+        
+    def try_isub_flipsign(self, other, bnet = None):
+        
+        if self.get_type() == TermType.IC and other.get_type() == TermType.IC:
+
+            # I(X+U & Y+Z) - I(X & Y) = I(U & Y | X) + I(X+U & Z | Y)
+            if len(self.x) == 2 and len(other.x) == 2:
+                selfz = self.z + other.z
+                if self.z_can_extend_to(selfz, bnet) and other.z_can_extend_to(selfz, bnet):
+                    s0 = self.x[0]
+                    s1 = self.x[1]
+                    for it in range(2):
+                        o0 = other.x[it]
+                        o1 = other.x[1 - it]
+                        if s0.super_of(o0) and s1.super_of(o1):
+                            self.x[0] = s0 - o0
+                            self.x[1] = o1
+                            self.z = selfz + o0
+                            other.x[0] = s0
+                            other.x[1] = s1 - o1
+                            other.z = selfz + o1
+                            return True
+
+        return False
+
         
     def __and__(self, other):
         if isinstance(other, CompArray) or isinstance(other, ExprArray):
@@ -4842,6 +4959,10 @@ class Expr(IBaseObj):
                                 if self.terms[i][0].try_isub(self.terms[j][0], bnet = bnet):
                                     self.terms[j] = (self.terms[j][0], 0.0)
                                     did = True
+                                elif self.terms[i][0].try_isub_flipsign(self.terms[j][0], bnet = bnet):
+                                    self.terms[j] = (self.terms[j][0], ci)
+                                    did = True
+
                             elif reduce_coeff and ci * cj < 0:
                                 if abs(ci) > abs(cj):
                                     ti = self.terms[i][0].copy()
@@ -8784,6 +8905,7 @@ class LinearProg:
         self.pinfeas = False
         self.constmap = {}
 
+        self.noskip = (PsiOpts.settings["proof_noskip"] and PsiOpts.settings["proof_enabled"])
         if dual_form is None:
             self.dual_form = PsiOpts.settings["lp_dual_form"] or (PsiOpts.settings["lp_dual_form_if_proof"] and PsiOpts.settings["proof_enabled"])
         else:
@@ -9723,10 +9845,10 @@ class LinearProg:
         
         r = []
 
+        tmpi = 0
 
-
-        for x, ri, xb, d, iseq in itertools.chain(zip(self.Au.x, self.Au.rowinfo, self.bu, self.dual_u, [False] * len(self.bu)),
-                                                  zip(self.Ae.x, self.Ae.rowinfo, self.be, self.dual_e, [True] * len(self.be))):
+        for tmpi, (x, ri, xb, d, iseq) in enumerate(itertools.chain(zip(self.Au.x, self.Au.rowinfo, self.bu, self.dual_u, [False] * len(self.bu)),
+                                                  zip(self.Ae.x, self.Ae.rowinfo, self.be, self.dual_e, [True] * len(self.be)))):
             if abs(d) > ceps:
                 # r.append((SparseMat.from_row(x, self.nxvar).tonumpyarray_row(), 
                 #     rowt(x).simplified_break_hc(bnet = bnet), d))
@@ -9767,7 +9889,11 @@ class LinearProg:
                 elif (ri * d).isnonneg():
                     curtype = "#TRI"
                 elif (ri * d).isnonpos():
-                    curtype = "#TRI"
+                    if self.noskip:
+                        # curtype = "#N" + str(tmpi)
+                        curtype = "#CTRI"
+                    else:
+                        curtype = "#TRI"
 
                 if any(abs(x) > ceps for x in crow):
                     r.append((crow, ri, d, iseq, curtype))
@@ -9852,8 +9978,15 @@ class LinearProg:
                         if r[i][2] * r[j][2] < 0:
                             isn = -1
 
-                        if r[i][4] != r[j][4]:
-                            continue
+                        if r[i][4] == "#CTRI":
+                            if r[j][4] != "#TRI":
+                                continue
+                        elif r[j][4] == "#CTRI":
+                            if r[i][4] != "#TRI":
+                                continue
+                        else:
+                            if r[i][4] != r[j][4]:
+                                continue
 
                         rii = r[i][1].get_meta("pf_note")
                         rij = r[j][1].get_meta("pf_note")
@@ -10122,7 +10255,10 @@ class LinearProg:
 
             cadds, csums, ciseqs, csn = dualsteps
 
-            if len(cadds) <= 1:
+            if len(cadds) == 0:
+                return
+
+            if not PsiOpts.settings["proof_noskip"] and len(cadds) <= 1:
                 return
 
             pf = None
@@ -10638,7 +10774,7 @@ class LinearProg:
                     print(optreg.exprs_ge[0] + optobjc1)
             print("========================================")
         
-        if self.fcn_mode >= 1:
+        if self.fcn_mode >= 1 and not self.noskip:
             if x.isnonpos_hc():
                 fcn_res = True
                 for (a, c) in x.terms:
@@ -10647,11 +10783,15 @@ class LinearProg:
                         break
                 #print("FCN " + str(x) + "  " + str(fcn_res))
                 if fcn_res:
+                    if verbose:
+                        print("LP True: fcn")
                     return True
                 if self.fcn_mode >= 2:
+                    if verbose:
+                        print("LP False: fcn")
                     return False
             
-        if self.lptype == LinearProgType.HC1BN:
+        if self.lptype == LinearProgType.HC1BN and not self.noskip:
             if x.isnonpos_ic2():
                 if self.bnet.check_ic(x):
                     if verbose:
@@ -10672,6 +10812,14 @@ class LinearProg:
                 if c1 >= -ceps:
                     if verbose:
                         print("LP True: zero")
+                    
+                    if self.dual_form and self.noskip:
+                        self.dual_u = [0.0] * len(self.Au.x)
+                        self.dual_e = [0.0] * len(self.Ae.x)
+                        
+                        if self.dual_pf:
+                            self.write_pf(x)
+
                     return True
                 else:
                     c = None
@@ -11023,7 +11171,7 @@ class LinearProg:
             return r
     
     
-    def proj_hull(prog, n, init_pt = None, toexpr = None, iscone = False, isfrac = None, max_facet = None, num_simplex = None):
+    def proj_hull(prog, n, init_pt = None, toexpr = None, iscone = False, isfrac = None, max_facet = None, num_simplex = None, init_pts_outer = None, pts_outer = None):
         """Convex hull method for polyhedron projection.
         C. Lassez and J.-L. Lassez, Quantifier elimination for conjunctions of linear constraints via a
         convex hull algorithm, IBM Research Report, T.J. Watson Research Center, RC 16779 (1991)
@@ -11038,6 +11186,7 @@ class LinearProg:
         verbose_terms = PsiOpts.settings.get("verbose_discover_terms", False)
         verbose_terms_inner = PsiOpts.settings.get("verbose_discover_terms_inner", False)
         verbose_terms_outer = PsiOpts.settings.get("verbose_discover_terms_outer", False)
+        verbose_aux_reduce = PsiOpts.settings.get("verbose_aux_reduce", False)
         #max_denom = PsiOpts.settings.get("max_denom", 1000)
         
         if isfrac is None:
@@ -11054,15 +11203,50 @@ class LinearProg:
 
         rnd_started = False
         
-        if init_pt is None:
-            if iscone:
-                init_pt = [0] * n
-            else:
-                _, init_pt = prog([1] * n)
-                if init_pt is None:
-                    init_pt = [0] * n
+        mat = None
+        if init_pts_outer is not None and len(init_pts_outer) >= 2:
+            cen = [0.0] * n
+            for p in init_pts_outer:
+                for i in range(n):
+                    cen[i] += p[i]
+            for i in range(n):
+                cen[i] /= len(init_pts_outer)
             
-        mat = cdd.Matrix([[1] + init_pt], number_type=("fraction" if isfrac else "float"))
+            init_pts = []
+            did = False
+            for p in init_pts_outer:
+                v = [cenx - px for cenx, px in zip(cen, p)]
+                if all(abs(vx) <= ceps for vx in v):
+                    continue
+                val, a = prog(v)
+                if not all(abs(ax - px) <= ceps for ax, px in zip(a, p)):
+                    did = True
+                init_pts.append(a)
+                if pts_outer is not None:
+                    pts_outer.append(a)
+            
+            if not did:
+                if verbose_aux_reduce:
+                    print("discover fails to shrink")
+                return None
+
+            mat = cdd.Matrix([[1] + p for p in init_pts], number_type=("fraction" if isfrac else "float"))
+
+                
+        else:
+
+            if init_pt is None:
+                if iscone:
+                    init_pt = [0] * n
+                else:
+                    _, init_pt = prog([1] * n)
+                    if init_pt is None:
+                        init_pt = [0] * n
+            
+            if pts_outer is not None:
+                pts_outer.append(init_pt)
+            mat = cdd.Matrix([[1] + init_pt], number_type=("fraction" if isfrac else "float"))
+
         mat.rep_type = cdd.RepType.GENERATOR
         
         ineqs_tight = []
@@ -11158,9 +11342,22 @@ class LinearProg:
                     else:
                         if verbose_detail:
                             print("MIN " + str(toexpr(x[1:n+1])))
-                        # print("PROG " + str(x))
-                        opt, v = prog(x[1:n+1])
-                        # print("  VS " + str(opt) + "  " + str(-x[0]))
+                        
+                        isshortcut = False
+                        opt = None
+                        v = None
+                        if toexpr is not None and abs(x[0]) <= ceps:
+                            if toexpr(x[1:n+1]).simplified().isnonneg():
+                                opt = 0.0
+                                isshortcut = True
+                                
+                        if not isshortcut:
+                            # print("PROG " + str(x))
+                            opt, v = prog(x[1:n+1])
+                            # print("  VS " + str(opt) + "  " + str(-x[0]))
+
+                        vo = v
+
                         ineqs_tried.append(list(x))
 
                         if verbose_detail:
@@ -11180,7 +11377,7 @@ class LinearProg:
                                 if verbose_terms_outer or verbose_outer or abs(x[0]) <= 100:
                                     if ctoadd:
                                         if verbose:
-                                            print("ADD " + str(toexpr(x[1:n+1])) + " >= " + iutil.float_tostr(-x[0]))
+                                            print("ADD " + str(toexpr(x[1:n+1])) + " >= " + iutil.float_tostr(-x[0]) + (" SHORTCUT" if isshortcut else ""))
                                         if verbose_terms or verbose_terms_outer:
                                             print("OUTER:")
                                             print(alland([toexpr(y[1:n+1]) + y[0] >= 0 for y in ineqs_tight]))
@@ -11210,13 +11407,16 @@ class LinearProg:
                         else:
                             if verbose_detail:
                                 print("PT " + str(v))
+                                
+                            if pts_outer is not None:
+                                pts_outer.append(vo)
                             mat.extend([v])
                             did = True
         
         return ineqs_tight
     
     
-    def discover_hull(self, A, iscone = False):
+    def discover_hull(self, A, iscone = False, init_pts_outer = None, pts_outer = None):
         """Convex hull method for polyhedron projection.
         C. Lassez and J.-L. Lassez, Quantifier elimination for conjunctions of linear constraints via a
         convex hull algorithm, IBM Research Report, T.J. Watson Research Center, RC 16779 (1991)
@@ -11232,7 +11432,7 @@ class LinearProg:
         m = len(A.x)
         
         toexpr = None
-        if verbose or verbose_detail or verbose_terms or verbose_terms_outer:
+        if True or verbose or verbose_detail or verbose_terms or verbose_terms_outer:
             itoexpr = self.row_toexpr()
             def ctoexpr(x):
                 c = [0.0] * n
@@ -11260,7 +11460,7 @@ class LinearProg:
                     r[i] += a * v[j]
             return (opt, r)
         
-        return LinearProg.proj_hull(cprog, m, toexpr = toexpr, iscone = iscone)
+        return LinearProg.proj_hull(cprog, m, toexpr = toexpr, iscone = iscone, init_pts_outer = init_pts_outer, pts_outer = pts_outer)
         
     
     def corners_value(self, ispolar = False, isfrac = None):
@@ -11574,6 +11774,13 @@ class Region(IBaseObj):
             x.add_meta(key, value)
         return self
         
+    def get_meta(self, key):
+        for x in self.exprs_ge + self.exprs_eq + self.exprs_gei + self.exprs_eqi:
+            t = x.get_meta(key)
+            if t is not None:
+                return t
+        return None
+
     def sum_entrywise(self, other):
         return Region([x + y for (x, y) in zip(self.exprs_ge, other.exprs_ge)],
                       [x + y for (x, y) in zip(self.exprs_eq, other.exprs_eq)], 
@@ -12173,6 +12380,7 @@ class Region(IBaseObj):
             return [self.copy()]
         
         cs = self.copy()
+        cs.aux = Comp.empty()
         ges = []
         gec = []
         for x in cs.exprs_ge:
@@ -12202,7 +12410,7 @@ class Region(IBaseObj):
                         cs2.exprs_ge.append(ges[i2].copy())
                 r.append(cs2)
         
-        return RegionOp.union(r)
+        return RegionOp.union(r).exists(self.aux)
         
     
     def corners_value(self, w, ispolar = False, skip_discover = False, inf_value = 1e6):
@@ -13140,13 +13348,13 @@ class Region(IBaseObj):
         
         return False
             
-    def implies_ineq_prog(self, index, progs, expr, sg, save_res = False, saved = False):
+    def implies_ineq_prog(self, index, progs, expr, sg, save_res = False, saved = False, allow_shortcut = True):
         if saved == "both":
             return (self.implies_ineq_prog(index, progs, expr, sg, save_res, saved = True)
                     and self.implies_ineq_prog(index, progs, expr, sg, save_res, saved = False))
         
         #print("save_res = " + str(save_res))
-        if not saved and self.implies_ineq_quick(expr, sg):
+        if not saved and allow_shortcut and self.implies_ineq_quick(expr, sg):
             return True
         if len(progs) == 0:
             progs.append(self.init_prog(index, save_res = save_res))
@@ -13213,16 +13421,26 @@ class Region(IBaseObj):
         return True
     
     
-    def check_plain(self, skip_simplify = False):
+    def check_plain(self, skip_simplify = False, quick = False, bnet = None):
         """Return whether implication is true"""
+
+        if quick:
+            return self.check_quick(bnet = bnet, skip_simplify = skip_simplify)
+
         verbose_subset = PsiOpts.settings.get("verbose_subset", False)
+        allow_shortcut = not (PsiOpts.settings["proof_noskip"] and PsiOpts.settings["proof_enabled"])
         
         cs = self
         if not skip_simplify:
-            cs = self.simplified_quick(zero_group = 2)
+            if allow_shortcut:
+                cs = self.simplified_quick(zero_group = 2)
             if not PsiOpts.settings.get("lp_zero_group", False) or (PsiOpts.settings["lp_no_zero_group_if_proof"] and PsiOpts.settings["proof_enabled"]):
                 cs.split()
-            
+        
+        # print(PsiOpts.settings["proof_noskip"])
+        # print(PsiOpts.settings["proof_enabled"])
+        # print(cs)
+
         index = IVarIndex()
         
         cs.record_to(index)
@@ -13233,12 +13451,12 @@ class Region(IBaseObj):
             print(cs)
         
         for x in cs.exprs_ge:
-            if not cs.implies_ineq_prog(index, progs, x, ">="):
+            if not cs.implies_ineq_prog(index, progs, x, ">=", allow_shortcut = allow_shortcut):
                 if verbose_subset:
                     print(str(x) + " >= 0 FAIL")
                 return False
         for x in cs.exprs_eq:
-            if not cs.implies_ineq_prog(index, progs, x, "=="):
+            if not cs.implies_ineq_prog(index, progs, x, "==", allow_shortcut = allow_shortcut):
                 if verbose_subset:
                     print(str(x) + " == 0 FAIL")
                 return False
@@ -13363,17 +13581,46 @@ class Region(IBaseObj):
         if leaveone is None:
             leaveone = PsiOpts.settings["auxsearch_leaveone"]
             
+        write_pf_enabled = PsiOpts.settings.get("proof_enabled", False)
+        write_pf_repeat_claim = PsiOpts.settings.get("proof_repeat_implicant", False)
+
         leaveone_add_ineq = PsiOpts.settings["auxsearch_leaveone_add_ineq"]
+
         if self.aux.isempty():
             if len(self.exprs_eq) == 0 and len(self.exprs_ge) == 0:
                 yield []
                 return
             if not leaveone:
-                if self.check_plain(skip_simplify = True):
+
+                oproof = None
+                proof_stepped_in = False
+                if write_pf_enabled:
+                    oproof = PsiOpts.get_proof().copy()
+
+                    pcase = PsiOpts.get_proof().get_case()
+                    if not pcase.isuniverse():
+                        pf = ProofObj.from_region(self if write_pf_repeat_claim else self.consonly(), c = ["Case ", pcase.copy()])
+                        PsiOpts.set_setting(proof_step_in = pf)
+                        pf = PsiOpts.get_proof()
+                        proof_stepped_in = True
+
+                        desc_more = self.get_meta("pf_note_case")
+                        if desc_more is not None:
+                            pf.insert_step(ProofObj.from_region(pf.claim, c = desc_more), 0)
+                            pf.claim = None
+                        pf.desc += [":"]
+
+                cres = self.check_plain(skip_simplify = True)
+                if proof_stepped_in:
+                    PsiOpts.set_setting(proof_step_out = True)
+
+                if cres:
                     yield []
+                else:
+                    if oproof is not None:
+                        PsiOpts.set_proof(oproof)
                 return
                 
-        write_pf_enabled = PsiOpts.settings.get("proof_enabled", False)
         
         
         verbose = PsiOpts.settings.get("verbose_auxsearch", False)
@@ -13711,6 +13958,62 @@ class Region(IBaseObj):
                     + ("  Avoid: " + str(cavoid) if not cavoid.isempty() else ""))
         
         
+        
+        if self.aux.isempty() and write_pf_enabled and leaveone:
+
+            oproof = PsiOpts.get_proof().copy()
+            pf = ProofObj.from_region(self if write_pf_repeat_claim else self.consonly(), c = "Claim:")
+            PsiOpts.set_setting(proof_step_in = pf)
+            pf = PsiOpts.get_proof()
+
+            # print(self)
+
+            curleave = None
+            for i in range(n * 2 + 1):
+                for j in range(len(eqvs[i])):
+                    cs = self.noaux()
+                    cs.exprs_ge = []
+                    cs.exprs_eq = []
+                    if eqvs[i][j][1] == "==":
+                        cs.exprs_eq.append(eqvs[i][j][0])
+                    else:
+                        cs.exprs_ge.append(eqvs[i][j][0])
+                    tres = cs.check_plain(skip_simplify = True)
+                    if not tres:
+                        if not eqvleaveok[i][j] or curleave is not None:
+                            PsiOpts.set_setting(proof_step_out = True)
+                            PsiOpts.set_proof(oproof)
+                            return
+                        else:
+                            curleave = eqvs[i][j][0]
+
+            PsiOpts.set_setting(proof_step_out = True)
+
+            pcase = PsiOpts.get_proof().get_case()
+            if curleave is not None or not pcase.isuniverse():
+                tcase = pcase.copy()
+                if curleave is not None:
+                    tcase &= (curleave >= 0)
+                    PsiOpts.get_proof().set_case(pcase & (curleave <= 0))
+                pf.desc = ["Case ", tcase]
+                desc_more = self.get_meta("pf_note_case")
+                if desc_more is not None:
+                    # pf.desc += [", ", "\n"] + desc_more
+                    pf.insert_step(ProofObj.from_region(pf.claim, c = desc_more), 0)
+                    pf.claim = None
+                pf.desc += [":"]
+                # pf2 = ProofObj.from_region(None, c = ["Remaining case: ", curleave <= 0])
+                # PsiOpts.set_setting(proof_add = pf2)
+
+            # print("WRITE PF LEAVEONE  " + str(curleave))
+
+            if curleave is None:
+                yield []
+            else:
+                yield ("leaveone", [], -curleave)
+                
+            return
+
         
         if len(eqs) == 0:
             #print(bin(setflag))
@@ -14173,9 +14476,11 @@ class Region(IBaseObj):
                                 x2.substitute(Comp([auxcomp.varlist[i3]]), auxlist[i3])
                             #print("BUILD " + str(x2))
                             
-                            if leaveone_add_ineq:
-                                build_region(n_cond, allflag, False, cflag = cflag, add_ineq = x2)
-                            yield ("leaveone", x2.copy())
+                            x2.simplify()
+                            if not x2.isnonneg():
+                                if leaveone_add_ineq:
+                                    build_region(n_cond, allflag, False, cflag = cflag, add_ineq = x2)
+                                yield ("leaveone", x2.copy())
                         else:
                             yield allflag | cflag
                     else:
@@ -14781,6 +15086,48 @@ class Region(IBaseObj):
         
         return check_getaux_sfrl_recur(0)
     
+    def substituted_dict_union_plain(self, d):
+        d2 = dict()
+        for key, value in d.items():
+            if self.ispresent(key):
+                if isinstance(value, list):
+                    d2[key] = value
+                else:
+                    d2[key] = [value]
+
+        cons0 = self.noaux()
+        cons = []
+        for subs in itertools.product(*[[(key, v) for v in value] for key, value in d2.items()]):
+            t = cons0.substituted(list(subs))
+            t.add_meta("pf_note_case", ["Substitute ", CompArray(list(subs)).add_meta("omit_bracket", True).add_meta("subs", True), ":"])
+            cons.append(t)
+
+        # cons = [self.consonly().noaux()]
+        # taux = self.aux.copy()
+        # for key, value in d.items():
+        #     taux -= key
+        #     if not any(c.ispresent(key) for c in cons):
+        #         continue
+        #     if not isinstance(value, list):
+        #         value = [value]
+        #     cons = [c.substituted(key, x) for c in cons for x in value]
+        
+        if len(cons) == 1:
+            cons = cons[0]
+        else:
+            cons = RegionOp.union(cons)
+        
+        return cons
+
+    def substituted_dict_union(self, d):
+        taux = self.aux.copy()
+        for key, value in d.items():
+            taux -= key
+        r = self.imp_flippedonly_noaux() >> self.consonly().noaux().substituted_dict_union_plain(d).exists(taux)
+        if not self.auxi.isempty():
+            r = r.forall(self.auxi.copy())
+        return r
+
     
     def check_getaux(self, hint_pair = None, hint_aux = None):
         """Return whether implication is true, with auxiliary search results."""
@@ -14800,35 +15147,45 @@ class Region(IBaseObj):
                 if write_pf_enabled:
                     if not self.is_getaux_op() and len(rr) > 0:
 
-                        pf = ProofObj.from_region(None, c = ["Substitute: ", CompArray(Comp.substitute_list_to_dict(rr))])
-                        PsiOpts.set_setting(proof_add = pf)
+                        subdict = Comp.substitute_list_to_dict(rr, multi = True)
+
+                        if not Comp.substitute_dict_ismulti(subdict):
+                            pf = ProofObj.from_region(None, c = ["Substitute ", CompArray(subdict).add_meta("omit_bracket", True).add_meta("subs", True), ":"])
+                            PsiOpts.set_setting(proof_add = pf)
                         
                         cs = self.copy()
-                        Comp.substitute_list(cs, rr, isaux = True)
+
+                        # Comp.substitute_list(cs, rr, isaux = True)
+                        cs = cs.substituted_dict_union(subdict)
+
                         if cs.getaux().isempty():
                             with PsiOpts(proof_enabled = True):
-                                cs.check_plain()
+                                if isinstance(cs, RegionOp):
+                                    cs.check()
+                                else:
+                                    cs.check_plain()
                                 
                     PsiOpts.set_setting(proof_step_out = True)
                         
                 return rr
 
         if write_pf_enabled:
+            PsiOpts.set_setting(proof_step_out = True)
             PsiOpts.set_proof(oproof)
 
         return None
     
-    def check_getaux_dict(self, **kwargs):
+    def check_getaux_dict(self, multi = True, **kwargs):
         r = self.check_getaux(**kwargs)
         if r is None:
             return None
-        return Comp.substitute_list_to_dict(r)
+        return Comp.substitute_list_to_dict(r, multi = multi)
     
-    def check_getaux_array(self, **kwargs):
+    def check_getaux_array(self, multi = True, **kwargs):
         r = self.check_getaux(**kwargs)
         if r is None:
             return None
-        return CompArray(Comp.substitute_list_to_dict(r))
+        return CompArray(Comp.substitute_list_to_dict(r, multi = multi)).add_meta("omit_bracket", True).add_meta("subs", True)
     
     def is_getaux_op(self):
         truth = PsiOpts.settings["truth"]
@@ -14916,6 +15273,12 @@ class Region(IBaseObj):
     
         return self.check_getaux() is not None
     
+    def assumption(self, mode = None):
+        """Retrieve the strengthened assumptions for proving this region. The implication in this 
+        region must be true if this assumption does not hold.
+        """
+        return RegionOp.inter([self]).assumption(mode = mode)
+
     def evalcheck(self, f):
         truth = PsiOpts.settings["truth"]
         if truth is not None:
@@ -15047,8 +15410,19 @@ class Region(IBaseObj):
         self.auxi = Comp.empty()
         return self
         
-    def completed_semigraphoid_ic(self, max_iter = None):
+    def completed_semigraphoid_ic(self, vs = None, max_iter = None):
         verbose = PsiOpts.settings.get("verbose_semigraphoid", False)
+
+        if vs is not None:
+            tvs = []
+            for t in vs:
+                if isinstance(t, Comp):
+                    tvs.append((t, t))
+                else:
+                    tvs.append(t)
+            if len(tvs) == 0:
+                return Expr.zero()
+            vs = tvs
         
         def mask_impl(a, b):
             a0, a1, az = a
@@ -15193,19 +15567,71 @@ class Region(IBaseObj):
                 else:
                     icl.add((a0, a1, az))
         
+        if vs is not None:
+            vmasks = [index.get_mask(b) for a, b in vs]
+            vvars = CompArray([a for a, b in vs])
+            
+            icl2 = set()
+            for a0, a1, az in icl:
+                b0 = 0
+                b1 = 0
+                bz = 0
+                for i in range(len(vs)):
+                    if a0 | vmasks[i] == a0:
+                        b0 |= 1 << i
+                    if a1 | vmasks[i] == a1:
+                        b1 |= 1 << i
+
+                if b0 == 0 or b1 == 0:
+                    continue
+
+                def recur(i, zmask, azvis):
+                    if i == len(vs):
+                        if azvis & az == az:
+                            c0 = b0 & ~zmask
+                            c1 = b1 & ~zmask
+                            if c0 != 0 and c1 != 0:
+                                if c0 > c1:
+                                    c0, c1 = c1, c0
+                                icl2.add((c0, c1, zmask))
+                        return
+
+                    vm = vmasks[i]
+                    recur(i + 1, zmask, azvis)
+                    if vm & az != 0 and (a0 | a1 | az) & vm == vm:
+                        recur(i + 1, zmask + (1 << i), azvis | vm)
+                    
+                recur(0, 0, 0)
+                
+            icl.clear()
+            for a0, a1, az in icl2:
+                for b0, b1, bz in icl2:
+                    if (a0, a1, az) == (b0, b1, bz):
+                        continue
+                    if (mask_impl((b0, b1, bz), (a0, a1, az)) 
+                        or mask_impl((b0, b1, bz), (a1, a0, az))):
+                        break
+                else:
+                    icl.add((a0, a1, az))
+
+            r = Expr.zero()
+            for a0, a1, az in icl:
+                r += Expr.Ic(vvars.from_mask(a0), vvars.from_mask(a1), vvars.from_mask(az))
+            return r
+
         r = Expr.zero()
         for a0, a1, az in icl:
             r += Expr.Ic(index.from_mask(a0), index.from_mask(a1), index.from_mask(az))
         return r
                
     
-    def completed_semigraphoid(self, max_iter = None):
+    def completed_semigraphoid(self, vs = None, max_iter = None):
         """ Use semi-graphoid axioms to deduce more conditional independence.
         Judea Pearl and Azaria Paz, "Graphoids: a graph-based logic for reasoning 
         about relevance relations", Advances in Artificial Intelligence (1987), pp. 357--363.
         """ 
         
-        return self.completed_semigraphoid_ic(max_iter = max_iter) <= 0
+        return self.completed_semigraphoid_ic(vs = vs, max_iter = max_iter) <= 0
     
     
     def eliminated_ic(self, w):
@@ -15773,7 +16199,7 @@ class Region(IBaseObj):
         return self
                     
      
-    def simplify_redundant(self, reg = None, proc = None, full = True):
+    def simplify_redundant(self, reg = None, proc = None, full = True, quick = False, bnet = None):
         write_pf_enabled = (PsiOpts.settings.get("proof_enabled", False) 
                             and PsiOpts.settings.get("proof_step_simplify", False))
         aux_relax = PsiOpts.settings.get("simplify_aux_relax", False)
@@ -15813,7 +16239,7 @@ class Region(IBaseObj):
             if not full:
                 cs.remove_notcontained(t.allcomp() + allcompreal)
             cs = preprocess(cs)
-            if not (cs <= (t >= 0)).check_plain():
+            if not (cs <= (t >= 0)).check_plain(quick = quick, bnet = bnet):
                 self.exprs_ge[i] = t
             elif write_pf_enabled:
                 red_reg.exprs_ge.append(t)
@@ -15829,7 +16255,7 @@ class Region(IBaseObj):
             if not full:
                 cs.remove_notcontained(t.allcomp() + allcompreal)
             cs = preprocess(cs)
-            if not (cs <= (t == 0)).check_plain():
+            if not (cs <= (t == 0)).check_plain(quick = quick, bnet = bnet):
                 self.exprs_eq[i] = t
             elif write_pf_enabled:
                 red_reg.exprs_eq.append(t)
@@ -15845,7 +16271,7 @@ class Region(IBaseObj):
             if not full:
                 cs.remove_notcontained(t.allcomp() + allcompreal)
             cs = preprocess(cs)
-            if not (cs <= (t >= 0)).check_plain():
+            if not (cs <= (t >= 0)).check_plain(quick = quick, bnet = bnet):
                 self.exprs_gei[i] = t
             elif write_pf_enabled:
                 red_reg.exprs_gei.append(t)
@@ -15861,7 +16287,7 @@ class Region(IBaseObj):
             if not full:
                 cs.remove_notcontained(t.allcomp() + allcompreal)
             cs = preprocess(cs)
-            if not (cs <= (t == 0)).check_plain():
+            if not (cs <= (t == 0)).check_plain(quick = quick, bnet = bnet):
                 self.exprs_eqi[i] = t
             elif write_pf_enabled:
                 red_reg.exprs_eqi.append(t)
@@ -15906,7 +16332,7 @@ class Region(IBaseObj):
     def var_mi_only(self, v):
         return all(a.var_mi_only(v) for a in self.exprs_ge + self.exprs_eq + self.exprs_gei + self.exprs_eqi)
 
-    def aux_eq_towards(self, v, tgt, reg = None, quick = False):
+    def aux_eq_towards(self, v, tgt, reg = None, quick = False, alt_cases = None):
         if self.imp_present():
             return False
         if not self.var_mi_only(v):
@@ -15931,41 +16357,76 @@ class Region(IBaseObj):
                 if not sreg.implies(e1 == 0, quick = quick, bnet = sreg_bnet):
                     return False
         
-        oe0 = None
-        oe1 = None
+        # oe0 = None
+        # oe1 = None
+        oe0s = []
+        oe1s = []
+
         for i, (e0, e1) in enumerate(zip(ege, eget)):
             with PsiOpts(proof_enabled = False):
                 if sreg.implies(e1 >= 0, quick = quick, bnet = sreg_bnet):
                     continue
-                if oe0 is None or sreg.implies(e0 <= oe0, quick = quick, bnet = sreg_bnet):
-                    # print(sreg)
-                    # print(str(e0) + " <= " + str(oe0))
-                    # print()
+                
+                if alt_cases is None and oe0s:
+                    if sreg.implies(e0 <= oe0s[0], quick = quick, bnet = sreg_bnet):
+                        oe0s.pop()
+                        oe1s.pop()
+                    elif sreg.implies(e0 >= oe0s[0], quick = quick, bnet = sreg_bnet):
+                        continue
+                    else:
+                        return False
+                
+                oe0s.append(e0)
+                oe1s.append(e1)
 
-                    oe0 = e0
-                    oe1 = e1
-                    continue
-                if oe0 is not None and sreg.implies(e0 >= oe0, quick = quick, bnet = sreg_bnet):
-                    # print(sreg)
-                    # print(str(e0) + " >= " + str(oe0))
-                    # print()
-                    
-                    continue
-                return False
+                # if oe0 is None or sreg.implies(e0 <= oe0, quick = quick, bnet = sreg_bnet):
+                #     # print(sreg)
+                #     # print(str(e0) + " <= " + str(oe0))
+                #     # print()
+                #     oe0 = e0
+                #     oe1 = e1
+                #     continue
+                # if oe0 is not None and sreg.implies(e0 >= oe0, quick = quick, bnet = sreg_bnet):
+                #     # print(sreg)
+                #     # print(str(e0) + " >= " + str(oe0))
+                #     # print()
+                #     continue
 
-        if oe0 is None:
+                # return False
+
+        if not oe0s:
             return False
+        
+        lowany = False
         with PsiOpts(proof_enabled = False):
-            if not sreg.implies(oe1 <= 0, quick = quick, bnet = sreg_bnet):
+            lowany = any(sreg.implies(oe1 <= 0, quick = quick, bnet = sreg_bnet) for oe1 in oe1s)
+
+        if alt_cases is None:
+            if not lowany:
                 return False
 
-        self.exprs_ge.remove(oe0)
-        self.exprs_eq.append(oe0)
-        
-        return True
-        
+            self.exprs_ge.remove(oe0s[0])
+            self.exprs_eq.append(oe0s[0])
+            
+            return True
+        else:
+            for oe0, oe1 in zip(oe0s, oe1s):
+                t = self.copy()
+                t.exprs_ge = list(self.exprs_ge)
+                t.exprs_ge.remove(oe0)
+                t.exprs_eq.append(oe0)
+                t = t.copy()
+                alt_cases.append(t)
+            
+            if not lowany:
+                t = self.copy()
+                t.substitute_aux(v, tgt)
+                alt_cases.append(t)
+            
+            return True
 
-    def simplify_aux_eq(self, reg = None, quick = False):
+
+    def simplify_aux_eq(self, reg = None, quick = False, full = False):
         if self.aux.isempty():
             return self
         
@@ -15980,6 +16441,8 @@ class Region(IBaseObj):
         if reg is None:
             reg = Region.universe()
 
+        # self.split()
+
         did = True
         for it in range(100):
             if PsiOpts.is_timer_ended():
@@ -15989,9 +16452,13 @@ class Region(IBaseObj):
                 if PsiOpts.is_timer_ended():
                     break
                 ane = self.var_neighbors(a)
-                # for tgt in igen.subset(ane):
-                # for tgt in [Comp.empty(), ane]:
-                for tgt in [Comp.empty()]:
+                totry = []
+                if full:
+                    totry = igen.subset(ane)
+                else:
+                    totry = [Comp.empty()]
+                
+                for tgt in totry:
                     if PsiOpts.is_timer_ended():
                         break
                     if self.aux_eq_towards(a, tgt, reg = reg, quick = quick):
@@ -16002,6 +16469,203 @@ class Region(IBaseObj):
             if not did:
                 break
         return self
+
+
+    def aux_eq_cases_inner(self, reg = None, quick = False, full = True, target = None):
+        if self.aux.isempty() or self.imp_present():
+            return [self.copy()]
+
+        if isinstance(reg, RegionOp):
+            reg = reg.tosimple()
+        if reg is None:
+            reg = Region.universe()
+
+        alt_cases = []
+
+        for a in self.aux:
+            if PsiOpts.is_timer_ended():
+                break
+            ane = self.var_neighbors(a)
+            totry = []
+            if target is not None:
+                totry = [target.inter(ane)]
+            elif full:
+                totry = igen.subset(ane)
+            else:
+                totry = [Comp.empty()]
+            
+            for tgt in totry:
+                if PsiOpts.is_timer_ended():
+                    break
+                if self.aux_eq_towards(a, tgt, reg = reg, quick = quick, alt_cases = alt_cases):
+                    return sum((c.aux_eq_cases_inner(reg = reg, quick = quick, full = full, target = target) for c in alt_cases), [])
+        
+        return [self.copy()]
+
+
+    def aux_eq_cases(self, reg = None, quick = False, full = True, target = None, skip_simplify = False):
+        t = self.aux_eq_cases_inner(reg = reg, quick = quick, full = full, target = target)
+        if len(t) == 1:
+            return t[0]
+        r = anyor(c.noaux() for c in t).exists(self.aux)
+        if not skip_simplify:
+            r = r.simplified()
+        return r
+
+    def aux_reduced(self, new_aux = None, maxsize = 3, skip_simplify = False, aux_pairs = None, aux_force = None, score_fcn = None):
+        """
+        Reduce the number of auxiliaries. May enlarge the region.
+
+        Parameters
+        ----------
+        new_aux : Comp or int
+            The new auxiliaries. len(new_aux) will be the number of auxiliaries in the new region.
+
+        maxsize : int
+            The max number of old auxiliaries each new auxiliary corresponds to.
+
+        Returns
+        -------
+        Region
+            The new region.
+
+        """
+
+        verbose = PsiOpts.settings.get("verbose_aux_reduced", False)
+
+        if self.imp_present():
+            return self.copy()
+            # cs = self.consonly()
+            # return cs.aux_reduced(new_aux = new_aux, maxsize = maxsize)
+
+        if new_aux is None:
+            new_aux = []
+        
+        if isinstance(new_aux, int):
+            if new_aux == 0:
+                new_aux = []
+            elif new_aux == 1:
+                new_aux = [Comp.rv(self.name_avoid("A"))]
+            else:
+                t_new_aux = rv_seq("A", 1, new_aux + 1)
+                new_aux = []
+                index = IVarIndex()
+                self.record_to(index)
+                for a in t_new_aux:
+                    cname = index.name_avoid(a.get_name())
+                    c = Comp.rv(cname)
+                    index.record(c)
+                    new_aux.append(c)
+
+        n = len(new_aux)
+        new_aux_sum = sum(new_aux, Comp.empty())
+
+        discover_list = list(self.allcomprv() - self.aux) + list(self.allcomprealvar_exprlist())
+
+        selfnoaux = self.noaux()
+        index_self = IVarIndex()
+        selfnoaux.record_to(index_self)
+        progs = []
+
+        pts_outer = None
+
+        r = None
+        with PsiOpts(discover_max_facet = None):
+            iters = itertools.combinations(list(igen.subset(self.aux, minsize = 1, maxsize = maxsize)), n)
+            if score_fcn is not None:
+                tlist = []
+                for t in iters:
+                    score = score_fcn(t)
+                    if score is None:
+                        continue
+                    tlist.append((score, t))
+                tlist.sort()
+                iters = []
+                for i in range(len(tlist)):
+                    score, t = tlist[i]
+                    if isinstance(score, tuple) and score[1] < 0:
+                        iters.append(t)
+                        tlist.pop(i)
+                        break
+
+                iters += [t for score, t in tlist]
+
+            for cauxs in iters:
+                if PsiOpts.is_timer_ended():
+                    break
+                
+
+                if aux_force is not None:
+                    if n > 0 and not any(c.ispresent(aux_force) for c in cauxs):
+                        continue
+                
+                if aux_pairs is not None:
+                    scores = [0, 0]
+                    for c in cauxs:
+                        for i, p in enumerate(aux_pairs):
+                            for it in range(2):
+                                if c.ispresent(p[it]):
+                                    scores[it] += 100 + i
+                    if scores[0] < scores[1]:
+                        if verbose:
+                            print(", ".join(str(c) for c in cauxs) + "  pair skipped")
+                        continue
+
+
+                if r is not None:
+                    bad = True
+                    for cor in itertools.permutations(range(n)):
+                        r2 = r.copy()
+                        r2.remove_notpresent(new_aux_sum)
+                        for i in range(n):
+                            r2.substitute_aux(new_aux[i], cauxs[cor[i]])
+                        if selfnoaux.implies_saved(r2.noaux(), index_self, progs):
+                            cauxs = tuple([cauxs[cor[i]] for i in range(n)])
+                            bad = False
+                            break
+                    if bad:
+                        if verbose:
+                            print(", ".join(str(c) for c in cauxs) + "  subset fail")
+                        continue
+
+                if PsiOpts.is_timer_ended():
+                    break
+
+                if verbose:
+                    print(", ".join(str(c) for c in cauxs) + "  discover...")
+
+                new_pts_outer = []
+                # t = self.discover(discover_list + list(zip(new_aux, cauxs)), init_pts_outer = pts_outer, pts_outer = new_pts_outer)
+                t = self.discover(discover_list + list(zip(new_aux, cauxs)))
+                # r.append(t)
+                if PsiOpts.is_timer_ended():
+                    break
+                    
+                if verbose:
+                    print(t)
+                    print()
+
+                if not skip_simplify:
+                    t = t.exists(new_aux_sum.inter(t.allcomprv())).simplified().noaux()
+                    if verbose:
+                        print("Simplified:")
+                        print(t)
+                        print()
+
+                pts_outer = new_pts_outer
+                r = t
+        
+        # if len(r) == 1:
+        #     r = r[0]
+        # else:
+        #     r = anyor(r)
+
+        if r is None:
+            return self.copy()
+
+        r = r.exists(new_aux_sum.inter(r.allcomprv()))
+        return r
+        
 
 
     def aux_hull_towards(self, v, tgt, reg = None, quick = False):
@@ -16765,7 +17429,7 @@ class Region(IBaseObj):
         return r
     
     
-    def get_bayesnet(self, roots = None, semigraphoid_iter = None, get_list = False, skip_simplify = False):
+    def get_bayesnet(self, vs = None, roots = None, semigraphoid_iter = None, get_list = False, skip_simplify = False):
         """Return a Bayesian network containing the conditional independence
         conditions in this region
         """
@@ -16773,21 +17437,26 @@ class Region(IBaseObj):
         if semigraphoid_iter is None:
             semigraphoid_iter = PsiOpts.settings["bayesnet_semigraphoid_iter"]
         
-        icexpr = self.get_ic(skip_simplify)
+        icexpr = None
+        if vs is not None:
+            icexpr = self.completed_semigraphoid_ic(vs = vs, max_iter = semigraphoid_iter)
         
-        if semigraphoid_iter > 0:
-            icexpr += self.completed_semigraphoid_ic(max_iter = semigraphoid_iter)
+        else:
+            icexpr = self.get_ic(skip_simplify)
+            
+            if semigraphoid_iter > 0:
+                icexpr += self.completed_semigraphoid_ic(max_iter = semigraphoid_iter)
             
         if get_list:
             return BayesNet.from_ic_list(icexpr, roots = roots)
         else:
             return BayesNet.from_ic(icexpr, roots = roots).tsorted()
     
-    def graph(self, **kwargs):
+    def graph(self, vs = None, **kwargs):
         """Return the Bayesian network among the random variables as a 
         graphviz digraph that can be displayed in the console.
         """
-        return self.get_bayesnet().graph(**kwargs)
+        return self.get_bayesnet(vs = vs).graph(**kwargs)
     
     def get_bayesnet_imp(self, skip_simplify = False, add_hc = True):
         """Return a Bayesian network containing the conditional independence
@@ -17204,7 +17873,13 @@ class Region(IBaseObj):
         
         return w
 
-    def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False):
+    def eliminate_ic(self, w):
+        self.iand_norename(self.completed_semigraphoid(self.allcomprv() - w))
+        self.split()
+        self.remove_present(w)
+        return self
+
+    def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False, method = ""):
         """Fourier-Motzkin elimination, in place. 
         w is the Expr object with the real variables to eliminate. 
         If w contains random variables, they will be treated as auxiliary RV.
@@ -17214,6 +17889,9 @@ class Region(IBaseObj):
         
         # if isinstance(w, Comp):
         #     w = Expr.H(w)
+
+        if method == "real":
+            toreal = True
         
         if ((not toreal and not forall and not self.auxi.isempty() and any(v.get_type() == IVarType.RV for v in w.allcomp()))
             or (forall and any(v.get_type() == IVarType.REAL for v in w.allcomp()))):
@@ -17239,6 +17917,7 @@ class Region(IBaseObj):
         
         toelim = Comp.empty()
         
+        rvs = Comp.empty()
         simplify_needed = False
         for v in w.allcomp():
             if v.get_type() == IVarType.REAL or toreal:
@@ -17260,11 +17939,16 @@ class Region(IBaseObj):
                 simplify_needed = True
                 
             else:
+                rvs += v
                 if forall:
                     self.auxi += v
                 else:
                     self.aux += v
         
+        if method == "ic" or method == "ci":
+            if not forall and not rvs.isempty():
+                self.eliminate_ic(rvs)
+                simplify_needed = True
         
         if simplify_needed:
             if quick:
@@ -17275,66 +17959,66 @@ class Region(IBaseObj):
         
         return self
         
-    def eliminate_quick(self, w, reg = None, toreal = False, forall = False):
+    def eliminate_quick(self, w, reg = None, toreal = False, forall = False, method = ""):
         """Fourier-Motzkin elimination, in place. 
         w is the Expr object with the real variables to eliminate. 
         If w contains random variables, they will be treated as auxiliary RV.
         """
         
-        return self.eliminate(w, reg = reg, toreal = toreal, forall = forall, quick = True)
+        return self.eliminate(w, reg = reg, toreal = toreal, forall = forall, quick = True, method = method)
         
-    def eliminated(self, w, reg = None, toreal = False, forall = False):
+    def eliminated(self, w, reg = None, toreal = False, forall = False, method = ""):
         """Fourier-Motzkin elimination, return region after elimination. 
         w is the Expr object with the real variable to eliminate. 
         If w contains random variables, they will be treated as auxiliary RV.
         """
         r = self.copy()
-        r = r.eliminate(w, reg, toreal, forall)
+        r = r.eliminate(w, reg, toreal, forall, method = method)
         return r
         
-    def eliminated_quick(self, w, reg = None, toreal = False, forall = False):
+    def eliminated_quick(self, w, reg = None, toreal = False, forall = False, method = ""):
         """Fourier-Motzkin elimination, return region after elimination. 
         w is the Expr object with the real variable to eliminate. 
         If w contains random variables, they will be treated as auxiliary RV.
         """
         r = self.copy()
-        r = r.eliminate_quick(w, reg, toreal, forall)
+        r = r.eliminate_quick(w, reg, toreal, forall, method = method)
         return r
         
-    def exists(self, w = None, reg = None, toreal = False):
+    def exists(self, w = None, reg = None, toreal = False, method = ""):
         """Alias of eliminated.
         """
         if w is None:
             w = self.allcomprv_noaux()
         r = self.copy()
-        r = r.eliminate(w, reg, toreal, forall = False)
+        r = r.eliminate(w, reg, toreal, forall = False, method = method)
         return r
         
-    def exists_quick(self, w = None, reg = None, toreal = False):
+    def exists_quick(self, w = None, reg = None, toreal = False, method = ""):
         """Alias of eliminated_quick.
         """
         if w is None:
             w = self.allcomprv_noaux()
         r = self.copy()
-        r = r.eliminate_quick(w, reg, toreal, forall = False)
+        r = r.eliminate_quick(w, reg, toreal, forall = False, method = method)
         return r
         
-    def forall(self, w = None, reg = None, toreal = False):
+    def forall(self, w = None, reg = None, toreal = False, method = ""):
         """Region of intersection for all variable w.
         """
         if w is None:
             w = self.allcomprv_noaux()
         r = self.copy()
-        r = r.eliminate(w, reg, toreal, forall = True)
+        r = r.eliminate(w, reg, toreal, forall = True, method = method)
         return r
         
-    def forall_quick(self, w = None, reg = None, toreal = False):
+    def forall_quick(self, w = None, reg = None, toreal = False, method = ""):
         """Region of intersection for all variable w.
         """
         if w is None:
             w = self.allcomprv_noaux()
         r = self.copy()
-        r = r.eliminate_quick(w, reg, toreal, forall = True)
+        r = r.eliminate_quick(w, reg, toreal, forall = True, method = method)
         return r
         
     def rv_seq_avoid(self, w):
@@ -17911,7 +18595,7 @@ class Region(IBaseObj):
             self.cmax = cmax
     
     
-    def discover(self, entries, method = "hull_auto", minsize = 1, maxsize = 2, skip_simplify = False, reg_init = None, skipto_ex = None, toreal_prefix = None):
+    def discover(self, entries, method = "hull_auto", minsize = 1, maxsize = 2, skip_simplify = False, reg_init = None, skipto_ex = None, toreal_prefix = None, init_pts_outer = None, pts_outer = None):
         """Automatically discover inequalities between entries. 
         Parameters:
             entries   : List of variables of interest.
@@ -17952,7 +18636,8 @@ class Region(IBaseObj):
         isaffine = cs.affine_present()
         
         if isinstance(entries, Expr):
-            entries = entries.allcomp()
+            # entries = entries.allcomp()
+            entries = [entries]
         
         entries2 = []
         for a in entries:
@@ -18026,14 +18711,41 @@ class Region(IBaseObj):
             
         #print(index_r.comprv)
         #print(index_self.comprv)
+
+        if method == "semigraphoid" or method == "ic" or method == "ci":
+            method = "semigraphoid"
         
+        perform_semigraphoid = method == "semigraphoid" or method == "hull" or method == "hull_cone"
+
+        sg = None
+        if perform_semigraphoid:
+            tvs = []
+            for a in entries:
+                if isinstance(a, tuple) and isinstance(a[1], Comp):
+                    tvs.append((a[0], a[1]))
+                elif isinstance(a, Comp):
+                    tvs.append(a)
+            sg = cs.completed_semigraphoid(vs = tvs)
+            if method == "semigraphoid":
+                return sg
+
+        # sg = None
+
         vis = set()
         
         terms = []
         if method == "hull" or method == "hull_cone":
-            terms = list(itertools.chain(varreal, ent_vector(*varrv)))
+            if sg is None or sg.isuniverse():
+                terms = list(itertools.chain(varreal, ent_vector(*varrv)))
+            else:
+                terms = list(itertools.chain(varreal, sg.get_basis(more_vars = sum(varrv, Comp.empty()))))
+
         else:
             terms = list(itertools.chain(varreal, igen.sI(varrv)))
+
+
+        if verbose:
+            print("discover nterms = " + str(len(terms)))
 
         lastres = [False]
         
@@ -18065,7 +18777,10 @@ class Region(IBaseObj):
             A = SparseMat(0)
             for a in terms:
                 A.extend(prog.get_vec(expr_tr(a), sparse = True)[0])
-            rt = prog.discover_hull(A, iscone = (method == "hull_cone"))
+            rt = prog.discover_hull(A, iscone = (method == "hull_cone"), init_pts_outer = init_pts_outer, pts_outer = pts_outer)
+            if rt is None:
+                return None
+
             inf_thres = prog.lp_ubound / 5.0
             for x in rt:
                 if abs(x[0]) > inf_thres:
@@ -18075,6 +18790,10 @@ class Region(IBaseObj):
                     if abs(x[i + 1]) > ceps:
                         expr += terms[i] * x[i + 1]
                 r.iand_norename(expr >= -x[0])
+            
+            if not (sg is None or sg.isuniverse()):
+                r &= sg
+
             if not skip_simplify:
                 r.simplify()
             return r
@@ -18628,14 +19347,18 @@ class RegionOp(Region):
     def universe_type(rtype):
         return RegionOp(rtype, [(Region.universe(), True)], [])
     
-    def union(xs = None):
+    def union(xs = None, tosimple = False):
         if xs is None:
             xs = []
+        if tosimple and len(xs) == 1:
+            return xs[0].copy()
         return RegionOp(RegionType.UNION, [(x.copy(), True) for x in xs], [])
     
-    def inter(xs = None):
+    def inter(xs = None, tosimple = False):
         if xs is None:
             xs = []
+        if tosimple and len(xs) == 1:
+            return xs[0].copy()
         return RegionOp(RegionType.INTER, [(x.copy(), True) for x in xs], [])
     
         
@@ -18656,6 +19379,13 @@ class RegionOp(Region):
         for x, c in self.regs:
             x.add_meta(key, value)
         return self
+    
+    def get_meta(self, key):
+        for x, c in self.regs:
+            t = x.get_meta(key)
+            if t is not None:
+                return t
+        return None
     
     def ispresent(self, x):
         """Return whether any variable in x appears here."""
@@ -19796,7 +20526,7 @@ class RegionOp(Region):
 #                    r2[-1] = (r2[-1][0] + a, c)
 #        return r2
     
-    def check_getaux_inplace(self, must_include = None, single_include = None, hint_pair = None, hint_aux = None, hint_aux_avoid = None, max_iter = None, leaveone = None, strengthen = None):
+    def check_getaux_inplace(self, must_include = None, single_include = None, hint_pair = None, hint_aux = None, hint_aux_avoid = None, max_iter = None, leaveone = None, strengthen = None, get_info = None):
 
         verbose = PsiOpts.settings.get("verbose_auxsearch", False)
         verbose_step = PsiOpts.settings.get("verbose_auxsearch_step", False)
@@ -19836,6 +20566,7 @@ class RegionOp(Region):
         write_pf_enabled = PsiOpts.settings.get("proof_enabled", False)
         write_pf_repeat_claim = PsiOpts.settings.get("proof_repeat_implicant", False)
         
+        yield_one = write_pf_enabled and PsiOpts.settings.get("proof_yield_one", False)
         
         if verbose_op:
             print("========= aux search op ========")
@@ -19862,6 +20593,9 @@ class RegionOp(Region):
         if write_pf_twopass:
             PsiOpts.settings["proof_enabled"] = False
         
+        write_pf_enabled_inner = PsiOpts.settings.get("proof_enabled", False)
+        max_numupdate_one = write_pf_enabled_inner and PsiOpts.settings.get("auxsearch_max_numupdate_one_if_proof", False)
+
         allauxs = self.auxs
         csnonaux = csallcomprv - csaux - csauxi
         if not csnonaux.isempty():
@@ -20010,7 +20744,7 @@ class RegionOp(Region):
                 if init_leaveone and aux.isempty() and csnonaux.super_of(auxi):
                     ofl = req.one_flipped()
                     if ofl is not None:
-                        init_reg &= ofl
+                        init_reg &= ofl.add_meta("pf_note", ["trivial otherwise"])
             
             cur_consonly = req.isuniverse() and aux.isempty()
             cur_consonly_init = cur_consonly and len(cons) == 1 and csnonaux.super_of(auxi)
@@ -20063,7 +20797,7 @@ class RegionOp(Region):
         
         oneuse_added = [False] * n
                 
-        res = MHashSet()
+        res = MHashList()
         
         rcases_hashset = set()
         
@@ -20079,11 +20813,20 @@ class RegionOp(Region):
         max_yield_pow = 3
         #cur_max_yield = 5
         cur_max_yield = 16
-        
+        max_yield_add = 0
+        max_numupdate = 1000000000000
+        if max_numupdate_one:
+            max_numupdate = 1
+
         if nreqcheck <= 1:
             cur_max_iter *= 1000000000
             cur_max_yield *= 1000000000
         
+        if yield_one:
+            cur_max_yield = 1
+            max_yield_pow = 1
+            max_yield_add = 1
+
         did = True
         prev_did = True
         
@@ -20105,6 +20848,7 @@ class RegionOp(Region):
             print("========= begin search  ========")
         
         cnstep = 0
+        consonly_reg = None
         
         #while did and (max_iter <= 0 or cur_max_iter < max_iter):
         while (did or cnstep <= 1) and (max_iter <= 0 or cur_max_iter < max_iter):
@@ -20116,6 +20860,11 @@ class RegionOp(Region):
             #rcases3 = rcases
             nonsimple_did = False
             
+            numupdate = 0
+            if cnstep >= 10:
+                max_numupdate = 1000000000000
+
+
             for i in range(n):
                 if len(rcases) == 0:
                     break
@@ -20146,7 +20895,7 @@ class RegionOp(Region):
                 
                 
                 if not cur_consonly:
-                    if not aux.isempty() or len(cons) > 0:
+                    if not aux.isempty() or len(cons) > 0 or cur_leaveone:
                         nonsimple_did = True
                 
                 if len(rcases) > caselimit:
@@ -20305,12 +21054,23 @@ class RegionOp(Region):
                         
                         creg_indep = None
                         
+                        t_cur_leaveone = cur_leaveone
+                        
+                        if numupdate >= max_numupdate:
+                            did = True
+                            t_cur_leaveone = False
+
+                        oproof = None
+                        if write_pf_enabled_inner:
+                            oproof = PsiOpts.get_proof().copy()
+                        
+                        curtermdid = False
 
                         for rr in rcur2.check_getaux_inplace_gen(must_include = must_include + mustleft, 
                                 single_include = single_include, hint_pair = hint_pair,
                                 hint_aux = hint_aux + hint_aux_add, 
                                 hint_aux_avoid = hint_aux_avoid + hint_aux_avoid_add,
-                                max_iter = cur_max_iter, leaveone = cur_leaveone):
+                                max_iter = cur_max_iter, leaveone = t_cur_leaveone):
                             
                             cur_yield += 1
                             if cur_yield > cur_max_yield:
@@ -20356,6 +21116,7 @@ class RegionOp(Region):
                                             crcase.iand_simplify_quick(ccon)
                                             rcases_toadd.add((crcase, rcase_toadd_vis[:]))
                                     if rcases_toadd != rcases_toadd2:
+                                        curtermdid = True
                                         tauxlist = [(None if w is None else w.copy()) for w in auxlist]
                                         for v, w in rr:
                                             
@@ -20366,7 +21127,7 @@ class RegionOp(Region):
                                         if len(rr2) > 0:
                                             res.add(rr2)
                                         if verbose_op_step:
-                                            print("ADD  " + " ".join([str(v) + ":" + str(w) for v, w in rr2]))
+                                            print("ADD  " + " ".join([str(v) + ":" + str(w) for v, w in rr2]) + "  y=" + str(cur_yield) + "/" + str(cur_max_yield))
                                 else:
                                     oneuse_added[i] = True
                                     #oneuse_aux.clear()
@@ -20396,6 +21157,7 @@ class RegionOp(Region):
                                     
                                     if oneuse_set.add((tauxmasks, auxvis + [i])):
                                         did = True
+                                        curtermdid = True
                                         if verbose_op_step:
                                             tauxlist = [(None if w is None else w.copy()) for w in auxlist]
                                             for v, w in rr:
@@ -20414,16 +21176,20 @@ class RegionOp(Region):
                                 if len(cons) == 0:
                                     rcases_toadd2 = rcases_toadd
                                     rcases_toadd = MHashSet()
+                                    casedid = False
                                     for rcase_toadd_tuple in rcases_toadd2:
                                         rcase_toadd = rcase_toadd_tuple[0]
                                         rcase_toadd_vis = rcase_toadd_tuple[1]
                                         #crcase = rcase_toadd & (rr[2] >= 0)
                                         #crcase.simplify_quick(zero_group = 1)
                                         crcase = rcase_toadd.copy()
-                                        crcase.iand_simplify_quick(rr[2] >= 0)
+                                        if not crcase.implies_ineq_quick(rr[2], ">="):
+                                            crcase.iand_simplify_quick((rr[2] >= 0).add_meta("pf_note", ["case"]))
+                                            casedid = True
                                         rcases_toadd.add((crcase, rcase_toadd_vis))
                                         
-                                    if rcases_toadd != rcases_toadd2:
+                                    if casedid and rcases_toadd != rcases_toadd2:
+                                        curtermdid = True
                                         tauxlist = [(None if w is None else w.copy()) for w in auxlist]
                                         for v, w in rr[1]:
                                             tauxlist[csaux.varlist.index(v.varlist[0])] = w.copy()
@@ -20432,7 +21198,12 @@ class RegionOp(Region):
                                             res.add(rr2)
                                         if verbose_op_step:
                                             print("LVO  " + " ".join([str(v) + ":" + str(w) for v, w in rr2]))
-                                
+
+                                        numupdate += 1
+                                        if numupdate >= max_numupdate:
+                                            did = True
+                                            break
+
                             elif stype == "max_iter_reached":
                                 did = True
                             
@@ -20441,6 +21212,10 @@ class RegionOp(Region):
                             if len(rcases_toadd) == 0:
                                 break
                             
+
+                        if not curtermdid and oproof is not None:
+                            PsiOpts.set_proof(oproof)
+
                         if len(rcases_toadd) > casesteplimit:
                             break
                         if len(rcases_toadd) == 0:
@@ -20456,6 +21231,10 @@ class RegionOp(Region):
                     print("=========     cases     ========")
                     print("\nOR\n".join(str(rcase[0]) for rcase in rcases))
                 
+
+            if cnstep == 1 and get_info is not None:
+                consonly_reg = RegionOp.union([a for a, _ in rcases], tosimple = True)
+
             if cnstep != 1 and not nonsimple_did:
                 break
             # if not nonsimple_did:
@@ -20474,9 +21253,34 @@ class RegionOp(Region):
             if len(rcases) == 0:
                 break
             cur_max_iter = int(cur_max_iter * max_iter_pow)
-            cur_max_yield = int(cur_max_yield * max_yield_pow)
+            cur_max_yield = int(cur_max_yield * max_yield_pow + max_yield_add)
             
+        
+        if get_info is not None:
+            for i in range(len(get_info)):
+                if get_info[i] == "assumption_init":
+                    get_info[i] = consonly_reg.copy()
+                    get_info[i] = get_info[i].exists(csauxi.inter(get_info[i].allcomprv()))
+                elif get_info[i] == "assumption_final":
+                    get_info[i] = RegionOp.union([a for a, _ in rcases], tosimple = True)
+                    get_info[i] = get_info[i].exists(csauxi.inter(get_info[i].allcomprv()))
+                elif get_info[i] == "assumption_new":
+                    if consonly_reg.get_type() == RegionType.NORMAL:
+                        bnet = consonly_reg.get_bayesnet()
+                        tlist = []
+                        for ccase, _ in rcases:
+                            tr = ccase.copy()
+                            tr.simplify_redundant(reg = consonly_reg, quick = True, bnet = bnet)
+                            tr.simplify(reg = consonly_reg)
+                            tlist.append(tr)
+                        get_info[i] = RegionOp.union(list(tlist), tosimple = True)
+                        get_info[i] = get_info[i].exists(csauxi.inter(get_info[i].allcomprv()))
+                    else:
+                        get_info[i] = Region.universe()
+                    
             
+
+
         PsiOpts.settings["proof_enabled"] = write_pf_enabled
         
         if len(rcases) == 0:
@@ -20510,8 +21314,11 @@ class RegionOp(Region):
                     pf = ProofObj.from_region(self if write_pf_repeat_claim else self.consonly().simplified_quick(), c = "Claim:")
                     PsiOpts.set_setting(proof_step_in = pf)
                     
-                    pf = ProofObj.from_region(None, c = ["Substitute: ", CompArray(Comp.substitute_list_to_dict(resrr))])
-                    PsiOpts.set_setting(proof_add = pf)
+                    resrr_dict = Comp.substitute_list_to_dict(resrr, multi = True)
+
+                    if not Comp.substitute_dict_ismulti(resrr_dict):
+                        pf = ProofObj.from_region(None, c = ["Substitute ", CompArray(resrr_dict).add_meta("omit_bracket", True).add_meta("subs", True), ":"])
+                        PsiOpts.set_setting(proof_add = pf)
                     
                     # cs = self.copy()
 
@@ -20526,11 +21333,12 @@ class RegionOp(Region):
                         for v in xaux[i]:
                             tadd.substitute_aux(Comp.rv(v.get_name() + "_R" + str(i)), v)
 
+                        tadd = tadd.substituted_dict_union_plain(resrr_dict)
                         cs |= tadd
 
                     cs = cs.copy()
 
-                    Comp.substitute_list(cs, resrr, isaux = True)
+                    # Comp.substitute_list(cs, resrr, isaux = True)
                     cs = cs.noaux()
 
                     if verbose_op:
@@ -20592,6 +21400,23 @@ class RegionOp(Region):
         """Return whether implication is true."""
         return self.check_getaux() is not None
     
+    def assumption(self, mode = None):
+        """Retrieve the strengthened assumptions for proving this region. The implication in this 
+        region must be true if this assumption does not hold.
+        """
+
+        cmode = "assumption_final"
+        if mode == "new":
+            cmode = "assumption_new"
+        elif mode == "init":
+            cmode = "assumption_init"
+        get_info = [cmode]
+        
+        cs = self.copy()
+        with PsiOpts(cases = True):
+            cs.check_getaux_inplace(get_info = get_info)
+        return get_info[0]
+
     
     def evalcheck(self, f):
         truth = PsiOpts.settings["truth"]
@@ -20900,7 +21725,7 @@ class RegionOp(Region):
             if not y.isempty():
                 self.auxs.append((y, c))
         
-    def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False):
+    def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False, method = ""):
         
         w = Region.get_allcomp(w)
             
@@ -20944,8 +21769,8 @@ class RegionOp(Region):
         
         return self
         
-    def eliminate_quick(self, w, reg = None, toreal = False, forall = False):
-        return self.eliminate(w, reg = reg, toreal = toreal, forall = forall, quick = True)
+    def eliminate_quick(self, w, reg = None, toreal = False, forall = False, method = ""):
+        return self.eliminate(w, reg = reg, toreal = toreal, forall = forall, quick = True, method = method)
         
     def marginal_eliminate(self, w):
         for x in self.regs:
@@ -21153,11 +21978,18 @@ class MonotoneSet:
     
     
 class IBaseArray(IBaseObj):
-    def __init__(self, x = None, shape = None):
+    def __init__(self, x = None, shape = None, meta = None):
         if x is None:
             x = []
         if isinstance(x, dict):
-            x = list(x.items())
+            d = x
+            x = []
+            for key, value in d.items():
+                if isinstance(value, list):
+                    for t in value:
+                        x.append([key, t])
+                else:
+                    x.append([key, value])
 
         cshape = None
         if isinstance(x, type(self).entry_cls):
@@ -21192,6 +22024,11 @@ class IBaseArray(IBaseObj):
         else:
             self.shape = cshape
 
+        if meta is None:
+            self.meta = dict()
+        else:
+            self.meta = meta
+
     @property
     def shape(self):
         return self._shape
@@ -21217,7 +22054,7 @@ class IBaseArray(IBaseObj):
         return r
     
     def copy(self):
-        return type(self)([a.copy() for a in self.x], shape = self.shape)
+        return type(self)([a.copy() for a in self.x], shape = self.shape, meta = iutil.copy(self.meta))
     
     @classmethod
     def empty(cls, shape = 0):
@@ -21607,6 +22444,19 @@ class IBaseArray(IBaseObj):
         """
         return self.get_sum() / len(self)
     
+    def add_meta(self, key, value):
+        if self.meta is None:
+            self.meta = {}
+        self.meta[key] = value
+        return self
+    
+    def get_meta(self, key):
+        if self.meta is None:
+            return None
+        if key not in self.meta:
+            return None
+        return self.meta[key]
+
     def tostring(self, style = 0, tosort = False):
         """Convert to string
         Parameters:
@@ -21618,6 +22468,7 @@ class IBaseArray(IBaseObj):
             return ""
 
         style = iutil.convert_str_style(style)
+        is_subs = not (style & PsiOpts.STR_STYLE_PSITIP) and self.get_meta("subs") is True
         nlstr = "\n"
         if style & PsiOpts.STR_STYLE_LATEX:
             nlstr = "\\\\\n"
@@ -21627,11 +22478,31 @@ class IBaseArray(IBaseObj):
         add_bracket = True
         list_bracket0 = "["
         list_bracket1 = "]"
+        interstr = ""
+
         if style & PsiOpts.STR_STYLE_LATEX:
             # list_bracket0 = ""
             # list_bracket1 = ""
             list_bracket0 = PsiOpts.settings["latex_list_bracket_l"]
             list_bracket1 = PsiOpts.settings["latex_list_bracket_r"]
+        
+        if not (style & PsiOpts.STR_STYLE_PSITIP) and self.get_meta("omit_bracket") is True:
+            list_bracket0 = ""
+            list_bracket1 = ""
+
+        if is_subs:
+            if style & PsiOpts.STR_STYLE_LATEX:
+                interstr = PsiOpts.settings["latex_subs"]
+                if len(shape) >= 2 and any(tshape > 1 for tshape in shape[:-1]):
+                    list_bracket0 = PsiOpts.settings["latex_subs_bracket_l"]
+                    list_bracket1 = PsiOpts.settings["latex_subs_bracket_r"]
+                else:
+                    list_bracket0 = ""
+                    list_bracket1 = ""
+            else:
+                interstr = ":="
+                list_bracket0 = ""
+                list_bracket1 = ""
         
         if style & PsiOpts.STR_STYLE_PSITIP:
             r += type(self).cls_name + "("
@@ -21639,9 +22510,18 @@ class IBaseArray(IBaseObj):
                 r += nlstr
             add_bracket = False
         
+        isarray = False
         if style & PsiOpts.STR_STYLE_LATEX:
-            r += "\\left" + list_bracket0 + " "
-            r += "\\begin{array}{" + "c" * self.shape[-1] + "}\n"
+            if list_bracket0 != "":
+                r += "\\left" + list_bracket0 + " "
+            
+            if not (len(self.shape) in [1, 2] and not any(tshape > 1 for tshape in shape[:-1])): 
+                isarray = True
+                if is_subs and self.shape[-1] >= 2:
+                    r += "\\begin{array}{" + "l" * self.shape[-1] + "}\n"
+                    # r += "\\begin{array}{r" + "l" * (self.shape[-1] - 1) + "}\n"
+                else:
+                    r += "\\begin{array}{" + "c" * self.shape[-1] + "}\n"
 
         # if style & PsiOpts.STR_STYLE_PSITIP:
         #     r += type(self).cls_name + "([ "
@@ -21676,7 +22556,14 @@ class IBaseArray(IBaseObj):
             if style & PsiOpts.STR_STYLE_LATEX:
                 if si1 > 0:
                     if si1 == len(shape):
-                        r += " & "
+                        if isarray:
+                            r += " & "
+                        elif is_subs:
+                            r += " "
+                        else:
+                            r += " \;\; "
+                        if interstr != "":
+                            r += interstr + " "
                     else:
                         r += nlstr * (len(shape) - si1)
 
@@ -21685,6 +22572,8 @@ class IBaseArray(IBaseObj):
                     r += ","
                     if si1 == len(shape):
                         r += " "
+                        if interstr != "":
+                            r += interstr + " "
                     else:
                         r += nlstr * (len(shape) - si1)
             
@@ -21693,8 +22582,10 @@ class IBaseArray(IBaseObj):
             r += ")"
         
         if style & PsiOpts.STR_STYLE_LATEX:
-            r += "\\end{array}"
-            r += "\\right" + list_bracket1
+            if isarray:
+                r += "\\end{array}"
+            if list_bracket1 != "":
+                r += "\\right" + list_bracket1
         
         return r
     
@@ -22987,6 +23878,7 @@ class ProofObj(IBaseObj):
             meta = {}
         self.meta = meta
     
+    @staticmethod
     def empty():
         return ProofObj(None, None, [])
     
@@ -22995,10 +23887,26 @@ class ProofObj(IBaseObj):
         return ProofObj(iutil.copy(self.claim), iutil.copy(self.desc), 
                         iutil.copy(self.steps), self.parent, iutil.copy(self.meta))
     
+    def copy_(self, other):
+        self.claim = iutil.copy(other.claim)
+        self.desc = iutil.copy(other.desc)
+        self.steps = iutil.copy(other.steps)
+        self.parent = other.parent
+        self.meta = iutil.copy(other.meta)
+
+    @staticmethod
     def from_region(x, c = ""):
         # return ProofObj([(x.copy(), [], c)])
         return ProofObj(iutil.copy(x), c)
     
+    def get_case(self):
+        if "case" in self.meta:
+            return self.meta["case"]
+        return Region.universe()
+    
+    def set_case(self, reg):
+        self.meta["case"] = reg
+
     def __iadd__(self, other):
         # n = len(self.steps)
         # self.steps += [(x.copy(), [di + n for di in d], c) for x, d, c in other.steps]
@@ -23007,6 +23915,12 @@ class ProofObj(IBaseObj):
         self.steps.append(other)
         return self
     
+    def insert_step(self, other, pos):
+        other = other.copy()
+        other.parent = self
+        self.steps.insert(pos, other)
+        return self
+        
     def __add__(self, other):
         r = self.copy()
         r += other
@@ -23090,7 +24004,7 @@ class ProofObj(IBaseObj):
                 if prefix:
                     r += prefix + "." + spacestr
                     cprefix += "."
-                r += iutil.tostring_join(self.desc, style)
+                r += iutil.tostring_join(self.desc, style, nlstr = nlstr + slstr + spacestr * 8)
                 if self.claim is not None:
                     r += nlstr
 
@@ -24148,12 +25062,18 @@ class CodingModel(IBaseObj):
     def convexify_needed(self):
         return self.get_outer(convexify = False, convexify_test = True)
         
-    def get_outer(self, oneshot = False, future = True, convexify = None, 
+    def get_outer(self, aux = None, oneshot = False, future = True, convexify = None, 
                   add_csiszar_sum = True, leaf_remove = True, node_fcn = True,
                   node_fcn_force = False, skip_simplify = True, convexify_test = False,
-                  is_proof = False):
+                  is_proof = False, include_nondecode_series = False, include_last_future = False, full = False):
         """Get an outer bound of the capacity region.
         """
+
+        if full:
+            future = True
+            add_csiszar_sum = True
+            include_nondecode_series = True
+            include_last_future = True
 
         decoding_rate = True # is_proof
         future_also = is_proof
@@ -24548,6 +25468,37 @@ class CodingModel(IBaseObj):
         for tozero, toconst in self.sublist_const:
             r.substitute(tozero, toconst)
         
+
+        if not include_nondecode_series or not include_last_future:
+            rv_decode = Comp.empty()
+            rv_nondecode = Comp.empty()
+            for a in self.bnet.index.comprv:
+                alist = map_getlist(a)
+                if not (isinstance(alist, CompArray) and len(alist) > 1):
+                    continue
+                if any(self.find_node_rv_out(x) is not None for x in self.bnet.get_children(a)):
+                    rv_decode += a
+                else:
+                    rv_nondecode += a
+            
+            rv_toelim = Comp.empty()
+            if not include_nondecode_series:
+                for a in rv_nondecode:
+                    alist = map_getlist(a)
+                    for i, b in enumerate(alist):
+                        if i:
+                            rv_toelim += b
+
+            if not include_last_future:
+                if len(rv_decode):
+                    alist = map_getlist(rv_decode[len(rv_decode) - 1])
+                    if len(alist) >= 3:
+                        rv_toelim += alist[2]
+
+            if not rv_toelim.isempty():
+                r = r.exists_quick(rv_toelim, method = "ci")
+
+
         if not self.reg.isuniverse():
             # r = r & self.reg
             r = r.and_cause_consequence(self.reg)
@@ -24555,11 +25506,100 @@ class CodingModel(IBaseObj):
         reg_out_aux = reg_out_aux.inter(r.allcomprv())
         r = r.exists(reg_out_aux)
 
+        if aux is not None:
+            aux_pairs = []
+            aux_force = msgs
+            if convexify is not False:
+                aux_force = aux_force + convexify
+                
+            channel_ins = Comp.empty()
+            for a in self.bnet.index.comprv:
+                voutm = map_getlist(a)
+                if isinstance(voutm, CompArray) and len(voutm) >= 3:
+                    if r.ispresent(voutm[1]) and r.ispresent(voutm[2]):
+                        aux_pairs.append((voutm[1], voutm[2]))
+                
+                pa = self.bnet.get_parents(a)
+                if pa.ispresent(msgnats):
+                    channel_ins += sum(voutm, Comp.empty())
+
+            msgs_sorted = Comp.empty()
+            for a in self.bnet.index.comprv:
+                if msgs.ispresent(a):
+                    msgs_sorted += a
+            msgs_sorted += msgs
+            
+            def score_fcn(a):
+                r = 0
+                msgs_vis = [False] * len(msgs_sorted)
+                hastime = False
+                hassingleconvexify = False
+
+                if len(a) >= 2:
+                    for b1, b2 in itertools.permutations(a, 2):
+                        if b1.super_of(b2):
+                            return None
+
+                for b in a:
+                    hasconvexify = False
+                    hasseries = b.ispresent(rv_series)
+                    if hasseries:
+                        hastime = True
+
+                    if convexify is not False and b.ispresent(convexify):
+                        hasconvexify = True
+                        hastime = True
+                        r -= 1
+                        if hasseries:
+                            return None
+
+                    nmsg = 0
+                    for i, msg in enumerate(msgs_sorted):
+                        if b.ispresent(msg):
+                            if msgs_vis[i]:
+                                r += 100
+                            else:
+                                r -= i
+                            msgs_vis[i] = True
+                            nmsg += 1
+                    if nmsg == 0:
+                        if not hasconvexify:
+                            r += 20
+                    elif nmsg > 1:
+                        r += nmsg * 70
+                    
+                    if len(b) == 1:
+                        if not hasconvexify:
+                            r += 5
+                    elif len(b) > 2:
+                        r += len(b) * 5
+                    
+                    if b.ispresent(channel_ins):
+                        r += 30
+                    
+                    if hasconvexify:
+                        if len(b) == 1:
+                            hassingleconvexify = True
+                        if len(b) > 1:
+                            r += len(b) * 10
+                
+                for t in msgs_vis:
+                    if not t:
+                        r += 10
+                if not hastime:
+                    r += 20
+
+                return (r, -1 if hassingleconvexify else 0)
+
+            r = r.aux_reduced(aux, aux_pairs = aux_pairs, aux_force = aux_force, score_fcn = score_fcn)
+
         if not skip_simplify:
             return r.simplified()
         else:
             return r
         
+
+
     def get_outer_nfold(self, n = 2, **kwargs):
         return self.nfold(n).get_outer(**kwargs) / n
         
@@ -26217,7 +27257,63 @@ def exists_xor():
     r = indep(X, Z[0]) & indep(X, Z[1]) & (H(X | Z) == 0)
     return r.exists(Z).forall(X).add_meta("pf_note", ["exists XOR"])
     
+def exists_linear(n, p = 2, maxsize = None):
+    """There exists linear combinations of n i.i.d. GF(p) elements. p must be a prime.
+    """
+    if maxsize is None:
+        maxsize = n
+    vs = []
+    for mask in igen.subset([1 << i for i in range(n)], minsize = 1, maxsize = maxsize):
+        gens = []
+        first = True
+        for i in range(n):
+            if not (mask & (1 << i)):
+                gens.append([0])
+                continue
+            if first:
+                gens.append([1])
+                first = False
+            else:
+                gens.append(list(range(1, p)))
+        for t in itertools.product(*gens):
+            vs.append(t)
+
+    loge = PsiOpts.settings["ent_coeff"]
+    logp = numpy.log(p) * loge
+
+    r = Region.universe()
+    V = Comp.empty()
+    for v in vs:
+        cname = ""
+        cname_latex = ""
+        for i, a in enumerate(v):
+            if a == 0:
+                continue
+            if cname != "":
+                cname += "(+)"
+            if cname_latex != "":
+                cname_latex += "\oplus "
+                # cname_latex += "+_{" + str(p) + "}"
+            if a != 1:
+                cname += str(a)
+                cname_latex += str(a)
+            cname += "V" + str(i)
+            cname_latex += "V_{" + str(i) + "}"
+        
+        crv = rv(cname, latex = cname_latex)
+        r &= Expr.H(crv) == logp
+        V += crv
+        
+    for basis in itertools.combinations(range(len(vs)), n):
+        mat = numpy.array([vs[i] for i in basis], dtype = numpy.int64)
+        if int(round(numpy.linalg.det(mat))) % p == 0:
+            continue
+        Vb = sum((V[i] for i in basis), Comp.empty())
+        r &= indep(*Vb)
+        r &= Expr.Hc(V - Vb, Vb) == 0
     
+    return r.exists(V).add_meta("pf_note", ["exists XOR"])
+
     
 def existence(f, numarg = 2, nonempty = False):
     """A region for the existence of the random variable f(X, Y).

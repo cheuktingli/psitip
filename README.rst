@@ -563,13 +563,15 @@ Advanced
 
  - Calling :code:`exists` on random variables will cause the variable to be marked as auxiliary (dummy).
 
- - Calling :code:`exists` on random variables with the option :code:`toreal = True` will cause all information quantities about the random variables to be treated as real variables, and eliminated using Fourier-Motzkin elimination. Those random variables will be absent in the resultant region (not even as auxiliary random variables). E.g.:
+ - Calling :code:`exists` on random variables with the option :code:`method = "real"` will cause all information quantities about the random variables to be treated as real variables, and eliminated using Fourier-Motzkin elimination. Those random variables will be absent in the resultant region (not even as auxiliary random variables). E.g.:
 
   .. code-block:: python
 
-    (indep(X+Z, Y) & markov(X, Y, Z)).exists(Y, toreal = True)
+    (indep(X+Z, Y) & markov(X, Y, Z)).exists(Y, method = "real")
 
-  gives :code:`{ I(Z;X) == 0 }`. Note that using :code:`toreal = True` can be extremely slow if the number of random variables is more than 5, and may cause false accepts (i.e., declaring a false inequality to be true) since only Shannon-type inequalities are enforced.
+  gives :code:`{ I(Z;X) == 0 }`. Note that using :code:`method = "real"` can be extremely slow if the number of random variables is more than 5, and may enlarge the region since only Shannon-type inequalities are enforced.
+
+ - Calling :code:`exists` on random variables with the option :code:`method = "ci"` will apply semi-graphoid axioms for conditional independence implication [Pearl-Paz 1987], and remove all inequalities about the random variables which are not conditional independence constraints. Those random variables will be absent in the resultant region (not even as auxiliary random variables). This may enlarge the region.
 
 - **Material implication** between :code:`Region` is denoted by the operator :code:`>>`, which returns a :code:`Region` object. The region :code:`r1 >> r2` represents the condition that :code:`r2` is true whenever :code:`r1` is true. Note that :code:`r1 >> r2` is equivalent to :code:`~r1 | r2`, and :code:`r1.implies(r2)` is equivalent to :code:`bool(r1 >> r2)`.
 
@@ -666,6 +668,8 @@ Advanced
 
  - The function :code:`check_getaux_dict` returns the results as a :code:`dict`. The function :code:`check_getaux_array` returns the results as a :code:`CompArray`. These two methods should only be used on simple implications (without union, negation and maximization/minimization quantities).
 
+
+- To draw the **Bayesian network** of a region :code:`r`, use :code:`r.graph()` (which gives a Graphviz digraph). To draw the Bayesian network only on the random variables in :code:`x` (:code:`Comp` object), use :code:`r.graph(a)`.
 
 - The **meet** or **Gács-Körner common part** [Gács-Körner 1973] between X and Y is denoted as :code:`meet(X, Y)` (a :code:`Comp` object).
 
@@ -1121,11 +1125,17 @@ Automated inner and outer bounds
 
 - `Degraded broadcast channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_degradedbc.ipynb>`_
 
+- `State-dependent semideterministic broadcast channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_semidetbc.ipynb>`_
+
 - `Interference channel <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_interference.ipynb>`_
 
 - `Channel with state: Gelfand-Pinsker theorem <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_gelfandpinsker.ipynb>`_
 
 - `Slepian-Wolf coding <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_slepianwolf.ipynb>`_
+
+- `Wyner-Ahlswede-Körner network <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_waknetwork.ipynb>`_
+
+- `Successive refinement coding <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_successive.ipynb>`_
 
 - `Lossy compression with side information: Wyner-Ziv theorem <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_wynerziv.ipynb>`_
 
@@ -1171,7 +1181,11 @@ After a setting is specified, call:
 
  - Note that the outer bound includes all past/future random variables, and is not simplified. Though this is useful for checking other outer bounds. For example, :code:`(model.get_outer() >> r).check_getaux()` checks whether :code:`r` is an outer bound (by checking whether the outer bound implies :code:`r`), and if so, outputs the choices of auxiliaries for the proof. If :code:`r` is an inner bound, this checks whether :code:`r` is tight.
 
+ - Use :code:`model.get_outer(n)` instead to limit the number of auxiliary random variables to :code:`n` (an :code:`int` zero or above). Including this parameter can give an outer bound in a simpler, more familiar form, but requires a significant computational time (especially when :code:`n` is at least 2).
+
  - Use :code:`model.get_outer(convexify = True)` instead to explicitly add the time sharing random variable. Default is automatic (time sharing random variable is added only when it is necessary, e.g. for multiple access channel). The returned region is a valid outer bound regardless of whether :code:`convexify` is turned on or not.
+
+ - Use :code:`model.get_outer(full = True)` to include all past/future random variables. By default, some of those random variables that are unlikely to be used in proofs are not included.
 
  - Use :code:`model.get_outer(is_proof = True)` to express the outer bound in a way suitable for automated proof (redundant inequalities will be added).
 
@@ -1711,7 +1725,7 @@ Some of the options are:
 
 - :code:`auxsearch_level` : The level of searching (integer in 0,...,10) for deducing implications. A higher level takes more time.
 
-- :code:`auxsearch_leaveone` : Set to True to handle case decomposition in auxiliary search. Default is False.
+- :code:`cases` : Set to True to handle case decomposition in auxiliary search. Default is False.
 
 - :code:`forall_multiuse` : Set to False to only allow one value for variables with universal quantification. Default is True. Note that if this option is True, then the auxiliary search result for variables with universal quantification will be meaningless.
 
@@ -1768,7 +1782,7 @@ Some of the options are:
 
   - :code:`verbose_flatten` : Set to True to output progress in unfolding user-defined information quantities. Default is False.
 
-  - :code:`verbose_eliminate_toreal` : Set to True to output progress in eliminating random variables using the :code:`toreal = True` option. Default is False.
+  - :code:`verbose_eliminate_toreal` : Set to True to output progress in eliminating random variables using the :code:`method = "real"` option. Default is False.
 
 
 License
@@ -1813,6 +1827,9 @@ General coding theorem for network information theory:
 
 - Si-Hyeon Lee, and Sae-Young Chung. "A unified approach for network information theory." 2015 IEEE International Symposium on Information Theory (ISIT). IEEE, 2015.
 
+Semi-graphoid axioms for conditional independence implication:
+
+- Judea Pearl and Azaria Paz, "Graphoids: a graph-based logic for reasoning about relevance relations", Advances in Artificial Intelligence (1987), pp. 357--363.
 
 Optimization algorithms:
 
