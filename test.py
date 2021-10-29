@@ -804,6 +804,7 @@ class TestPsitip(unittest.TestCase):
     def test_simplify(self):
         
         X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
+        R = real("R")
 
         self.assertEqual(str((H(X|Y) + I(X&Y)).simplified()), "H(X)")
         self.assertEqual(str((H(X|Y) + H(Y)).simplified()), "H(X,Y)")
@@ -876,6 +877,21 @@ class TestPsitip(unittest.TestCase):
         self.assertEqual(str(((H(X) >= H(Y)) & (H(Y) >= H(X)) & (H(X) <= H(X)) & (H(X) <= H(Y)) & (H(Y) <= H(Z)) & (H(Y) == H(Z))).simplified()),
                          "{ H(X) == H(Y),\n  H(Y) == H(Z) }")
     
+
+        self.assertEqual(str(((H(X)<=H(Y)) | (H(X)>=H(Y))).simplified()), "")
+        self.assertEqual(str(((H(X)<=H(Y)) | ((H(X)>=H(Y)) & (H(X)<=H(Z))) | ((H(X)>=H(Y)) & (H(X)>=H(Z)))).simplified()), "")
+        self.assertEqual(str((((H(X)>=H(Y)) & (H(X)<=H(Z))) | ((H(X)>=H(Y)) & (H(X)>=H(Z))) | (H(X)<=H(Y))).simplified()), "")
+        self.assertEqual(str(((H(X)<=H(Y)) | ((H(X)>=H(Y) + H(Z))) | ((H(X)>=H(Y) - H(Z)))).simplified()), "")
+        self.assertEqual(str(((H(X)<=H(Y)) | ((H(X)>=H(Y) + R)) | ((H(X)>=H(Y) - R))).simplified()), "")
+
+        self.assertEqual(str((~(H(X)<=H(Y)) | (H(X)<=H(Y+Z))).simplified()), "")
+        self.assertEqual(str(((H(X)<=H(Y)) | (H(X)<=H(Y+Z))).simplified()), "H(X) <= H(Y,Z)")
+        self.assertEqual(str((~(H(X)<=H(Y)) | (H(X)>=H(Y))).simplified()), "H(Y) <= H(X)")
+        self.assertEqual(str((~(H(X)<=H(Y)) & (H(X)>=H(Y))).simplified()), "{\n   NOT{ H(X) <= H(Y) }\n}")
+        self.assertEqual(str((~(H(X)<=H(Y)) | (H(X)>=H(Y)+R) | (R >= 0)).simplified()), "{\n  { R <= H(X)-H(Y) }\n OR\n  { R >= 0 }\n}")
+        self.assertEqual(str((~(H(X)<=H(Y)) | (H(X)>=H(Y)+R) | (R <= 0)).simplified()), "{\n   NOT{ H(X) <= H(Y) }\n OR\n  { R <= 0 }\n}")
+
+
         
     def test_eliminate(self):
         
@@ -898,7 +914,22 @@ class TestPsitip(unittest.TestCase):
                 "  H(W) == H(X) }"))
         
         
+    def test_eliminate_ci(self):
+        
+        R = real("R")
+        X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
+        
+        self.assertEqual(str((R >= H(X)).exists(X, method = "ci")), "R >= 0")
+        self.assertEqual(str((R >= I(X + Y & W | Z)).exists(X, method = "ci")), "R >= I(W;Y|Z)")
+        self.assertEqual(str((R <= I(X + Y & W | Z)).exists(X, method = "ci")), "")
+        self.assertEqual(str((R <= I(X + Y & W | Z)).exists(Z, method = "ci")), "")
+        self.assertEqual(str(((R >= I(X + Y & W | Z)) & indep(X, U)).exists(Z, method = "ci")), "I(U;X) == 0")
+        self.assertEqual(str(((R <= H(X + Y | Z)) & indep(X, U+Z)).exists(Z, method = "ci")), "{ R <= H(X,Y),\n  I(U;X) == 0 }")
+        # self.assertEqual(str(((R >= H(X + Y | Z)) >> indep(X, U+Z)).exists(Z, method = "ci")), "(R >= H(X,Y)\n=> I(U;X) == 0)")
+        # self.assertEqual(str(((R <= H(X + Y | Z)) >> indep(X, U+Z)).exists(Z, method = "ci")), "")
+        self.assertEqual(str((R >= I(X + Y & W & U | Z)).exists(X, method = "ci")), "")
     
+
     def test_sum(self):
         
         R, R1, R2 = real("R", "R1", "R2")
@@ -1087,6 +1118,14 @@ class TestPsitip(unittest.TestCase):
         self.assertTrue(r.equiv(eval(repr(r))))
         
         r = markov(X+Y, Z, V+W) & indep(X, U+W)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = (I(X+U & Y+Z) - I(X&Y) == 0)
+        print(repr(r))
+        self.assertTrue(r.equiv(eval(repr(r))))
+        
+        r = (I(X+U & Y+Z | W) - I(X&Y | W) == 0)
         print(repr(r))
         self.assertTrue(r.equiv(eval(repr(r))))
     
