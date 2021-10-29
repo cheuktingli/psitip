@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.1.1
+Version 1.1.2
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -107,6 +107,7 @@ try:
     import scipy.optimize
     import scipy.spatial
     import scipy.special
+    import scipy.linalg
 except ImportError:
     scipy = None
 
@@ -133,6 +134,12 @@ try:
     import cdd
 except ImportError:
     cdd = None
+
+
+try:
+    import z3
+except ImportError:
+    z3 = None
 
 
 try:
@@ -218,7 +225,8 @@ class PsiOpts:
     STR_STYLE_LATEX_FRAC = 1 << 6
     STR_STYLE_LATEX_QUANTAFTER = 1 << 7
     STR_STYLE_MARKOV = 1 << 8
-    
+    STR_STYLE_REM_SYMBOLS = 1 << 9
+
     SFRL_LEVEL_SINGLE = 1
     SFRL_LEVEL_MULTIPLE = 2
     
@@ -229,13 +237,20 @@ class PsiOpts:
         "ent_coeff": 1.0 / math.log(2.0),
 
         "random": None,
+
+        "quantum": False,
         
         "eps": 1e-10,
         "eps_lp": 1e-5,
         "eps_check": 1e-6,
+        "eps_violate_cutoff": 1e-1,
         "max_denom": 1000000,
         "max_denom_mul": 10000,
         "max_denom_lp": 10000,
+        "max_denom_try": 12,
+
+        "condition_included": True,
+        "avoid_enabled": True,
         
         "str_style": 2 + (1 << 8),
         "str_style_std": 1 + (1 << 8),
@@ -245,6 +260,7 @@ class PsiOpts:
         "str_lhsreal": True,
         "str_eqn_prefer_ge": False,
         "str_eps_hide": True,
+        "str_proof_note": False,
         "rename_char": "_",
         "fcn_suffix": "@@32768@@#fcn",
         
@@ -304,7 +320,7 @@ class PsiOpts:
         "simplify_aux_strengthen": False,
         "simplify_num_iter": 1,
         
-        "istorch": False,
+        "istorch": (torch is not None),
         "opt_optimizer": "SLSQP", #"sgd",
         "opt_eps_denom": 1e-8,
         "opt_eps_tol": 1e-7,
@@ -323,6 +339,7 @@ class PsiOpts:
         "opt_alm_step": 5,
         "opt_alm_penalty": 20.0,
         "opt_aux_card": 5,
+        "opt_example_card": (2, 4),
         
         "imp_noncircular": True,
         "imp_noncircular_allaux": False,
@@ -389,13 +406,16 @@ class PsiOpts:
         "discover_hull_frac_enabled": True,
         "discover_hull_frac_denom": 1000,
         "discover_max_facet": 1000000,
-        "discover_num_simplex": 2,
+        "discover_num_simplex": 0,
         
         "str_ineq_sep": ",",
         "str_brace_l": "{",
         "str_brace_r": "}",
         "str_eq": "==",
         "str_float": False,
+        "str_float_dp": 5,
+
+        "solve_display_reg": None,
         
         "latex_H": "H",
         "latex_I": "I",
@@ -421,7 +441,9 @@ class PsiOpts:
         "latex_rv_empty": "\\emptyset",
         "latex_region_universe": "\\top",
         "latex_region_empty": "\\emptyset",
+        "latex_tautology": "\\top",
         "latex_contradiction": "\\bot",
+        "latex_unknown": "?",
         "latex_or": "\\vee",
         "latex_and": "\\wedge",
         "latex_infty": "\\infty",
@@ -475,6 +497,13 @@ class PsiOpts:
     
     @staticmethod
     def set_setting_dict(d, key, value):
+        if key.endswith("_all"):
+            keyprefix = key[:-len("_all")]
+            for key2 in d:
+                if key2.startswith(keyprefix):
+                    PsiOpts.set_setting_dict(d, key2, value)
+            return
+
         if key == "sfrl":
             if value == "no":
                 d["sfrl_level"] = 0
@@ -559,6 +588,10 @@ class PsiOpts:
             d["presolve_aux_eq"] = value >= 8
             d["presolve_aux_eq_quick"] = value >= 5
             d["presolve_simplify"] = value >= 10
+
+        elif key == "level":
+            PsiOpts.set_setting_dict(d, "simplify_level", value)
+            PsiOpts.set_setting_dict(d, "auxsearch_level", value)
 
         elif key == "ent_base":
             d["ent_coeff"] = 1.0 / math.log(value)
@@ -785,6 +818,9 @@ class PsiOpts:
             return True
         return False
         
+    @staticmethod
+    def has_timer():
+        return PsiOpts.settings["timer_end"] is not None or PsiOpts.settings["stop_file"] is not None
     
     @staticmethod
     def get_pyomo_options():
@@ -869,7 +905,7 @@ class iutil:
     """
     
     
-    solver_list = ["pulp.glpk", "pyomo.glpk", "pulp.cbc", "scipy"]
+    solver_list = ["pulp.glpk", "pyomo.glpk", "pulp.cbc", "scipy", "z3"]
     pulp_solver = None
     pulp_solvers = {}
     
@@ -891,17 +927,35 @@ class iutil:
     
     
     @staticmethod
-    def float_tostr(x, style = 0, bracket = True):
-        if abs(x) <= 1e-10:
+    def float_tostr(x, style = 0, bracket = True, force_float = False):
+        ceps = 1e-10
+        if abs(x) <= ceps:
             return "0"
-        elif abs(x - round(x)) <= 1e-10:
+        elif abs(x - round(x)) <= ceps:
             return str(int(round(x)))
         else:
-            if PsiOpts.settings["str_float"]:
-                return str(x)
+            to_force_float = False
+            to_try_float = False
+            if force_float is True or (isinstance(force_float, int) and force_float >= 10) or PsiOpts.settings["str_float"]:
+                to_force_float = True
+            elif isinstance(force_float, int) and force_float >= 5:
+                to_try_float = True
 
-            frac = fractions.Fraction(abs(x)).limit_denominator(
-                        PsiOpts.settings["max_denom"])
+            if to_force_float:
+                # return str(x)
+                return ("{:." + str(PsiOpts.settings["str_float_dp"]) + "f}").format(x)
+
+            denom = 1
+            if to_try_float:
+                denom = PsiOpts.settings["max_denom_try"]
+            else:
+                denom = PsiOpts.settings["max_denom"]
+
+            frac = fractions.Fraction(abs(x)).limit_denominator(denom)
+            
+            if to_try_float and abs(x - float(frac)) > ceps:
+                return ("{:." + str(PsiOpts.settings["str_float_dp"]) + "f}").format(x)
+
             if x > 0:
                 if style & PsiOpts.STR_STYLE_LATEX_FRAC:
                     return "\\frac{" + str(frac.numerator) + "}{" + str(frac.denominator) + "}"
@@ -920,11 +974,14 @@ class iutil:
                         return "-" + str(frac)
 
     @staticmethod
-    def float_snap(x, denom = None, force = False):
+    def float_snap(x, denom = None, force = False, eps = None):
         if denom is None:
             denom = PsiOpts.settings["max_denom"]
+        if eps is None:
+            eps = PsiOpts.settings["eps"]
+
         t = float(fractions.Fraction(x).limit_denominator(denom))
-        if force or abs(x - t) <= PsiOpts.settings["eps"]:
+        if force or abs(x - t) <= eps:
             return t
         return x
     
@@ -942,13 +999,29 @@ class iutil:
         else:
             return str(x)
 
+
+    @staticmethod
+    def float_toz3(x):
+        if z3 is None:
+            return None
+        if abs(x - round(x)) <= 1e-10:
+            return z3.RealVal(int(round(x)))
+        else:
+            frac = fractions.Fraction(abs(x)).limit_denominator(
+                        PsiOpts.settings["max_denom"])
+            
+            return z3.Q(frac.numerator, frac.denominator)
+
     @staticmethod
     def num_open_brackets(s):
         return s.count("(") + s.count("[") + s.count("{") - (
             s.count("}") + s.count("]") + s.count(")"))
         
     @staticmethod
-    def split_comma(s, delim = ", "):
+    def split_comma_old(s, delim = ", "):
+        if not isinstance(s, str):
+            return [s]
+
         t = s.split(delim)
         c = ""
         r = []
@@ -963,6 +1036,33 @@ class iutil:
             r.append(c)
             
         return r
+
+        
+    @staticmethod
+    def split_comma(s):
+        if not isinstance(s, str):
+            return [s]
+        
+        r = []
+        nopen = 0
+        for a in s:
+            if nopen == 0 and (a == "," or a == " "):
+                if len(r) == 0 or r[-1] != "":
+                    r.append("")
+                    
+            else:
+                
+                if a == "(" or a == "[" or a == "{":
+                    nopen += 1
+                elif a == ")" or a == "]" or a == "}":
+                    nopen -= 1
+
+                if len(r) == 0:
+                    r.append("")
+                r[-1] += a
+        
+        return r
+
 
     @staticmethod
     def get_count(counter_name = None, add = True):
@@ -1001,7 +1101,7 @@ class iutil:
         if style == "standard" or style == "std":
             return PsiOpts.settings["str_style_std"]
         elif style == "aitip":
-            return PsiOpts.settings["str_style_std"] & ~(PsiOpts.STR_STYLE_MARKOV)
+            return PsiOpts.settings["str_style_std"] & ~(PsiOpts.STR_STYLE_MARKOV) | PsiOpts.STR_STYLE_REM_SYMBOLS
         elif style == "psitip" or style == "code":
             return PsiOpts.settings["str_style_repr"]
         elif style == "latex":
@@ -1077,31 +1177,131 @@ class iutil:
         return r
     
     @staticmethod
-    def latex_split_line(s, line_len, slstr = ""):
-        r = []
-        c = 0
-        for i in range(len(s)):
-            sc = s[i:]
-            if (sc.startswith("+") or sc.startswith("-") or sc.startswith("<") or sc.startswith(">") 
-                or sc.startswith("\\le") or sc.startswith("\\ge") or sc.startswith("=") or sc.startswith("\\neq")):
+    def latex_split_line(strs, line_len, slstr = ""):
+        if line_len is None:
+            line_len = 100000000000
+        if isinstance(strs, str):
+            strs = [strs]
 
-                r.append(s[c: i])
-                c = i
-        r.append(s[c:])
+        rlines = []
+        for s in strs:
+            r = []
+            c = 0
+            for i in range(len(s)):
+                sc = s[i:]
+                if (sc.startswith("+") or sc.startswith("-") or sc.startswith("<") or sc.startswith(">") 
+                    or sc.startswith("\\le") or sc.startswith("\\ge") or sc.startswith("=") or sc.startswith("\\neq")):
 
-        lines = []
-        for x in r:
-            if lines and iutil.latex_len(lines[-1]) + iutil.latex_len(x) <= line_len:
-                lines[-1] += x
-            else:
-                lines.append(x)
-        
+                    r.append(s[c: i])
+                    c = i
+            r.append(s[c:])
+
+            lines = []
+            for x in r:
+                if lines and iutil.latex_len(lines[-1]) + iutil.latex_len(x) <= line_len:
+                    lines[-1] += x
+                else:
+                    lines.append(x)
+            rlines += lines
+
+        lines = rlines
+
         if len(lines) == 0:
             return ""
         elif len(lines) == 1:
             return lines[0]
         else:
             return "\\begin{array}{l}\n" + ("\\\\\n" + slstr).join(lines) + "\n\\end{array}"
+
+    @staticmethod
+    def strip_match(s, a, b):
+        if len(s) >= len(a) + len(b) and s.startswith(a) and s.endswith(b):
+            return s[len(a):-len(b)]
+        return None
+
+    @staticmethod
+    def latex_concat(style, strs):
+        
+        nlstr = "\n"
+        if style & PsiOpts.STR_STYLE_LATEX:
+            nlstr = "\\\\\n"
+
+        if not style & PsiOpts.STR_STYLE_LATEX:
+            return nlstr.join(strs)
+        
+        ma0 = "\\begin{align*}\n"
+        ma1 = "\\end{align*}\n"
+
+        strs = list(strs)
+        cmai = [False] * len(strs)
+        for i in range(len(strs)):
+            s1 = iutil.strip_match(strs[i], ma0, ma1)
+            if s1 is not None:
+                cmai[i] = True
+                strs[i] = s1
+        
+        if any(cmai):
+            for i in range(len(strs)):
+                if not cmai[i]:
+                    strs[i] = "& " + strs[i]
+            return ma0 + nlstr.join(strs) + ma1
+
+        return nlstr.join(strs)
+
+
+    @staticmethod
+    def str_list_concat(slists):
+        r = []
+        for slist in slists:
+            if isinstance(slist, str):
+                slist = [slist]
+            if r:
+                r += [",", " "]
+            r += slist
+        return r
+
+    @staticmethod
+    def meta_concat(metas):
+        if all(meta is None for meta in metas):
+            return None
+        metas = list(metas)
+        metas.sort(key = lambda meta: 0 if meta is None else meta.get("pf_note_priority", 0))
+        r = dict()
+        for meta in metas:
+            if meta is None:
+                continue
+            for key, value in meta.items():
+                if key in r:
+                    if key == "pf_note":
+                        r[key] = iutil.str_list_concat([r[key], value])
+                    elif key == "pf_note_priority":
+                        r[key] = r[key] + value
+                else:
+                    r[key] = value
+        
+        if "pf_note_priority" in r:
+            r["pf_note_priority"] *= 1.0 / len(metas)
+            
+        return iutil.copy(r)
+
+    @staticmethod
+    def pf_note_str(s, style, note_color = None, add_space = 0):
+        if note_color is None:
+            note_color = PsiOpts.settings["proof_note_color"]
+        if isinstance(s, str):
+            s = [s]
+        
+        s = [" " * add_space, "(", "since", " "] + s + [")"]
+
+        r = ""
+        if style & PsiOpts.STR_STYLE_LATEX:
+            if note_color is not None:
+                r += "{\\color{" + str(note_color) + "}{"
+        r += iutil.tostring_join(s, style)
+        if style & PsiOpts.STR_STYLE_LATEX:
+            if note_color is not None:
+                r += "}}"
+        return r
 
     @staticmethod
     def str_python_multiline(s):
@@ -1119,6 +1319,45 @@ class iutil:
         return hash(s) % 99991
         
     @staticmethod
+    def z3_vardict(rvs, auxs, auxis, reals):
+        if z3 is None:
+            return None
+        n = len(rvs) + len(auxis)
+        r = {}
+        r["#n"] = n
+        
+        s = z3.Solver()
+
+        if n:
+            x = z3.BitVec("TMPVARX", n)
+            y = z3.BitVec("TMPVARY", n)
+
+            H = z3.Function("H", x.sort(), z3.RealSort())
+
+            s.add(H(z3.BitVecVal(0, n)) == 0)
+            s.add(z3.ForAll([x, y], H(x) <= H(x|y)))
+            s.add(z3.ForAll([x, y], H(x) + H(y) >= H(x|y) + H(x&y)))
+
+            r["#H"] = H
+
+        else:
+            r["#H"] = None
+
+        r["#solver"] = s
+
+        for i, t in enumerate(rvs):
+            r[t.get_name()] = z3.BitVecVal(1 << i, n)
+        
+        for t in auxs + auxis:
+            r[t.get_name()] = z3.BitVec(t.get_name(), n)
+        
+        for t in reals:
+            r[t.get_name()] = z3.Real(t.get_name())
+        
+        return r
+
+
+    @staticmethod
     def get_solver(psolver = None):
         csolver_list = [PsiOpts.settings["solver"]] + iutil.solver_list
         if psolver is not None:
@@ -1129,6 +1368,8 @@ class iutil:
             if s.startswith("pulp.") and (pulp is not None):
                 return s
             if s.startswith("pyomo.") and (pyo is not None):
+                return s
+            if s == "z3" and (z3 is not None):
                 return s
         return ""
     
@@ -1174,6 +1415,111 @@ class iutil:
             return x
         return torch.tensor(x, dtype=torch.float64)
         
+    
+    @staticmethod
+    def ensure_comp(x):
+        if x is None:
+            return None
+            
+        if isinstance(x, BayesNet):
+            x = x.get_region()
+
+        if isinstance(x, Comp):
+            return x
+        
+        if isinstance(x, str):
+            return Comp.rv(x)
+
+        if isinstance(x, IBaseObj):
+            return x.allcomprv_noaux()
+
+        if x is False:
+            return Comp.empty()
+            
+        r = Comp.empty()
+        for y in x:
+            t = iutil.ensure_comp(y)
+            if t is not None:
+                r += t
+        return r
+    
+    
+    @staticmethod
+    def ensure_expr(x):
+        if x is None:
+            return None
+            
+        if isinstance(x, BayesNet):
+            x = x.get_region()
+
+        if isinstance(x, Region):
+            return x.expr()
+        if isinstance(x, Comp):
+            return Expr.H(x)
+        if isinstance(x, Expr):
+            return x
+        if isinstance(x, Term):
+            return Expr.fromterm(x)
+
+        if isinstance(x, (bool, int, float)):
+            return Expr.const(float(x))
+        
+        if iutil.istensor(x):
+            return Expr.const(float(x))
+        
+        if isinstance(x, str):
+            return Expr.parse(x)
+            
+        r = Expr.zero()
+        for y in x:
+            t = iutil.ensure_expr(y)
+            if t is not None:
+                r += t
+        return r
+    
+    @staticmethod
+    def ensure_region(x):
+        if x is None:
+            return None
+
+        if isinstance(x, Region):
+            return x
+        if isinstance(x, Comp):
+            raise ValueError("Cannot convert Comp to Region.")
+            # return Region.universe()
+        if isinstance(x, Expr):
+            raise ValueError("Cannot convert Expr to Region.")
+            # return x == 0
+
+        if isinstance(x, (bool, int, float)):
+            if x:
+                return Region.universe()
+            else:
+                return Region.empty()
+
+        if isinstance(x, BayesNet):
+            return x.get_region()
+        if isinstance(x, ConcModel):
+            return x.get_region(vals = True)
+        
+        if isinstance(x, str):
+            return Region.parse(x)
+            
+        if isinstance(x, tuple):
+            if all(isinstance(y, Comp) for y in x):
+                # return BayesNet([x]).get_region()
+                return markov(*x)
+        
+        if isinstance(x, (list, set)):
+            if all(isinstance(y, (tuple, Comp)) for y in x):
+                return BayesNet(list(x)).get_region()
+
+        r = Region.universe()
+        for y in x:
+            t = iutil.ensure_region(y)
+            if t is not None:
+                r &= t
+        return r
     
     @staticmethod
     def log(x):
@@ -1493,10 +1839,15 @@ class iutil:
     @staticmethod
     def get_name_fromcat(s, style):
         t = s.split("@@")
+        r = t[0]
         for i in range(1, len(t) - 1, 2):
             if int(t[i]) & style:
-                return t[i + 1]
-        return t[0]
+                r = t[i + 1]
+                break
+        
+        if style & PsiOpts.STR_STYLE_REM_SYMBOLS:
+            r = r.replace("_", "").replace("{", "").replace("}", "").replace("\\", "").replace("^", "")
+        return r
     
     @staticmethod
     def break_subscript_latex(s):
@@ -1605,12 +1956,20 @@ class iutil:
             return tuple(iutil.copy(a) for a in x)
         if isinstance(x, dict):
             return {iutil.copy(a): iutil.copy(b) for a, b in x.items()}
+        if isinstance(x, set):
+            return {iutil.copy(a) for a in x}
         if isinstance(x, numpy.ndarray):
             return numpy.copy(x)
+        if torch is not None and isinstance(x, torch.Tensor):
+            return x.detach().clone()
         if isinstance(x, IBaseObj):
             return x.copy()
         return x
     
+    @staticmethod
+    def isnumeric(x):
+        return isinstance(x, (int, float, fractions.Fraction))
+
     @staticmethod
     def str_join(x, delim = ""):
         if isinstance(x, list) or isinstance(x, tuple):
@@ -1863,6 +2222,11 @@ def fcn_substitute(fcn):
                 else:
                     return
 
+            if isinstance(key, Expr) and not isinstance(val, Comp):
+                t = iutil.ensure_expr(val)
+                if t is not None:
+                    val = t
+
             # fcn(cself, key, val)
             clist.append([key, val])
 
@@ -2009,9 +2373,14 @@ class IBaseObj:
         
         return self._latex_()
     
-    def display(self, skip_simplify = False):
+    def display(self, skip_simplify = False, **kwargs):
         """IPython display
         """
+        if kwargs:
+            r = None
+            with PsiOpts(**{key: val for key, val in kwargs.items()}):
+                r = self.display(skip_simplify = skip_simplify)
+            return r
         iutil.display_latex(self.latex(skip_simplify = skip_simplify))
     
     def display_bool(self, s = "{region} \\;\\mathrm{{is}}\\;\\mathrm{{{truth}}}", skip_simplify = True):
@@ -2026,10 +2395,23 @@ class IBaseObj:
         iutil.display_latex(s.format(region = self.latex(skip_simplify = skip_simplify), 
                                             truth = str(self.truth_value())))
         
+
+    def substituted(self, *args, **kwargs):
+        """Substitute variable v0 by v1 (v1 can be compound), return result"""
+        r = self.copy()
+        r.substitute(*args, **kwargs)
+        return r
+
+    def substituted_whole(self, *args, **kwargs):
+        """Substitute variable v0 by v1 (v1 can be compound), return result"""
+        r = self.copy()
+        r.substitute_whole(*args, **kwargs)
+        return r
+
     def subs(self, *args, **kwargs):
-        """Alias of substituted
+        """Alias of substituted_whole
         """
-        return self.substituted(*args, **kwargs)
+        return self.substituted_whole(*args, **kwargs)
         
     def subs_aux(self, *args, **kwargs):
         """Alias of substituted_aux
@@ -2041,7 +2423,7 @@ class IBaseObj:
         """
         if y is not None:
             x = [(x, y)]
-        return self.substituted(list(x) + [(b, a) for a, b in x])
+        return self.substituted_whole(list(x) + [(b, a) for a, b in x])
 
     def subs_swap(self, *args, **kwargs):
         """Alias of substituted_swap
@@ -2051,6 +2433,11 @@ class IBaseObj:
     def reg(self, *args, **kwargs):
         """Alias of get_region
         """
+        return self.get_region(*args, **kwargs)
+        
+    def ensure_region(self, *args, **kwargs):
+        if isinstance(self, Region):
+            return self
         return self.get_region(*args, **kwargs)
         
     def defn(self, *args, **kwargs):
@@ -2106,6 +2493,40 @@ class IBaseObj:
         r.mark_rv(x, *args, **kwargs)
         return r
     
+
+    def allcomp(self):
+        index = IVarIndex()
+        self.record_to(index)
+        return index.comprv + index.compreal
+        
+    def allcomprv(self):
+        index = IVarIndex()
+        self.record_to(index)
+        return index.comprv
+        
+    def getauxall(self):
+        return Comp.empty()
+        
+    def allcomprv_noaux(self):
+        return self.allcomprv() - self.getauxall()
+
+    def allcompreal(self):
+        index = IVarIndex()
+        self.record_to(index)
+        return index.compreal
+
+    def allcomprealvar_exprlist(self):
+        t = self.allcomprealvar()
+        return ExprArray.make([Expr.real(v) for v in t])
+
+    @property
+    def rvs(self):
+        return self.allcomprv_noaux()
+
+    @property
+    def reals(self):
+        return self.allcomprealvar_exprlist()
+
 class IVar(IBaseObj):
     """Random variable or real variable
     Do NOT use this class directly. Use Comp instead
@@ -2121,6 +2542,12 @@ class IVar(IBaseObj):
     @staticmethod
     def rv(name):
         return IVar(IVarType.RV, name)
+        
+    @staticmethod
+    def index(name):
+        r = IVar(IVarType.RV, name)
+        r.markers = [("index_shift", 0)]
+        return r
         
     @staticmethod
     def real(name):
@@ -2141,13 +2568,30 @@ class IVar(IBaseObj):
     def isrealvar(self):
         return self.vartype == IVarType.REAL and self.name != "ONE" and self.name != "EPS" and self.name != "INF"
     
+    def get_marker_key(self, key):
+        if self.markers is not None:
+            for v, w in reversed(self.markers):
+                if v == key:
+                    return w
+        return None
+
     def tostring(self, style = 0):
+        r = ""
         if style & PsiOpts.STR_STYLE_LATEX:
             if self.name == "EPS":
-                return PsiOpts.settings["latex_eps"]
+                r = PsiOpts.settings["latex_eps"]
             elif self.name == "INF":
-                return PsiOpts.settings["latex_infty"]
-        return iutil.get_name_fromcat(self.name, style)
+                r = PsiOpts.settings["latex_infty"]
+        if r == "":
+            r = iutil.get_name_fromcat(self.name, style)
+        
+        shift = self.get_marker_key("index_shift")
+        if shift is not None and shift != 0:
+            if shift > 0:
+                r += "+"
+            r += str(shift)
+        return r
+            
     
     def __str__(self):
         
@@ -2211,6 +2655,23 @@ class Comp(IBaseObj):
         return Comp([IVar(IVarType.RV, name)])
         
     @staticmethod
+    def index(name):
+        """
+        Random variable used as an index.
+
+        Parameters
+        ----------
+        name : str
+            Name of the random variable.
+
+        Returns
+        -------
+        Comp
+
+        """
+        return Comp([IVar.index(name)])
+        
+    @staticmethod
     def rv_reg(a, reg, reg_det = False):
         r = a.copy_noreg()
         for i in range(len(r.varlist)):
@@ -2233,7 +2694,7 @@ class Comp(IBaseObj):
             
         for i in range(st, en):
             istr = str(i)
-            s = name + istr
+            s = name + "_" + istr
             s += "@@" + str(PsiOpts.STR_STYLE_LATEX)
             s += "@@" + iutil.add_subscript_latex(name, istr)
             t.append(IVar(IVarType.RV, s))
@@ -2309,6 +2770,11 @@ class Comp(IBaseObj):
         s = str(self)
         return (s[0] if len(s) >= 1 else "", self.sorting_priority(), s)
 
+    def subsets(self, minsize = 0, maxsize = 100000, size = None, reverse = False):
+        """Subsets of this random variable, as a generator
+        """
+        return igen.subset(self, minsize = minsize, maxsize = maxsize, size = size, reverse = reverse)
+
     @staticmethod
     def parse(s):
         """Parse a string, e.g. "X+Y, Z W"
@@ -2363,6 +2829,19 @@ class Comp(IBaseObj):
                         return w
         return None
         
+    def write_marker_key(self, key, value):
+        for a in self.varlist:
+            if a.markers is None:
+                a.markers = []
+            found = False
+            for i in range(len(a.markers)):
+                if a.markers[i][0] == key:
+                    a.markers[i] = (key, value)
+                    found = True
+            if not found:
+                a.markers.append((key, value))
+        return None
+        
     
     def get_markers(self):
         r = []
@@ -2375,7 +2854,7 @@ class Comp(IBaseObj):
         
     
     def set_card(self, m):
-        self.add_marker("card", m)
+        self.write_marker_key("card", m)
         return self
     
     def get_card(self):
@@ -2397,6 +2876,30 @@ class Comp(IBaseObj):
             r.append(t)
         return tuple(r)
         
+    @property
+    def card(self):
+        return self.get_card()
+    
+    @card.setter
+    def card(self, value):
+        self.set_card(value)
+    
+    @property
+    def shape(self):
+        return self.get_shape()
+
+    def get_index_shift(self):
+        return self.get_marker_key("index_shift")
+    
+    def set_index_shift(self, x):
+        self.write_marker_key("index_shift", x)
+
+    def inc_index_shift(self, x):
+        c = self.get_index_shift()
+        if c is None:
+            c = 0
+        self.write_marker_key("index_shift", c + x)
+
     def add_suffix(self, csuffix):
         for a in self.varlist:
             a.name += csuffix
@@ -2482,6 +2985,12 @@ class Comp(IBaseObj):
         return self.ispresent_shallow(x)
         
     def __iadd__(self, other):
+        if isinstance(other, int):
+            c = self.get_index_shift()
+            if c is not None:
+                self.set_index_shift(c + other)
+            return self
+
         for i in range(len(other.varlist)):
             self.addvar(other.varlist[i])
         return self
@@ -2492,17 +3001,21 @@ class Comp(IBaseObj):
         if isinstance(other, Expr):
             return other.__radd__(self)
         r = self.copy()
-        if isinstance(other, Comp):
+        if isinstance(other, (Comp, int)):
             r += other
         return r
         
     def __radd__(self, other):
         r = self.copy()
-        if isinstance(other, Comp):
+        if isinstance(other, (Comp, int)):
             r += other
         return r
         
     def __isub__(self, other):
+        if isinstance(other, int):
+            self += -other
+            return self
+
         for i in range(len(other.varlist)):
             self.removevar(other.varlist[i])
         return self
@@ -2512,6 +3025,21 @@ class Comp(IBaseObj):
         r -= other
         return r
         
+    def __truediv__(self, other):
+        return BayesNet([self]) / other
+
+    def __xor__(self, other):
+        return BayesNet([self]) ^ other
+
+    def avoid(self, *args, samesuffix = True):
+        reg = Comp.empty()
+        for a in args:
+            if isinstance(a, IBaseObj):
+                reg += a.allcomp()
+        r = Region.universe().exists(self)
+        r.aux_avoid_from(reg, samesuffix = samesuffix)
+        return r.aux
+
     def __imul__(self, other):
         ceps = PsiOpts.settings["eps"]
         if isinstance(other, bool) and not other:
@@ -2589,6 +3117,14 @@ class Comp(IBaseObj):
                 return False
         return True
         
+    def super_of_index(self, other):
+        r = len(self.varlist)
+        for i in range(len(other.varlist)):
+            if not (other.varlist[i] in self.varlist):
+                return None
+            r = min(r, self.varlist.index(other.varlist[i]))
+        return r
+
     def disjoint(self, other):
         """Whether self is disjoint from other."""
         for i in range(len(other.varlist)):
@@ -2600,7 +3136,9 @@ class Comp(IBaseObj):
     def __contains__(self, other):
         if isinstance(other, IVar):
             return other in self.varlist
-        return self.super_of(other)
+        if isinstance(other, Comp):
+            return self.super_of(other)
+        return False
         
     def __ge__(self, other):
         return self.super_of(other)
@@ -2624,7 +3162,20 @@ class Comp(IBaseObj):
     def tolist(self):
         return CompArray([a.copy() for a in self])
     
-    
+    def z3(self, vardict):
+        if z3 is None:
+            return None
+        n = vardict["#n"]
+        r = None
+        for a in self.varlist:
+            if r is None:
+                r = vardict[a.name]
+            else:
+                r = r | vardict[a.name]
+        if r is None:
+            return z3.BitVecVal(0, n)
+        return r
+
     
     def mean(self, f = None, name = None):
         """
@@ -2771,7 +3322,7 @@ class Comp(IBaseObj):
         if isinstance(other, CompArray) or isinstance(other, ExprArray):
             return NotImplemented
         if isinstance(other, int):
-            return Term.H(self)
+            other = Comp.empty()
         return Term.H(self) | Term.H(other)
         
     def rename_var(self, name0, name1):
@@ -2824,12 +3375,20 @@ class Comp(IBaseObj):
             if a.reg is not None:
                 a.reg.substitute(v0, v1)
     
-    def substituted(self, *args, **kwargs):
-        """Substitute variable v0 by v1 (v1 can be compound), return result"""
-        r = self.copy()
-        r.substitute(*args, **kwargs)
-        return r
         
+    @fcn_substitute
+    def substitute_whole(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound)"""
+        t = self.super_of_index(v0)
+        if t is None:
+            return
+        self -= v0
+        t = min(t, len(self.varlist))
+        for x in v1.varlist:
+            if x not in self.varlist:
+                self.varlist.insert(t, x.copy())
+                t += 1
+
     @staticmethod
     def substitute_list(a, vlist, suffix = "", isaux = False):
         """Substitute variables in vlist into a"""
@@ -2969,6 +3528,13 @@ class IVarIndex:
     def __contains__(self, other):
         return self.get_index(other) >= 0
         
+    def ispresent(self, x):
+        """Return whether any variable in x appears here"""
+        for y in x:
+            if self.get_index(y) >= 0:
+                return True
+        return False
+
     # Get index of name
     def get_index_name(self, name):
         if name in self.dictrv:
@@ -3060,7 +3626,7 @@ class Term(IBaseObj):
     Do NOT use this class directly. Use Expr instead
     """
     
-    def __init__(self, x, z = None, reg = None, sn = 0, fcncall = None, fcnargs = None, reg_outer = None):
+    def __init__(self, x, z = None, reg = None, sn = 0, fcncall = None, fcnargs = None, reg_outer = None, z_present = False):
         self.x = x
         if z is None:
             self.z = Comp.empty()
@@ -3071,10 +3637,12 @@ class Term(IBaseObj):
         self.fcncall = fcncall
         self.fcnargs = fcnargs
         self.reg_outer = reg_outer
+        self.z_present = z_present
+
         
     def copy(self):
         return Term([a.copy() for a in self.x], self.z.copy(), iutil.copy(self.reg), 
-                    self.sn, self.fcncall, iutil.copy(self.fcnargs), iutil.copy(self.reg_outer))
+                    self.sn, self.fcncall, iutil.copy(self.fcnargs), iutil.copy(self.reg_outer), self.z_present)
         
     def copy_noreg(self):
         return Term([a.copy_noreg() for a in self.x], self.z.copy_noreg(), None, 0)
@@ -3215,7 +3783,14 @@ class Term(IBaseObj):
         
     def isnonneg(self):
         if self.get_type() == TermType.IC:
-            return len(self.x) <= 2
+            if PsiOpts.settings.get("quantum", False):
+                if len(self.x) == 1:
+                    return self.z.isempty()
+                elif len(self.x) == 2:
+                    return self.z.isempty() or (self.x[0].inter(self.x[1])).isempty()
+                return False
+            else:
+                return len(self.x) <= 2
         if self.isone() or self.iseps() or self.isinf():
             return True
         return False
@@ -3289,6 +3864,42 @@ class Term(IBaseObj):
         return self.copy()
         
     
+    def z3(self, vardict):
+        if z3 is None:
+            return None
+        n = vardict["#n"]
+        H = vardict["#H"]
+
+        r = None
+        if self.get_type() == TermType.IC:
+            for mask in range(1 << len(self.x)):
+                csum = sum((self.x[i] for i in range(len(self.x)) if mask & (1 << i)), self.z.copy())
+                if csum.isempty():
+                    continue
+                cH = H(csum.z3(vardict))
+                issub = iutil.bitcount(mask) % 2 == 0
+                if r is None:
+                    if issub:
+                        r = -cH
+                    else:
+                        r = cH
+                else:
+                    if issub:
+                        r = r - cH
+                    else:
+                        r = r + cH
+            return r
+
+        elif self.get_type() == TermType.REAL:
+            if self.isone():
+                return z3.RealVal(1)
+            return vardict[self.x[0].get_name()]
+
+        elif self.get_type() == TermType.REGION:
+            raise ValueError("Optimization quantities are not supported for Z3. Use another solver.")
+            
+
+
     def get_shape(self):
         r = []
         for a in itertools.chain(self.z, *(self.x)):
@@ -3708,6 +4319,29 @@ class Term(IBaseObj):
 #            return False
         return True
         
+
+    def try_remove(self, x, sn):
+        if not self.ispresent(x):
+            return True
+        if self.get_type() == TermType.IC:
+            if len(self.x) >= 3:
+                return False
+            if len(self.x) == 2 and self.z.ispresent(x):
+                return False
+            if sn > 0:
+                if any(x2.ispresent(x) for x2 in self.x):
+                    return False
+            if sn < 0:
+                if self.z.ispresent(x):
+                    return False
+            for x2 in self.x:
+                x2 -= x
+            self.z -= x
+            return True
+
+        else:
+            return False
+        
     def z_can_extend_to(self, target, bnet = None):
         if self.z == target:
             return True
@@ -3856,7 +4490,7 @@ class Term(IBaseObj):
             return NotImplemented
         if isinstance(other, Comp):
             other = Term.H(other)
-        return Term([a.copy() for a in self.x] + [a.copy() for a in other.x], self.z + other.z)
+        return Term([a.copy() for a in self.x] + [a.copy() for a in other.x], self.z + other.z, z_present = self.z_present or other.z_present)
         
     
     def __or__(self, other):
@@ -3865,10 +4499,49 @@ class Term(IBaseObj):
         if isinstance(other, Comp):
             other = Term.H(other)
         if isinstance(other, int):
-            return self.copy()
-        return Term([a.copy() for a in self.x], self.z + other.allcomp())
+            other = Term.H(Comp.empty())
+        return Term([a.copy() for a in self.x], self.z + other.allcomp(), z_present = True)
         
+    def symbol_split(self):
+        r = []
+        for a in self.x:
+            if len(r):
+                r.append("&")
+            r.append(a.copy())
+        if (not self.z.isempty()) or self.z_present:
+            r.append("|")
+        if not self.z.isempty():
+            r.append(self.z.copy())
+        return r
+    
+    @staticmethod
+    def from_symbols(symbols):
+        cs = []
+        for t in symbols:
+            if isinstance(t, Term):
+                t2 = t.symbol_split()
+                cs += t2
+            elif isinstance(t, Comp):
+                cs.append(t.copy())
+            elif isinstance(t, str) and (t == "&" or t == "|"):
+                cs.append(t)
+            else:
+                cs.append(iutil.ensure_comp(t).copy())
         
+        r = Term.H(Comp.empty())
+        z_present = False
+        for t in cs:
+            if isinstance(t, str):
+                if t == "&":
+                    r.x.append(Comp.empty())
+                elif t == "|":
+                    z_present = True
+            elif isinstance(t, Comp):
+                if z_present:
+                    r.z += t
+                else:
+                    r.x[-1] += t
+        return r
         
     def istight(self, canon = False):
         if self.get_type() == TermType.REGION:
@@ -3945,6 +4618,36 @@ class Term(IBaseObj):
                 return True
         return False
         
+    def __contains__(self, other):
+        condition_included = PsiOpts.settings.get("condition_included", False)
+
+        x = other
+        if isinstance(x, IVar):
+            x = Comp([x])
+
+        if self.get_type() == TermType.REGION:
+            if self.reg is not None and x in self.reg:
+                return True
+            if self.reg_outer is not None and x in self.reg_outer:
+                return True
+            if self.fcnargs is not None:
+                for a in self.fcnargs:
+                    if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                        if x in a:
+                            return True
+        
+        if condition_included:
+            for a in self.x:
+                if x in a + self.z:
+                    return True
+        else:
+            for a in self.x:
+                if x in a:
+                    return True
+        if x in self.z:
+            return True
+        return False
+
     def rename_var(self, name0, name1):
         if self.get_type() == TermType.REGION:
             if self.reg is not None:
@@ -3970,7 +4673,7 @@ class Term(IBaseObj):
             if self.fcnargs is not None:
                 for a in self.fcnargs:
                     if isinstance(a, (IVar, Comp, Term, Expr, Region)):
-                        a.rename_var(name0, name1)
+                        a.rename_map(namemap)
         for a in self.x:
             a.rename_map(namemap)
         self.z.rename_map(namemap)
@@ -3992,11 +4695,32 @@ class Term(IBaseObj):
             a.substitute(v0, v1)
         self.z.substitute(v0, v1)
         
-    def substituted(self, *args, **kwargs):
-        """Substitute variable v0 by v1 (v1 can be compound), return result"""
-        r = self.copy()
-        r.substitute(*args, **kwargs)
-        return r
+    @fcn_substitute
+    def substitute_whole(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound)"""
+
+        condition_included = PsiOpts.settings.get("condition_included", False)
+
+        if self.get_type() == TermType.REGION:
+            if self.reg is not None:
+                self.reg.substitute_whole(v0, v1)
+            if self.reg_outer is not None:
+                self.reg_outer.substitute_whole(v0, v1)
+            if self.fcnargs is not None:
+                for a in self.fcnargs:
+                    if isinstance(a, (IVar, Comp, Term, Expr, Region)):
+                        a.substitute_whole(v0, v1)
+        
+        if condition_included:
+            for a in self.x:
+                a += self.z
+        for a in self.x:
+            a.substitute_whole(v0, v1)
+        self.z.substitute_whole(v0, v1)
+        if condition_included:
+            for a in self.x:
+                a -= self.z
+    
     
     def get_var_avoid(self, v):
         r = None
@@ -4147,7 +4871,8 @@ class Expr(IBaseObj):
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Expr([(a.copy(), c) for (a, c) in self.terms]
-                    + [(a.copy(), c) for (a, c) in other.terms])
+                    + [(a.copy(), c) for (a, c) in other.terms],
+                    meta = iutil.meta_concat([self.meta, other.meta]))
         
     def __radd__(self, other):
         if isinstance(other, Comp):
@@ -4155,7 +4880,8 @@ class Expr(IBaseObj):
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Expr([(a.copy(), c) for (a, c) in other.terms]
-                    + [(a.copy(), c) for (a, c) in self.terms])
+                    + [(a.copy(), c) for (a, c) in self.terms],
+                    meta = iutil.meta_concat([other.meta, self.meta]))
         
     def __neg__(self):
         return Expr([(a.copy(), -c) for (a, c) in self.terms], None, iutil.copy(self.meta))
@@ -4177,7 +4903,8 @@ class Expr(IBaseObj):
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Expr([(a.copy(), c) for (a, c) in self.terms]
-                    + [(a.copy(), -c) for (a, c) in other.terms])
+                    + [(a.copy(), -c) for (a, c) in other.terms],
+                    meta = iutil.meta_concat([self.meta, other.meta]))
         
     def __rsub__(self, other):
         if isinstance(other, Comp):
@@ -4185,7 +4912,8 @@ class Expr(IBaseObj):
         if not isinstance(other, Expr):
             other = Expr.const(other)
         return Expr([(a.copy(), c) for (a, c) in other.terms]
-                    + [(a.copy(), -c) for (a, c) in self.terms])
+                    + [(a.copy(), -c) for (a, c) in self.terms],
+                    meta = iutil.meta_concat([other.meta, self.meta]))
         
     def __imul__(self, other):
         if isinstance(other, Expr):
@@ -4265,6 +4993,9 @@ class Expr(IBaseObj):
         
     def __rpow__(self, other):
         return Expr.const(other) ** self
+        
+    def __invert__(self):
+        return self == 0
         
     def record_to(self, index):
         for (a, c) in self.terms:
@@ -4470,6 +5201,31 @@ class Expr(IBaseObj):
     def var_mi_only(self, v):
         return abs(self.ent_coeff(v)) <= PsiOpts.settings["eps"]
         
+    
+    def z3(self, vardict):
+        if z3 is None:
+            return None
+
+        r = None
+        for (a, c) in self.terms:
+            t = a.z3(vardict)
+
+            if abs(c) != 1:
+                t = t * iutil.float_toz3(abs(c))
+            if c >= 0:
+                if r is None:
+                    r = t
+                else:
+                    r = r + t
+            else:
+                if r is None:
+                    r = -t
+                else:
+                    r = r - t
+
+        return r
+
+
     def istight(self, canon = False):
         return all(a.istight(canon) for a, c in self.terms)
 
@@ -4538,6 +5294,8 @@ class Expr(IBaseObj):
 
         use_bracket = add_bracket and len(termlist) >= 2
         
+        float_style = self.get_meta("float_style")
+
         r = ""
         if use_bracket:
             if style & PsiOpts.STR_STYLE_LATEX:
@@ -4552,7 +5310,7 @@ class Expr(IBaseObj):
             if c > 0.0 and not first:
                 r += "+"
             if a.isone():
-                r += iutil.float_tostr(c, style, bracket = False)
+                r += iutil.float_tostr(c, style, bracket = False, force_float = float_style)
             else:
                 need_bracket = False
                 if abs(c - 1.0) < PsiOpts.settings["eps"]:
@@ -4561,7 +5319,7 @@ class Expr(IBaseObj):
                     r += "-"
                     need_bracket = True
                 else:
-                    r += iutil.float_tostr(c, style)
+                    r += iutil.float_tostr(c, style, force_float = float_style)
                     if style & PsiOpts.STR_STYLE_PSITIP:
                         r += "*"
                     need_bracket = True
@@ -4703,14 +5461,116 @@ class Expr(IBaseObj):
     def sorting_priority(self):
         return int(not self.real_present()) * 100000 + self.complexity()
     
-    def get_coeff(self, b):
+    def get_coeff(self, b, get_pos = False):
         """Get coefficient of Term b"""
-        r = 0.0
-        for (a, c) in self.terms:
-            if a == b:
-                r += c
+        if isinstance(b, Term):
+            r = 0.0
+            pos = None
+            for i, (a, c) in enumerate(self.terms):
+                if a == b:
+                    r += c
+                    pos = i
+            if get_pos:
+                return (r, pos)
+            return r
+        
+        if isinstance(b, Comp):
+            r = 0.0
+            pos = None
+            for i, (a, c) in enumerate(self.terms):
+                if a.ishc() and (a.x[0] - a.z).super_of(b):
+                    r += c
+                    pos = i
+            if get_pos:
+                return (r, pos)
+            return r
+        
+
+        r = None
+        pos = None
+        for a2, c2 in b.terms:
+            coeff2 = b.get_coeff(a2)
+            if coeff2 == 0:
+                continue
+            coeff1, tpos = self.get_coeff(a2, get_pos = True)
+            if coeff1 == 0:
+                if get_pos:
+                    return (0.0, None)
+                return 0.0
+
+            if pos is None:
+                pos = tpos
+            elif tpos is not None:
+                pos = min(pos, tpos)
+
+            t = coeff1 / coeff2
+            if r is None:
+                r = t
+            else:
+                if r > 0:
+                    if t < 0:
+                        if get_pos:
+                            return (0.0, None)
+                        return 0.0
+                    r = min(r, t)
+                else:
+                    if t > 0:
+                        if get_pos:
+                            return (0.0, None)
+                        return 0.0
+                    r = max(r, t)
+        
+        if r is None:
+            if get_pos:
+                return (0.0, None)
+            return 0.0
+
+        if get_pos:
+            return (r, pos)
         return r
+
+    def __contains__(self, other):
+        if isinstance(other, (Term, Expr)):
+            return self.get_coeff(other) != 0
+        
+        for a, c in self.terms:
+            if other in a:
+                return True
+        return False
     
+    def isbalanced(self, v = None):
+        if v is None:
+            v = self.allcomprv_shallow()
+        # return all(self.get_coeff(x) == 0 for x in v)
+        ceps = PsiOpts.settings["eps"]
+        return all(abs(self.get_coeff(x)) <= ceps for x in v)
+
+    def balanced(self, v = None, w = None, sn = 1):
+        ceps = PsiOpts.settings["eps"]
+        if v is None:
+            v = self.allcomprv_shallow()
+        if w is None:
+            w = self.allcomprv_shallow()
+        
+        r = self.copy()
+        cs = []
+        for x in v:
+            c = -r.get_coeff(x) * sn
+            if c < -ceps:
+                return None
+            if c > ceps:
+                cs.append((x, c))
+
+        while cs:
+            t = min(c for x, c in cs)
+            tx = sum((x for x, c in cs), Comp.empty())
+            tz = w - tx
+            r += Expr.Hc(tx, tz) * t * sn
+            cs = [(x, c - t) for x, c in cs if c - t > ceps]
+
+        return r.simplified()
+
+
     def get_sign(self, b):
         """Return whether Expr is increasing or decreasing in random variable b"""
         r = 0
@@ -4811,7 +5671,7 @@ class Expr(IBaseObj):
     
     def removed_term(self, b):
         """Remove Term b, return Expr after removal."""
-        return Expr([(a, c) for (a, c) in self.terms if a != b])
+        return Expr([(a, c) for (a, c) in self.terms if a != b], meta = iutil.copy(self.meta))
         
     def symm_sort(self, terms):
         """Sort the random variables in terms assuming symmetry among those terms."""
@@ -4906,6 +5766,18 @@ class Expr(IBaseObj):
                     a.z = a.z + xt
                     i += 1
             i += 1
+
+    def combine_same_terms(self):
+        ceps = PsiOpts.settings["eps"]
+        for i in range(len(self.terms)):
+            for j in range(i):
+                if self.terms[i][0] == self.terms[j][0]:
+                    self.terms[j] = (self.terms[j][0], self.terms[j][1] + self.terms[i][1])
+                    self.terms[i] = (self.terms[i][0], 0.0)
+                    break
+
+        self.terms = [(a, c) for (a, c) in self.terms if abs(c) > ceps and not a.iszero()]
+
 
     def simplify(self, reg = None, bnet = None):
         """Simplify the expression in place"""
@@ -5183,6 +6055,15 @@ class Expr(IBaseObj):
         """Return whether this expression is affine."""
         return self.ispresent((Expr.one() + Expr.eps() + Expr.inf()).allcomp())
 
+
+    def try_remove(self, x, sn):
+        for (a, c) in self.terms:
+            if not a.try_remove(x, sn * c):
+                return False
+        self.simplify()
+        return True
+
+
     def rename_var(self, name0, name1):
         for (a, c) in self.terms:
             a.rename_var(name0, name1)
@@ -5234,11 +6115,30 @@ class Expr(IBaseObj):
                 a.substitute(v0, v1)
         return self
 
-    def substituted(self, *args, **kwargs):
-        """Substitute variable v0 by v1 (v1 can be compound), return result"""
-        r = self.copy()
-        r.substitute(*args, **kwargs)
-        return r
+    
+    @fcn_substitute
+    def substitute_whole(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound)"""
+        if isinstance(v0, Term):
+            v0 = Expr.fromterm(v0)
+        if isinstance(v1, Term):
+            v1 = Expr.fromterm(v1)
+        
+        self.mhash = None
+        if isinstance(v0, Expr):
+            if len(v0.terms) > 0:
+                coeff, pos = self.get_coeff(v0, get_pos = True)
+                if coeff != 0 and pos is not None:
+                    self.terms[pos:pos] = (v1 * coeff).terms
+                    self.terms.extend((v0 * (-coeff)).terms)
+                    self.combine_same_terms()
+        elif isinstance(v1, Expr):
+            self.substitute_rate(v0, v1)
+        else:
+            for (a, c) in self.terms:
+                a.substitute_whole(v0, v1)
+        return self
+
 
     def condition(self, b):
         """Condition on random variable b, in place"""
@@ -5389,7 +6289,9 @@ class Expr(IBaseObj):
 
         return (lhs, rhs, eqnstr)
         
-    def tostring_eqn(self, eqnstr, style = 0, tosort = False, lhsvar = None, prefer_ge = None, line_len = None):
+    def tostring_eqn(self, eqnstr, style = 0, tosort = False, lhsvar = None, prefer_ge = None, line_len = None, pf_note = None):
+        if pf_note is None:
+            pf_note = PsiOpts.settings["str_proof_note"]
 
         style = iutil.convert_str_style(style)
 
@@ -5402,8 +6304,19 @@ class Expr(IBaseObj):
         r = (lhs.tostring(style = style, tosort = tosort, tosort_pm = True) + " "
         + iutil.eqnstr_style(eqnstr, style) + " " + rhs.tostring(style = style, tosort = tosort, tosort_pm = True))
 
-        if style & PsiOpts.STR_STYLE_LATEX and line_len is not None:
+        if style & PsiOpts.STR_STYLE_LATEX:
+            cnote = None
+            if pf_note:
+                cnote = self.get_meta("pf_note")
+                if cnote is not None:
+                    cnote = iutil.pf_note_str(cnote, style, add_space = 4)
+            
+            if cnote is not None:
+                r = [r, cnote]
             r = iutil.latex_split_line(r, line_len)
+
+        # if style & PsiOpts.STR_STYLE_LATEX and line_len is not None:
+        #     r = iutil.latex_split_line(r, line_len)
 
         return r
         
@@ -5624,10 +6537,35 @@ class BayesNet(IBaseObj):
         elif isinstance(other, BayesNet):
             for x, y in other.edges():
                 self.add_edge(x, y)
+            for x in other.allcomp():
+                if other.is_fcn(x):
+                    self.set_fcn(x)
             return self
                 
         return self
     
+    def __add__(self, other):
+        r = self.copy()
+        r += other
+        return r
+
+    def join(self, other):
+        if not isinstance(other, BayesNet):
+            other = BayesNet([other.allcomp()])
+        r = self + other
+        for x in self.allcomp():
+            if self.get_children(x).isempty():
+                for y in other.allcomp():
+                    if other.get_parents(y).isempty():
+                        r += (x, y)
+        return r
+
+    def __truediv__(self, other):
+        return self.join(other)
+        
+    def __xor__(self, other):
+        return self + other
+
     def communicate(self, a, b):
         return self.get_ancestors(a).ispresent(b) and self.get_ancestors(b).ispresent(a)
     
@@ -6130,6 +7068,66 @@ class BayesNet(IBaseObj):
             r += self.get_ic()
         return r == 0
         
+
+    def assume(self):
+        """Assume this Bayesian network is true in the current context.
+        """
+        self.get_region().assume()
+
+    def assume_only(self):
+        """Assume this Bayesian network is true in the current context. Overwrite existing assumptions.
+        """
+        self.get_region().assume_only()
+    
+    def assumed(self):
+        """Create a context where this Bayesian network is assumed to be true.
+        Use "with bnet.assumed(): ..."
+        """
+        return self.get_region().assumed()
+    
+    def assumed_only(self):
+        """Create a context where this Bayesian network is assumed to be true. Overwrite existing assumptions.
+        Use "with bnet.assumed_only(): ..."
+        """
+        return self.get_region().assumed_only()
+    
+
+    def _latex_(self):
+        ms = self.get_markov()
+        eqnlist = [Region.markov_tostring(cm, PsiOpts.STR_STYLE_LATEX, False) for cm in ms]
+        if len(eqnlist) == 0:
+            return ""
+        if len(eqnlist) == 1:
+            return eqnlist[0]
+        return "\\begin{array}{l}\n" + "\\\\\n".join(eqnlist) + "\\\\\n\\end{array}"
+
+    def _repr_svg_(self):
+        if graphviz is None:
+            return None
+        return self.graph()._repr_svg_()
+
+    def _repr_latex_(self):
+        if graphviz is not None:
+            return None
+        if PsiOpts.settings.get("repr_latex", False):
+            return self._latex_()
+        return None
+        
+
+    def __bool__(self):
+        return bool(self.get_region())
+
+    def __or__(self, other):
+        return self.get_region() | other
+        
+    def __and__(self, other):
+        return self.get_region() & other
+        
+    def __lshift__(self, other):
+        return self.get_region() << other
+        
+    def __rshift__(self, other):
+        return self.get_region() >> other
     
     def get_basis(self, more_vars = None):
         """Get a basis of the entropy region of this Bayesian network (may not be minimal).
@@ -6160,8 +7158,6 @@ class BayesNet(IBaseObj):
     def __repr__(self):
         return self.tostring()
     
-    def _latex_(self):
-        return self.tostring()
         
         
     def __hash__(self):
@@ -6260,6 +7256,7 @@ class ConcDist(IBaseObj):
         
     
     def __init__(self, p = None, num_in = None, shape = None, shape_in = None, shape_out = None, isvar = False, randomize = False, isfcn = False):
+        self.force_float = True
         self.isvar = isvar
         self.iscache = False
             
@@ -6328,7 +7325,16 @@ class ConcDist(IBaseObj):
         
         if isfcn:
             self.clamp_fcn()
-            
+    
+    def copy(self):
+        r = ConcDist(p = iutil.copy(self.p), shape_in = self.shape_in, shape_out = self.shape_out, isvar = self.isvar, isfcn = self.isfcn)
+        r.force_float = self.force_float
+        r.p = iutil.copy(self.p)
+        r.expr = iutil.copy(self.expr)
+        r.v = None
+        r.copy_torch()
+        return r
+
     def clamp_fcn(self, randomize = False):
         for xs in itertools.product(*[range(x) for x in self.shape_in]):
             mzs = None
@@ -6343,7 +7349,14 @@ class ConcDist(IBaseObj):
                     mzs = zs
             self.p[xs + mzs] = 1.0
         self.copy_torch()
-        
+    
+
+    def fraction_snap(self, denom = None, eps = None):
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                self.p[xs + zs] = iutil.float_snap(float(self.p[xs + zs]), denom = denom, eps = eps)
+        self.normalize()
+
         
     def istorch(self):
         return torch is not None and isinstance(self.p, torch.Tensor)
@@ -6906,6 +7919,24 @@ class ConcDist(IBaseObj):
         r += ")"
         return r
         
+    def _latex_(self):
+        t = ExprArray(self.p)
+        t.set_float(self.force_float)
+        return t._latex_()
+        
+    def tostring(self, style = 0):
+        """Convert to string. 
+        Parameters:
+            style   : Style of string conversion
+                      STR_STYLE_STANDARD : I(X,Y;Z|W)
+                      STR_STYLE_PSITIP : I(X+Y&Z|W)
+        """
+
+        style = iutil.convert_str_style(style)
+        if style & PsiOpts.STR_STYLE_LATEX:
+            return self._latex_()
+        return str(self)
+
     
     def fcn(fcncall, shape):
         shape_in, shape_out = ConcDist.convert_shape_pair(shape)
@@ -7064,6 +8095,7 @@ class ConcReal(IBaseObj):
     """Concrete real variable."""
     
     def __init__(self, x = None, lbound = None, ubound = None, scale = 1.0, isvar = False, isint = False, randomize = False):
+        self.force_float = True
         self.isvar = isvar
         self.isint = isint
         
@@ -7096,6 +8128,14 @@ class ConcReal(IBaseObj):
         if randomize:
             self.randomize()
     
+    def copy(self):
+        r = ConcReal(x = iutil.copy(self.x), lbound = self.lbound, ubound = self.ubound, scale = self.scale, isvar = self.isvar, isint = self.isint)
+        r.force_float = self.force_float
+        r.x = iutil.copy(self.x)
+        r.v = None
+        r.copy_torch()
+        return r
+
     def const(x = 0.0):
         """Constant.
         """
@@ -7225,6 +8265,11 @@ class ConcReal(IBaseObj):
             
         self.copy_torch()
         
+        
+
+    def fraction_snap(self, denom = None, eps = None):
+        self.x = iutil.float_snap(float(self.x), denom = denom, eps = eps)
+        self.copy_torch()
     
     def hop(self, prob):
         if numpy.random.uniform() < prob:
@@ -7248,6 +8293,12 @@ class ConcReal(IBaseObj):
             return self.x
         return torch.tensor(self.x, dtype=torch.float64)
     
+    @staticmethod
+    def unbox(x):
+        if isinstance(x, ConcReal):
+            return x.x
+        return x
+
     def __str__(self):
         return str(self.x)
     
@@ -7262,6 +8313,23 @@ class ConcReal(IBaseObj):
         r += ")"
         return r
     
+        
+    def _latex_(self):
+        return iutil.float_tostr(float(self.x), force_float = self.force_float)
+
+    def tostring(self, style = 0):
+        """Convert to string. 
+        Parameters:
+            style   : Style of string conversion
+                      STR_STYLE_STANDARD : I(X,Y;Z|W)
+                      STR_STYLE_PSITIP : I(X+Y&Z|W)
+        """
+
+        style = iutil.convert_str_style(style)
+        if style & PsiOpts.STR_STYLE_LATEX:
+            return self._latex_()
+        return str(self)
+
     
 class RealRV(IBaseObj):
     """Discrete real-valued random variable."""
@@ -7305,7 +8373,7 @@ class ConcModel(IBaseObj):
         self.pt = None
         
         self.index_real = IVarIndex()
-        self.reals = []
+        self.realvars = []
         self.opt_reg = None
         
         
@@ -7319,7 +8387,21 @@ class ConcModel(IBaseObj):
         r.psmap_mask = dict(self.psmap_mask)
         r.card = list(self.card)
         r.index_real = self.index_real.copy()
-        r.reals = list(self.reals)
+        r.realvars = list(self.realvars)
+        return r
+        
+        
+    def copy(self):
+        r = ConcModel()
+        r.istorch = self.istorch
+        r.bnet = self.bnet.copy()
+        r.psmap = iutil.copy(self.psmap)
+        r.psmap_cache = iutil.copy(self.psmap_cache)
+        r.psv = iutil.copy(self.psv)
+        r.psmap_mask = iutil.copy(self.psmap_mask)
+        r.card = iutil.copy(self.card)
+        r.index_real = self.index_real.copy()
+        r.realvars = iutil.copy(self.realvars)
         return r
         
     def set_real(self, x, v):
@@ -7336,9 +8418,9 @@ class ConcModel(IBaseObj):
         x.record_to(self.index_real)
         i = self.index_real.get_index(x)
         
-        while len(self.reals) < len(self.index_real.compreal):
-            self.reals.append(None)
-        self.reals[i] = v
+        while len(self.realvars) < len(self.index_real.compreal):
+            self.realvars.append(None)
+        self.realvars[i] = v
         
     def get_real(self, x):
         if isinstance(x, Expr):
@@ -7346,7 +8428,7 @@ class ConcModel(IBaseObj):
         i = self.index_real.get_index(x)
         if i < 0:
             return None
-        return self.reals[i]
+        return self.realvars[i]
         
     def clear_cache(self):
         self.pt = None
@@ -7372,6 +8454,11 @@ class ConcModel(IBaseObj):
         else:
             return (self.comp_to_tuple(x[0]), self.comp_to_tuple(x[1]))
         
+    def tuple_to_comp(self, y):
+        r = Comp.empty()
+        for a in y:
+            r += self.bnet.index.comprv[a]
+        return r
         
     def comp_get_sublens(self, x):
         if isinstance(x, Term):
@@ -7617,8 +8704,18 @@ class ConcModel(IBaseObj):
         v = self.get_ent_vector(x)
         return Region.ent_vector_discover_ic(v, x, eps, skip_simplify)
     
-    def get_region(self):
-        return self.bnet.get_region()
+    def get_region(self, vals = False):
+        r = self.bnet.get_region()
+        if vals:
+            all_rv = self.bnet.index.comprv.copy()
+            n = len(all_rv)
+            for mask in range(1, 1 << n):
+                x = all_rv.from_mask(mask)
+                r.iand_norename(Expr.H(x) == float(self.get_H(x)))
+            for y in self.allcomprealvar_exprlist():
+                r.iand_norename(y == float(self[y]))
+
+        return r
         
     def allcomprv(self):
         return self.bnet.index.comprv.copy()
@@ -7626,12 +8723,18 @@ class ConcModel(IBaseObj):
     def allcompreal(self):
         return self.index_real.compreal.copy()
     
+    def allcomprealvar(self):
+        return self.index_real.compreal.copy()
+    
     def allcomp(self):
         return self.allcomprv() + self.allcompreal()
     
-    def add_reg(self, reg):
+    def add_reg(self, reg, other_neighbors = None):
         varlist = []
         cons = Region.universe()
+
+        reg = reg.copy()
+        regallcomprv = reg.allcomprv()
         
         if isinstance(reg, RegionOp):
             reg = reg.tosimple()
@@ -7641,6 +8744,7 @@ class ConcModel(IBaseObj):
             
         card0 = PsiOpts.settings["opt_aux_card"]
         
+        reg.aux_strengthen(self.bnet.index.comprv, other_neighbors = other_neighbors)
         reg.simplify_quick(zero_group = 0)
         
         regcom = reg.copy()
@@ -7656,35 +8760,85 @@ class ConcModel(IBaseObj):
         
         fcnreg = Region.universe()
         
-        for a in tbnet.index.comprv + reg.allcomprv():
+        clus = []
+
+        # print(reg)
+        # print(regcom)
+        # print(tbnet)
+
+        rv_all = self.bnet.index.comprv.copy()
+        for a in tbnet.index.comprv + regallcomprv:
             if self.bnet.index.get_index(a) >= 0:
                 continue
-            
-            ccard = a.get_card()
-            if ccard is None:
-                ccard = card0
             
             pa = None
             if tbnet.index.get_index(a) >= 0:
                 pa = tbnet.get_parents(a)
             else:
-                pa = self.bnet.index.comprv
-                
-            # print(pa)
+                pa = rv_all.copy()
             
+            rv_all += a
+
             isfcn = reg.copy_noaux().implies(Expr.Hc(a, pa) <= 0)
             if isfcn:
                 fcnreg.iand_norename(Expr.Hc(a, pa) <= 0)
-            # print(reg)
-            # print(a)
+
             # print(pa)
-            # print(isfcn)
-            p = ConcDist(shape = (tuple(self.get_card(t) for t in pa), (ccard,)),
-                         isvar = True, randomize = True, isfcn = isfcn)
+            # print(a)
+            # print()
+
+            for i in range(len(clus)):
+                cpa, ca, cisfcn = clus[i]
+                if pa == cpa + ca and cisfcn == isfcn:
+                    clus[i][1] += a
+                    break
+            else:
+                clus.append([pa, a, isfcn])
+
+        for cpa, ca, cisfcn in clus:
+            ccards = []
+            for a in ca:
+                ccard = a.get_card()
+                if ccard is None:
+                    ccard = card0
+                ccards.append(ccard)
+
+            p = ConcDist(shape = (tuple(self.get_card(t) for t in cpa), tuple(ccards)),
+                         isvar = True, randomize = True, isfcn = cisfcn)
             
-            
-            self[a | pa] = p
+            self[ca | cpa] = p
             varlist.append(p)
+
+
+        # for a in tbnet.index.comprv + reg.allcomprv():
+        #     if self.bnet.index.get_index(a) >= 0:
+        #         continue
+            
+        #     ccard = a.get_card()
+        #     if ccard is None:
+        #         ccard = card0
+            
+        #     pa = None
+        #     if tbnet.index.get_index(a) >= 0:
+        #         pa = tbnet.get_parents(a)
+        #     else:
+        #         pa = self.bnet.index.comprv
+                
+        #     # print(pa)
+            
+        #     isfcn = reg.copy_noaux().implies(Expr.Hc(a, pa) <= 0)
+        #     if isfcn:
+        #         fcnreg.iand_norename(Expr.Hc(a, pa) <= 0)
+        #     # print(reg)
+        #     # print(a)
+        #     # print(pa)
+        #     # print(isfcn)
+        #     p = ConcDist(shape = (tuple(self.get_card(t) for t in pa), (ccard,)),
+        #                  isvar = True, randomize = True, isfcn = isfcn)
+            
+            
+        #     self[a | pa] = p
+        #     varlist.append(p)
             
         for a in reg.allcomprealvar_exprlist():
             if self.get_real(a) is None:
@@ -7780,7 +8934,7 @@ class ConcModel(IBaseObj):
             if termType == TermType.IC:
                 k = len(a.x)
                 for t in range(1 << k):
-                    csgn = -1;
+                    csgn = -1
                     mask = self.bnet.index.get_mask(a.z)
                     for i in range(k):
                         if (t & (1 << i)) != 0:
@@ -7806,7 +8960,78 @@ class ConcModel(IBaseObj):
         
         return ConcReal(r)
         
-    
+        
+    def check_region(self, x, reqgt0 = None, reqgt0_reg = None):
+        
+        if x.aux_present() and reqgt0 is None:
+            x = x.simplified_quick()
+        
+        if not x.aux_present() and reqgt0 is None:
+            return x.evalcheck(self)
+        
+        if isinstance(x, RegionOp) or x.imp_present():
+            if not x.auxi.isempty():
+                raise ValueError("Universally quantified random variables cannot be optimized.")
+                return False
+
+            clist = (~x).to_cause_consequence()
+            for imp, cons, auxi in clist:
+                # if auxi:
+                #     raise ValueError("Universally quantified random variables cannot be optimized.")
+                #     return False
+                # if isinstance(cons, RegionOp):
+                #     raise ValueError("Consequences with union cannot be optimized.")
+                #     return False
+                creqgt0 = None
+                if not cons.isempty():
+                    creqgt0 = cons.expr_sum_violate()
+                
+                # caux = x.aux.inter(imp.allcomprv() + cons.allcomprv())
+                # print(auxi)
+                # print(imp.exists(auxi))
+                # print(cons)
+                # print()
+
+                t = self.check_region(imp.exists(auxi), reqgt0 = creqgt0, reqgt0_reg = cons)
+                if t:
+                    return True
+            
+            return False
+
+        # print(x.aux)
+        # print(x.tostring())
+
+        cs = self.copy_shallow()
+        varlist, cons = cs.add_reg(x, other_neighbors = reqgt0_reg)
+        
+        optval_cutoff = -numpy.inf
+        if reqgt0 is None:
+            reqgt0 = Expr.zero()
+        else:
+            optval_cutoff = PsiOpts.settings["eps_violate_cutoff"]
+
+        # print(self)
+        retval = cs.optimize(reqgt0, varlist, cons, sgn = 1, optval_cutoff = optval_cutoff)
+
+        self.opt_reg = cs.opt_reg
+
+        # print(self)
+        # print(retval)
+        # print(cs[rv("U")])
+        # print(cs[H(rv("U"))])
+        # print(x.evalcheck(cs))
+        # print()
+
+        # if not reqgt0.iszero():
+        #     if not retval >= PsiOpts.settings["eps_check"]:
+        #         return False
+
+        if reqgt0_reg is not None and reqgt0_reg.evalcheck(cs):
+            return False
+        
+        return x.evalcheck(cs)
+        
+
     def __call__(self, x):
         if isinstance(x, Expr):
             return self.get_val(x)
@@ -7822,24 +9047,13 @@ class ConcModel(IBaseObj):
                 return numpy.reshape(r, x.shape)
             
         elif isinstance(x, Region):
-            if x.aux_present():
-                x = x.simplified_quick()
-            
-            if x.aux_present():
-                cs = self.copy_shallow()
-                varlist, cons = cs.add_reg(x)
-                
-                retval = cs.optimize(Expr.zero(), varlist, cons, sgn = 1)
-                
-                self.opt_reg = cs.opt_reg
-                return x.evalcheck(cs)
-            
-            else:
-                return x.evalcheck(self)
+            return self.check_region(x)
         
         return None
     
     def __getitem__(self, x):
+        if isinstance(x, tuple):
+            x = Term.from_symbols(x)
         if isinstance(x, tuple) or isinstance(x, Comp) or isinstance(x, Term):
             return self.get_prob(x)
         if isinstance(x, CompArray):
@@ -7855,6 +9069,8 @@ class ConcModel(IBaseObj):
         return self(x)
     
     def __setitem__(self, key, value):
+        if isinstance(key, tuple):
+            key = Term.from_symbols(key)
         if isinstance(key, Expr):
             self.set_real(key.allcomp(), value)
         else:
@@ -8032,7 +9248,7 @@ class ConcModel(IBaseObj):
                  momentum = None, num_iter = None, num_iter2 = None, num_points = None, 
                  num_hop = None, hop_temp = None, hop_prob = None,
                  alm_rho = None, alm_rho_pow = None, alm_step = None, alm_penalty = None,
-                 eps_converge = None, eps_tol = None):
+                 eps_converge = None, eps_tol = None, optval_cutoff = None):
         """
         Minimize/maximize expr with variables in the list vs, constrained in the region reg.
         Uses a combination of SLSQP, gradient descent, Adam (or any optimizer with the pytorch interface)
@@ -8088,6 +9304,8 @@ class ConcModel(IBaseObj):
             Convergence is declared if the change is smaller than eps_converge. The default is None.
         eps_tol : float, optional
             Tolerance for equality and inequality constraints. The default is None.
+        optval_cutoff : float, optional
+            Stop the algorithm when the objective goes beyond this value. The default is None.
 
         Returns
         -------
@@ -8349,17 +9567,22 @@ class ConcModel(IBaseObj):
                     else:
                         print(str(a[0]) + "==0")
                 
-                
+
         for cpass, cur_num_iter in enumerate(num_iter_list):
             cur_num_points = 1
             if cpass == 0:
                 cur_num_points = num_points
                 
+            tocutoff = False
+
             for ip in range(cur_num_points):
                 
                 if PsiOpts.is_timer_ended():
                     break
                 
+                if tocutoff:
+                    break
+
                 if ip > 0:
                     for d in distlist:
                         d.randomize()
@@ -8407,7 +9630,7 @@ class ConcModel(IBaseObj):
                     # lastval = (int_big, numpy.inf)
                     lastval = numpy.inf
                     
-                    
+                    cur_num_violate = 0
                     
                     if scipy_optimizer is not None:
                         
@@ -8477,7 +9700,7 @@ class ConcModel(IBaseObj):
                         if numpy.isnan(score):
                             score = numpy.inf
                         t = (0, score)
-                            
+                        cur_num_violate = num_violate
                             
                         if verbose_step:
                             print((("pass=" + str(cpass + 1) + " ") if cpass > 0 else "")
@@ -8544,6 +9767,9 @@ class ConcModel(IBaseObj):
                                     
                             
                             t = (num_violate, t_cval + penalty)
+                            cur_num_violate = num_violate
+                            # print(t)
+
                             cr = min(cr, t)
                             if not numpy.isnan(cr[1]) and cr < r:
                                 r = cr
@@ -8582,12 +9808,16 @@ class ConcModel(IBaseObj):
                                 
                             cs.clear_cache()
                         
+
+                    # print(t)
+
                     cr = min(cr, t)
                     if not numpy.isnan(cr[1]) and cr < r:
                         r = cr
                         ConcModel.tensor_copy_list(r_v, varlist)
                         tuple_copy1(r_v_d, cons)
                     
+                    toreject = False
                     if ih > 0:
                         accept_prob = 1.0
                         if numpy.isnan(t[1]):
@@ -8598,6 +9828,7 @@ class ConcModel(IBaseObj):
                             print("HOP #" + str(ih) + " from=" + str_tuple(v_start) 
                                   + " to=" + str_tuple(t) + " prob=" + iutil.tostr_verbose(accept_prob))
                         if numpy.random.uniform() >= accept_prob:
+                            toreject = True
                             if verbose_step:
                                 print("HOP REJECT")
                             ConcModel.tensor_copy_list(varlist, r_start)
@@ -8606,9 +9837,20 @@ class ConcModel(IBaseObj):
                                 d.calc_torch()
                             t = v_start
                             cs.clear_cache()
-                        else:
+
+                    if not toreject:
+                        if verbose_step:
+                            print("HOP ACCEPT")
+                        
+                        # print(t)
+                        if optval_cutoff is not None and cur_num_violate == 0 and t[1] <= optval_cutoff * -sgn:
                             if verbose_step:
-                                print("HOP ACCEPT")
+                                print("CUTOFF")
+                            tocutoff = True
+                    
+                    if tocutoff:
+                        break
+
                         
             if len(r_v):
                 ConcModel.tensor_copy_list(varlist, r_v)
@@ -8658,6 +9900,73 @@ class ConcModel(IBaseObj):
         """
         return self.get_bayesnet().graph(**kwargs)
     
+    
+
+    def set_force_float(self, force_float):
+        for (cin, cout), t in self.psmap.items():
+            t.force_float = force_float
+        for x in self.realvars:
+            x.force_float = force_float
+
+
+    def fraction_snap(self, denom = None, eps = None):
+        for (cin, cout), t in self.psmap.items():
+            t.fraction_snap(denom = denom, eps = eps)
+        for x in self.realvars:
+            x.fraction_snap(denom = denom, eps = eps)
+
+
+    def tostring(self, style = 0):
+        """Convert to string. 
+        Parameters:
+            style   : Style of string conversion
+                      STR_STYLE_STANDARD : I(X,Y;Z|W)
+                      STR_STYLE_PSITIP : I(X+Y&Z|W)
+        """
+
+        style = iutil.convert_str_style(style)
+        r = ""
+        
+        nlstr = "\n"
+        if style & PsiOpts.STR_STYLE_LATEX:
+            nlstr = "\\\\\n"
+
+        if style & PsiOpts.STR_STYLE_LATEX:
+            r += "\\begin{array}{l}\n"
+            
+        for (cin, cout), t in self.psmap.items():
+            # self.calc_dist(t)
+            # if t is None:
+            #     continue
+            cinrv = self.tuple_to_comp(cin)
+            coutrv = self.tuple_to_comp(cout)
+            r += "P("
+            r += coutrv.tostring(style)
+            if cinrv:
+                r += "|"
+                r += cinrv.tostring(style)
+            r += ")"
+            r += " = "
+            r += t.tostring(style)
+            r += nlstr
+
+        for i, x in enumerate(self.index_real.compreal):
+            r += x.tostring(style)
+            r += " = "
+            r += self.realvars[i].tostring(style)
+            r += nlstr
+
+
+        if style & PsiOpts.STR_STYLE_LATEX:
+            r += "\\end{array}"
+            
+        return r
+
+    def __str__(self):
+        return self.tostring(PsiOpts.settings["str_style"])
+    
+    def _latex_(self):
+        return self.tostring(iutil.convert_str_style("latex"))
     
 class SparseMat:
     """List of lists sparse matrix. Do NOT use directly"""
@@ -8904,6 +10213,11 @@ class LinearProg:
         self.bnet = bnet
         self.pinfeas = False
         self.constmap = {}
+
+        
+        self.quantum = PsiOpts.settings.get("quantum", False)
+        if self.quantum:
+            self.lptype = LinearProgType.H
 
         self.noskip = (PsiOpts.settings["proof_noskip"] and PsiOpts.settings["proof_enabled"])
         if dual_form is None:
@@ -9214,15 +10528,22 @@ class LinearProg:
         
         
     def add_ent_ineq(self):
+        quantum = self.quantum
+
         n = self.index.num_rv()
         npow = (1 << n)
 
-        if self.dual_form:
+        if quantum:
             for x in range(n):
                 zmask = 0
                 while zmask < npow:
-                    self.Au.addrow(info = -Expr.Hc(self.index.comprv[x], self.index.comprv.from_mask(zmask)))
+                    wmask = npow - 1 - (1 << x) - zmask
+                    if zmask > wmask:
+                        break
+                    self.Au.addrow(info = -Expr.Hc(self.index.comprv[x], self.index.comprv.from_mask(zmask))
+                        - Expr.Hc(self.index.comprv[x], self.index.comprv.from_mask(wmask)))
                     self.addIc_mask(self.Au, x, x, zmask, -1.0)
+                    self.addIc_mask(self.Au, x, x, wmask, -1.0)
                     self.bu.append(0.0)
 
                     zmask += 1
@@ -9230,10 +10551,23 @@ class LinearProg:
                         zmask += (1 << x)
 
         else:
-            for x in range(n):
-                self.Au.addrow(info = -Expr.Hc(self.index.comprv[x], self.index.comprv.from_mask(npow - 1 - (1 << x))))
-                self.addIc_mask(self.Au, x, x, npow - 1 - (1 << x), -1.0)
-                self.bu.append(0.0)
+            if self.dual_form:
+                for x in range(n):
+                    zmask = 0
+                    while zmask < npow:
+                        self.Au.addrow(info = -Expr.Hc(self.index.comprv[x], self.index.comprv.from_mask(zmask)))
+                        self.addIc_mask(self.Au, x, x, zmask, -1.0)
+                        self.bu.append(0.0)
+
+                        zmask += 1
+                        if (zmask & (1 << x)) != 0:
+                            zmask += (1 << x)
+
+            else:
+                for x in range(n):
+                    self.Au.addrow(info = -Expr.Hc(self.index.comprv[x], self.index.comprv.from_mask(npow - 1 - (1 << x))))
+                    self.addIc_mask(self.Au, x, x, npow - 1 - (1 << x), -1.0)
+                    self.bu.append(0.0)
             
         for x in range(n):
             for y in range(x + 1, n):
@@ -11251,6 +12585,12 @@ class LinearProg:
         
         ineqs_tight = []
         ineqs_tried = []
+        
+        matP = None
+        matP_avg = None
+        matQ = None
+        matQ_null = None
+        
         did = True
         while did:
             
@@ -11258,20 +12598,32 @@ class LinearProg:
                 break
             
             if verbose:
-                print("NUMPOINT = " + str(mat.row_size) + "  NUMDIM = " + str(mat.col_size))
+                print("NUMPOINT = " + str(mat.row_size) + "  NUMDIM = " + str(mat.col_size), flush = True)
 
             did = False
 
             tgt_num_point = mat.col_size + num_simplex
-            isfull = max_facet is None or (max_facet > 0 and mat.col_size * 0.5 * numpy.log(mat.row_size) <= numpy.log(max_facet)) or tgt_num_point >= mat.row_size
+            isfull = max_facet is None or (max_facet > 0 and mat.col_size * 0.5 * numpy.log(mat.row_size) <= numpy.log(max_facet)) # or tgt_num_point >= mat.row_size
             poly = None
+
+            ineqs = []
+            lset = set()
+            ineqs_row_size = 0
 
             if isfull:
                 poly = cdd.Polyhedron(mat)
+                # print("MAT:")
+                # print(mat)
+                ineqs = poly.get_inequalities()
+                # print("INEQ:")
+                # print(ineqs)
+                lset = ineqs.lin_set
+                ineqs_row_size = ineqs.row_size
             else:
                 if not rnd_started:
-                    warnings.warn("Convex hull method: Max number of facets discover_max_facet = " + str(max_facet) + 
-                        " reached (current = " + str(round(numpy.exp(mat.col_size * 0.5 * numpy.log(mat.row_size)))) + "). Switching to randomized subset. Program will not terminate unless the block is enclosed by \"with PsiOpts(timelimit = ???):\" or \"with PsiOpts(stop_file = ???):\".", RuntimeWarning)
+                    if not PsiOpts.has_timer():
+                        warnings.warn("Convex hull method: Max number of facets discover_max_facet = " + str(max_facet) + 
+                            " reached (current = " + str(round(numpy.exp(mat.col_size * 0.5 * numpy.log(mat.row_size)))) + "). Switching to randomized subset. Program will not terminate unless the block is enclosed by \"with PsiOpts(timelimit = ???):\" or \"with PsiOpts(stop_file = ???):\".", RuntimeWarning)
                     rnd_started = True
 
                 rnd = PsiOpts.settings["random"]
@@ -11279,32 +12631,62 @@ class LinearProg:
                     rnd = random.Random()
                     PsiOpts.settings["random"] = rnd
                 
+                if matP is None:
+                    # tgt_num_point = rnd.randrange(1, mat.col_size + 1)
+                    matP = numpy.array([[float(mat[i][j]) for j in range(1, mat.col_size)] for i in range(mat.row_size)], ndmin = 2)
+                    # print(matP, flush = True)
+                    matP_avg = numpy.mean(matP, 0)
+                    # print(matP_avg, flush = True)
+                    matQ = numpy.array([matP[i,:] - matP_avg for i in range(mat.row_size)])
+                    matQ_null = scipy.linalg.null_space(matQ)
+                    # print(matQ_null, flush = True)
+                    # currank = numpy.linalg.matrix_rank(matQ)
+
+                currank = matQ.shape[1] - matQ_null.shape[1]
+                min_num_point = max(currank, 1)
+                max_num_point = min(matP.shape)
+                # tgt_num_point = rnd.randrange(min_num_point, max_num_point + 1)
+                tgt_num_point = min_num_point
+
                 if verbose:
-                    print("RANDOM SUBSET NUMPOINT = " + str(tgt_num_point))
+                    print("RANDOM SUBSET NUMPOINT = " + str(tgt_num_point), flush = True)
                 cid = list(range(mat.row_size))
                 rnd.shuffle(cid)
 
-                cmat = cdd.Matrix([mat[cid[i]] for i in range(tgt_num_point)], number_type=("fraction" if isfrac else "float"))
-                poly = cdd.Polyhedron(cmat)
+                if iscone:
+                    matA = numpy.array([[0.0] * matQ.shape[1]] + [matQ[cid[i],:] for i in range(tgt_num_point - 1)], ndmin = 2)
+                else:
+                    matA = numpy.array([matQ[cid[i],:] for i in range(tgt_num_point)], ndmin = 2)
+                t = numpy.linalg.lstsq(matA, numpy.ones(tgt_num_point), rcond = None)[0]
+                # print(t.shape, flush = True)
+
+                ineqs.append([matP_avg.dot(t) + 1.0] + list(-t))
+                for i in range(matQ_null.shape[1]):
+                    t = matQ_null[:, i]
+                    ineqs.append([matP_avg.dot(t)] + list(-t))
+                    lset.add(len(ineqs) - 1)
+
+                ineqs_row_size = len(ineqs)
+
+                if False:
+                    cmat = cdd.Matrix([mat[cid[i]] for i in range(tgt_num_point)], number_type=("fraction" if isfrac else "float"))
+                    poly = cdd.Polyhedron(cmat)
+                    ineqs = poly.get_inequalities()
+                    lset = ineqs.lin_set
+                    ineqs_row_size = ineqs.row_size
 
                 did = True
-            # print("MAT:")
-            # print(mat)
-            ineqs = poly.get_inequalities()
-            # print("INEQ:")
-            # print(ineqs)
-            lset = ineqs.lin_set
             
             if verbose:
-                print("HULL FINISHED")
+                print("HULL FINISHED", flush = True)
 
             if verbose_terms or verbose_terms_inner:
-                print("INNER:")
-                for i in range(ineqs.row_size):
+                print("INNER:", flush = True)
+                for i in range(ineqs_row_size):
                     y = ineqs[i]
-                    print("  " + str(toexpr(y[1:n+1])) + (" == " if i in lset else " >= ") + iutil.float_tostr(-y[0]))
+                    print("  " + str(toexpr(y[1:n+1])) + (" == " if i in lset else " >= ") + iutil.float_tostr(-y[0]), flush = True)
                     
-            for i in range(ineqs.row_size):
+            for i in range(ineqs_row_size):
                     
                 if PsiOpts.is_timer_ended():
                     break
@@ -11315,7 +12697,7 @@ class LinearProg:
                         break
                     
 
-                    #print("IROWSIZE " + str(ineqs.row_size))
+                    #print("IROWSIZE " + str(ineqs_row_size))
                     x = [a * sgn for a in ineqs[i]]
                     xnorm = sum(abs(a) for a in x)
                     if xnorm <= ceps:
@@ -11331,7 +12713,7 @@ class LinearProg:
                                 break
                         if isbad:
                             if verbose_detail:
-                                print("NOT EXTREMAL " + str(toexpr(x[1:n+1])) + " + " + str(x[0]) + " >= 0")
+                                print("NOT EXTREMAL " + str(toexpr(x[1:n+1])) + " + " + str(x[0]) + " >= 0", flush = True)
                             continue
 
 
@@ -11341,7 +12723,7 @@ class LinearProg:
                             break
                     else:
                         if verbose_detail:
-                            print("MIN " + str(toexpr(x[1:n+1])))
+                            print("MIN " + str(toexpr(x[1:n+1])), flush = True)
                         
                         isshortcut = False
                         opt = None
@@ -11361,7 +12743,7 @@ class LinearProg:
                         ineqs_tried.append(list(x))
 
                         if verbose_detail:
-                            print("MIN FINISHED")
+                            print("MIN FINISHED", flush = True)
                         
                         if opt is None or opt >= -x[0] - ceps:
 
@@ -11372,15 +12754,15 @@ class LinearProg:
                                 ineqs_tight.append(list(x))
                             if verbose or verbose_terms_outer:
                                 if verbose and opt is None:
-                                    print("NONE")
+                                    print("NONE", flush = True)
                                     # print(x)
                                 if verbose_terms_outer or verbose_outer or abs(x[0]) <= 100:
                                     if ctoadd:
                                         if verbose:
-                                            print("ADD " + str(toexpr(x[1:n+1])) + " >= " + iutil.float_tostr(-x[0]) + (" SHORTCUT" if isshortcut else ""))
+                                            print("ADD " + str(toexpr(x[1:n+1])) + " >= " + iutil.float_tostr(-x[0]) + (" SHORTCUT" if isshortcut else ""), flush = True)
                                         if verbose_terms or verbose_terms_outer:
-                                            print("OUTER:")
-                                            print(alland([toexpr(y[1:n+1]) + y[0] >= 0 for y in ineqs_tight]))
+                                            print("OUTER:", flush = True)
+                                            print(alland([toexpr(y[1:n+1]) + y[0] >= 0 for y in ineqs_tight]), flush = True)
                                             print()
                                             # for y in ineqs_tight:
                                             #     print("  " + str(toexpr(y[1:n+1])) + " >= " + iutil.float_tostr(-y[0]))
@@ -11406,11 +12788,12 @@ class LinearProg:
                                 break
                         else:
                             if verbose_detail:
-                                print("PT " + str(v))
+                                print("PT " + str(v), flush = True)
                                 
                             if pts_outer is not None:
                                 pts_outer.append(vo)
                             mat.extend([v])
+                            matP = None
                             did = True
         
         return ineqs_tight
@@ -11556,6 +12939,326 @@ class LinearProg:
         
         
         
+
+
+    
+class Level(IBaseObj):
+    """The level of a region in the linear entropy hierarchy.
+    """
+    
+    def __init__(self, quant = 0, n = 0):
+        self.quant = quant
+        self.n = n
+        if self.n == 0:
+            self.quant = 0
+        
+    @staticmethod
+    def sigma(n):
+        """
+        Sigma_n.
+
+        Returns
+        -------
+        Level
+
+        """
+        return Level(1 if n else 0, n)
+        
+    @staticmethod
+    def pi(n):
+        """
+        Pi_n.
+
+        Returns
+        -------
+        Level
+
+        """
+        return Level(-1 if n else 0, n)
+
+    @staticmethod
+    def delta(n):
+        """
+        Delta_n.
+
+        Returns
+        -------
+        Level
+
+        """
+        return Level(0, n)
+        
+        
+    def __eq__(self, other):
+        return self.quant == other.quant and self.n == other.n
+        
+    def __ne__(self, other):
+        return not self == other
+
+    def __and__(self, other):
+        if self.n < other.n:
+            return self
+        if other.n < self.n:
+            return other
+        if self == other:
+            return self
+        return Level(0, self.n)
+        
+    def __or__(self, other):
+        if self.n > other.n:
+            return self
+        if other.n > self.n:
+            return other
+        if self == other:
+            return self
+        if self.quant == 0:
+            return other
+        if other.quant == 0:
+            return self
+        return Level(0, self.n + 1)
+    
+    def __invert__(self):
+        return Level(-self.quant, self.n)
+
+    def __rshift__(self, other):
+        return (~self) | other
+
+    def qimplies(self, other, q = 0):
+        if q > 0:
+            return (self | other).exists()
+        elif q < 0:
+            return (self >> other).forall()
+        else:
+            return (self | other).exists() & (self >> other).forall()
+
+    def __bool__(self):
+        return self.n != 0
+    
+    def __int__(self):
+        return self.n
+    
+    def int_lv(self):
+        return self.n * 2 + int(self.quant != 0)
+        
+    def __ge__(self, other):
+        return self.int_lv() > other.int_lv() or self == other
+         
+    def __le__(self, other):
+        return other >= self
+    
+    def __gt__(self, other):
+        return self.int_lv() > other.int_lv()
+    
+    def __lt__(self, other):
+        return other > self
+    
+    def exists(self, forall = False):
+        tquant = -1 if forall else 1
+        if self.n and (self.quant == tquant or self.quant == 0):
+            return Level(tquant, self.n)
+        else:
+            return Level(tquant, self.n + 1)
+    
+    def forall(self):
+        return self.exists(True)
+
+    def __str__(self):
+        r = ""
+        if self.quant == 0:
+            r += "Delta"
+        elif self.quant > 0:
+            r += "Sigma"
+        else:
+            r += "Pi"
+        r += "_" + str(self.n)
+        return r
+
+    def _latex_(self):
+        r = ""
+        if self.quant == 0:
+            r += "\Delta"
+        elif self.quant > 0:
+            r += "\Sigma"
+        else:
+            r += "\Pi"
+        r += "_"
+        t = str(self.n)
+        if len(t) > 1:
+            r += "{" + t + "}"
+        else:
+            r += t
+        return r
+
+    def __repr__(self):
+        r = "Level."
+        if self.quant == 0:
+            r += "delta"
+        elif self.quant > 0:
+            r += "sigma"
+        else:
+            r += "pi"
+        r += "(" + str(self.n) + ")"
+        return r
+    
+    
+class RegionLevel(IBaseObj):
+    """The level of a region in the linear entropy hierarchy, with the same syntax as Region.
+    """
+    
+    def __init__(self, quant = 0, n = 0):
+        if isinstance(quant, Level):
+            self.level = quant
+        elif isinstance(quant, Region):
+            self.level = quant.level()
+        elif isinstance(quant, RegionLevel):
+            self.level = quant.level
+        else:
+            self.level = Level(quant, n)
+        
+    @staticmethod
+    def sigma(n):
+        """
+        Sigma_n.
+
+        Returns
+        -------
+        Level
+
+        """
+        return RegionLevel(1 if n else 0, n)
+        
+    @staticmethod
+    def pi(n):
+        """
+        Pi_n.
+
+        Returns
+        -------
+        Level
+
+        """
+        return RegionLevel(-1 if n else 0, n)
+
+    @staticmethod
+    def delta(n):
+        """
+        Delta_n.
+
+        Returns
+        -------
+        Level
+
+        """
+        return RegionLevel(0, n)
+        
+
+        
+    def __or__(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return RegionLevel(self.level | other.level)
+    
+    def __and__(self, other):
+        return self | other
+
+    def inter(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return RegionLevel(self.level & other.level)
+
+    def __invert__(self):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        return RegionLevel(~self.level)
+
+    def __rshift__(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return (~self) | other
+        
+    def qimplies(self, other, q = 0):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return RegionLevel(self.level.qimplies(other.level, q = q))
+
+    def __eq__(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return (self >> other) & (other >> self)
+        
+    def __ne__(self, other):
+        return ~(self == other)
+
+    def __bool__(self):
+        return bool(self.level)
+    
+    def __int__(self):
+        return int(self.level)
+    
+    def int_lv(self):
+        return self.level.int_lv()
+        
+    def __ge__(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return self.level >= other.level
+         
+    def __le__(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return self.level <= other.level
+    
+    def __gt__(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return self.level > other.level
+    
+    def __lt__(self, other):
+        if not isinstance(self, RegionLevel):
+            self = self.region_level()
+        if not isinstance(other, RegionLevel):
+            other = other.region_level()
+        return self.level < other.level
+    
+    def exists(self, *args, forall = False):
+        return RegionLevel(self.level.exists(forall = forall))
+    
+    def forall(self, *args):
+        return self.exists(*args, forall = True)
+
+    def __str__(self):
+        return str(self.level)
+
+    def _latex_(self):
+        return self.level._latex_()
+
+    def __repr__(self):
+        r = "RegionLevel."
+        if self.level.quant == 0:
+            r += "delta"
+        elif self.level.quant > 0:
+            r += "sigma"
+        else:
+            r += "pi"
+        r += "(" + str(self.level.n) + ")"
+        return r
+    
     
 class RegionType:
     NIL = 0
@@ -11635,6 +13338,16 @@ class Region(IBaseObj):
         self.exprs_eqi = []
         self.auxi = Comp.empty()
         
+    def setempty(self):
+        self.exprs_ge = [-Expr.one()]
+        self.exprs_eq = []
+        self.aux = Comp.empty()
+        self.inp = Comp.empty()
+        self.oup = Comp.empty()
+        self.exprs_gei = []
+        self.exprs_eqi = []
+        self.auxi = Comp.empty()
+
     def isempty(self):
         if not (len(self.exprs_gei) == 0 and len(self.exprs_eqi) == 0):
             return False
@@ -11659,6 +13372,25 @@ class Region(IBaseObj):
         else:
             return self.isempty()
     
+    def iseq(self):
+        """Is this pure equality.
+        """
+        if not self.aux.isempty() or not self.auxi.isempty():
+            return False
+        return len(self.exprs_ge) == 0 and len(self.exprs_eq) > 0 and len(self.exprs_gei) == 0 and len(self.exprs_eqi) == 0
+
+    def isineq(self):
+        """Is this pure inequality.
+        """
+        if not self.aux.isempty() or not self.auxi.isempty():
+            return False
+        return len(self.exprs_ge) > 0 and len(self.exprs_eq) == 0 and len(self.exprs_gei) == 0 and len(self.exprs_eqi) == 0
+
+    def expr(self):
+        """Returns the sum of the expressions in this region.
+        """
+        return sum(self.exprs_ge + self.exprs_eq + self.exprs_gei + self.exprs_eqi, Expr.zero())
+
     def copy(self):
         return Region([x.copy() for x in self.exprs_ge],
                       [x.copy() for x in self.exprs_eq], 
@@ -11813,6 +13545,47 @@ class Region(IBaseObj):
             return True
         return False
     
+    def __contains__(self, other):
+        x = other
+
+        if isinstance(x, str):
+            if x == "=" or x == "==":
+                return bool(self.exprs_eq) or bool(self.exprs_eqi)
+            if x == ">=" or x == "<=":
+                return bool(self.exprs_ge) or bool(self.exprs_gei)
+            if x == ">" or x == "<":
+                return Expr.eps() in self
+            if x == "exists":
+                return not self.aux.isempty()
+            if x == "forall":
+                return not self.auxi.isempty()
+            x = rv(x)
+
+        if isinstance(x, Region):
+            return self.contains_region(other)
+
+        for z in self.exprs_ge:
+            if x in z:
+                return True
+        for z in self.exprs_eq:
+            if x in z:
+                return True
+        if x in self.aux:
+            return True
+        if x in self.inp:
+            return True
+        if x in self.oup:
+            return True
+        for z in self.exprs_gei:
+            if x in z:
+                return True
+        for z in self.exprs_eqi:
+            if x in z:
+                return True
+        if x in self.auxi:
+            return True
+        return False
+
     def affine_present(self):
         """Return whether there are any affine constraint."""
         return self.ispresent((Expr.one() + Expr.eps() + Expr.inf()).allcomp())
@@ -11828,6 +13601,37 @@ class Region(IBaseObj):
             return True
         return False
         
+    def contains_region(self, other):
+        if isinstance(other, RegionOp):
+            return False
+        
+        for x, isge in [(y, True) for y in other.exprs_ge] + [(y, False) for y in other.exprs_eq]:
+            found = False
+
+            if isge:
+                for z in self.exprs_ge + self.exprs_gei:
+                    t = z.get_ratio(x)
+                    if t is not None and t > 0:
+                        found = True
+                        break
+            
+            if found:
+                continue
+
+            for z in self.exprs_eq + self.exprs_eqi:
+                t = z.get_ratio(x)
+                if t is not None and t != 0:
+                    found = True
+                    break
+
+            if found:
+                continue
+
+            return False
+        
+        return True
+
+
     def rename_var(self, name0, name1):
         for x in self.exprs_ge:
             x.rename_var(name0, name1)
@@ -11879,11 +13683,26 @@ class Region(IBaseObj):
             self.auxi.substitute(v0, v1)
         return self
         
-    def substituted(self, *args, **kwargs):
-        """Substitute variable v0 by v1 (v1 can be compound), return result"""
-        r = self.copy()
-        r.substitute(*args, **kwargs)
-        return r
+    @fcn_substitute
+    def substitute_whole(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound), in place"""
+        for x in self.exprs_ge:
+            x.substitute_whole(v0, v1)
+        for x in self.exprs_eq:
+            x.substitute_whole(v0, v1)
+        for x in self.exprs_gei:
+            x.substitute_whole(v0, v1)
+        for x in self.exprs_eqi:
+            x.substitute_whole(v0, v1)
+            
+        if not isinstance(v0, Expr):
+            self.aux.substitute_whole(v0, v1)
+            self.inp.substitute_whole(v0, v1)
+            self.oup.substitute_whole(v0, v1)
+            self.auxi.substitute_whole(v0, v1)
+        return self
+        
+    
 
     @fcn_substitute
     def substitute_aux(self, v0, v1):
@@ -11940,6 +13759,40 @@ class Region(IBaseObj):
         if not t.isempty():
             self.remove_present(t)
         
+    def remove_relax(self, v, sn = 1):
+        if sn < 0:
+            self.imp_flip()
+            if not self.remove_relax(v):
+                self.setempty()
+                return False
+            self.imp_flip()
+            return True
+            
+        if any(x.ispresent(v) for x in self.exprs_eqi):
+            self.setuniverse()
+            return False
+
+        for x in self.exprs_gei:
+            if not x.try_remove(v, -1):
+                self.setuniverse()
+                return False
+
+        tlist = self.exprs_ge
+        self.exprs_ge = []
+        for x in tlist:
+            if x.try_remove(v, 1):
+                self.exprs_ge.append(x)
+
+        self.exprs_eq = [x for x in self.exprs_eq if not x.ispresent(v)]
+        
+        if isinstance(v, Comp):
+            self.aux -= v
+            self.inp -= v
+            self.oup -= v
+            self.auxi -= v
+
+        return True
+
     def condition(self, b):
         """Condition on random variable b, in place"""
         for x in self.exprs_ge:
@@ -12069,17 +13922,23 @@ class Region(IBaseObj):
                 self.rename_avoid(reg, a.name)
     
     def aux_avoid_from(self, reg, samesuffix = True):
+        if not PsiOpts.settings["avoid_enabled"]:
+            return
         if samesuffix:
             if isinstance(reg, Region):
                 reg = reg.allcomprv()
             reg = reg + self.allcomprv_noaux()
             auxcomp = self.getauxall()
-            if not reg.ispresent(auxcomp):
+
+            regindex = IVarIndex()
+            reg.record_to(regindex)
+
+            if not regindex.ispresent(auxcomp):
                 return
             
             rename_char = PsiOpts.settings["rename_char"]
             for rep in ["set", "add", "suffix"]:
-                for k in range(1, 20 if rep else 1000):
+                for k in range(1, 512 if rep else 1000):
                     rdict = {}
                     rset = set()
                     bad = False
@@ -12091,7 +13950,7 @@ class Region(IBaseObj):
                             break
                         rdict[a.get_name()] = t
                         rset.add(t)
-                    if not bad and not reg.ispresent(sum(Comp.rv(a) for a in rset)):
+                    if not bad and not any(regindex.get_index_name(a) >= 0 for a in rset):
                         self.rename_map(rdict)
                         return
                 
@@ -12118,6 +13977,8 @@ class Region(IBaseObj):
                 return Region.empty()
             return self
         
+        other = iutil.ensure_region(other)
+
         if (isinstance(other, RegionOp) or self.imp_present() or other.imp_present() 
             or (not PsiOpts.settings["prefer_expand"] and (self.aux_present() or other.aux_present()))):
             return RegionOp.inter([self]) & other
@@ -12162,21 +14023,25 @@ class Region(IBaseObj):
         return r
         
     def __or__(self, other):
+        other = iutil.ensure_region(other)
         if self.isempty():
             return other.copy()
         return RegionOp.union([self]) | other
         
     def __ror__(self, other):
+        other = iutil.ensure_region(other)
         if self.isempty():
             return other.copy()
         return RegionOp.union([self]) | other
         
     def __ior__(self, other):
+        other = iutil.ensure_region(other)
         if self.isempty():
             return other.copy()
         return RegionOp.union([self]) | other
     
     def implicate(self, other, skip_simplify = False):
+        other = iutil.ensure_region(other)
         co = other.copy()
         if not skip_simplify and PsiOpts.settings["imp_simplify"]:
             if co.imp_present():
@@ -12197,6 +14062,7 @@ class Region(IBaseObj):
         return self
     
     def implicated(self, other, skip_simplify = False):
+        other = iutil.ensure_region(other)
         if isinstance(other, RegionOp) or self.imp_present() or other.imp_present() or not other.aux.isempty():
             return RegionOp.union([self]).implicated(other, skip_simplify)
         
@@ -12205,26 +14071,37 @@ class Region(IBaseObj):
         return r
     
     def __le__(self, other):
+        other = iutil.ensure_region(other)
         return other.implicated(self)
         
     def __ge__(self, other):
+        other = iutil.ensure_region(other)
         return self.implicated(other)
         
     
     def __rshift__(self, other):
+        other = iutil.ensure_region(other)
         return other.implicated(self)
     
     def __rrshift__(self, other):
+        other = iutil.ensure_region(other)
         return self.implicated(other)
         
     def __lshift__(self, other):
+        other = iutil.ensure_region(other)
         return self.implicated(other)
     
+    def __rlshift__(self, other):
+        other = iutil.ensure_region(other)
+        return other.implicated(self)
+    
     def __eq__(self, other):
+        other = iutil.ensure_region(other)
         #return self.implies(other) and other.implies(self)
         return RegionOp.inter([self.implicated(other), other.implicated(self)])
         
     def __ne__(self, other):
+        other = iutil.ensure_region(other)
         return ~(RegionOp.inter([self.implicated(other), other.implicated(self)]))
         
     
@@ -12261,6 +14138,62 @@ class Region(IBaseObj):
         r.relax(w, gap)
         return r
     
+    def balance(self, v = None, w = None, skip_simplify = False):
+        if w is None:
+            w = self.allcomprv()
+
+        for x in self.exprs_ge + self.exprs_gei:
+            t = x.balanced(v, w, sn = 1)
+            if t is None:
+                t = Expr.zero()
+            x.copy_(t)
+        
+        for x in self.exprs_eq:
+            if x.isbalanced(v):
+                continue
+
+            t = x.balanced(v, w, sn = 1)
+            if t is not None:
+                self.exprs_ge.append(t)
+
+            t = x.balanced(v, w, sn = -1)
+            if t is not None:
+                self.exprs_ge.append(-t)
+
+            x.setzero()
+        
+        for x in self.exprs_eqi:
+            if x.isbalanced(v):
+                continue
+
+            t = x.balanced(v, w, sn = 1)
+            if t is not None:
+                self.exprs_gei.append(t)
+
+            t = x.balanced(v, w, sn = -1)
+            if t is not None:
+                self.exprs_gei.append(-t)
+
+            x.setzero()
+
+        self.exprs_ge = [x for x in self.exprs_ge if not x.iszero()]
+        self.exprs_eq = [x for x in self.exprs_eq if not x.iszero()]
+        self.exprs_gei = [x for x in self.exprs_gei if not x.iszero()]
+        self.exprs_eqi = [x for x in self.exprs_eqi if not x.iszero()]
+
+        if not skip_simplify:
+            self.simplify()
+        
+        return self
+    
+    def balanced(self, v = None, skip_simplify = False):
+        r = self.copy()
+        r.balance(v, skip_simplify = True)
+        if not skip_simplify:
+            return r.simplified()
+        return r
+
+
     def one_flipped(self, strict = False):
         if len(self.exprs_eq) > 0 or len(self.exprs_ge) != 1:
             return None
@@ -12815,11 +14748,14 @@ class Region(IBaseObj):
             tcs = imp.copy()
             tcs.implicate(cs)
             tcs = tcs.exists(auxi)
+
             # print(imp)
             # print(cons)
             # print(auxi)
             # print("TCS")
             # print(tcs)
+            # print(cons.allcomp().get_markers())
+            # print()
             
             hint_aux_avoid = None
             if avoid is not None:
@@ -12829,7 +14765,9 @@ class Region(IBaseObj):
                     
             for rr in tcs.check_getaux_inplace_gen(hint_aux_avoid = hint_aux_avoid):
                 if iutil.signal_type(rr) == "":
-                    #print(rr)
+
+                    # print(rr)
+
                     tcons = cons.copy()
                     Comp.substitute_list(tcons, rr)
                     cs &= tcons
@@ -12844,6 +14782,8 @@ class Region(IBaseObj):
         else:
             return self.copy()
         
+    def get_req_cons(self):
+        return self.toregionop().get_req_cons()
         
     def incorporated(self, *args):
         cs = self.toregionop()
@@ -12868,6 +14808,8 @@ class Region(IBaseObj):
                 cs.flatten_term(x, isimp = False)
                 x_noreg = x.copy_noreg()
                 for j in range(i + 1, len(cargs)):
+                    if isinstance(x, Comp) and isinstance(cargs[j], Region) and x not in cargs[j].allcomprv_noaux():
+                        continue
                     cargs[j].substitute(x, x_noreg)
                 if not cs.ispresent(x_noreg):
                     #cs.eliminate(x_noreg, forall = True)
@@ -12902,13 +14844,67 @@ class Region(IBaseObj):
     def tonormal_safe(self):
         return self.copy()
 
-    
+    def level(self, mode = ""):
+        """The level of a region in the linear entropy hierarchy.
+        """
+        r = Level()
+        if not self.aux.isempty():
+            r = r.exists()
+        if not self.auxi.isempty():
+            r = r.forall()
+        return r
         
+    def region_level(self, mode = ""):
+        return RegionLevel(self.level(mode = mode))
+
     def complexity(self):
         return sum(x.complexity() for x in self.exprs_eq + self.exprs_ge + self.exprs_eqi + self.exprs_gei) + (len(self.aux) + len(self.auxi)) * 100
     
     def sorting_priority(self):
         return self.complexity()
+
+
+    def z3(self, vardict = None):
+        if z3 is None:
+            return None
+
+        if vardict is None:
+            vardict = iutil.z3_vardict(self.rvs, self.aux, self.auxi, self.reals)
+
+        # if not self.auxi.isempty():
+        #     raise ValueError("Universally-quantified random variables are not supported for Z3. Use another solver.")
+        
+        if self.imp_present():
+            r = z3.Or(z3.Not(self.imp_flippedonly_noaux().z3(vardict)), self.consonly().z3(vardict))
+            if not self.auxi.isempty():
+                r = z3.ForAll([x.z3(vardict) for x in self.auxi], r)
+            return r
+
+        r = [(x.z3(vardict) == 0) for x in self.exprs_eq] + [(x.z3(vardict) >= 0) for x in self.exprs_ge]
+        if len(r) == 1:
+            r = r[0]
+        else:
+            r = z3.And(r)
+
+        if not self.aux.isempty():
+            return z3.Exists([x.z3(vardict) for x in self.aux], r)
+        else:
+            return r
+
+
+    def check_z3(self):
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            with PsiOpts(truth = None):
+                return (truth >> self).check_z3()
+
+        vardict = iutil.z3_vardict(self.rvs, self.aux, self.auxi, self.reals)
+        t = self.z3(vardict)
+        solver = vardict["#solver"]
+        solver.add(z3.Not(t))
+        res = solver.check()
+        return res == z3.unsat
+
 
     def commonpart_extend(self, v, forbid_h = True):
         ceps = PsiOpts.settings["eps"]
@@ -12997,7 +14993,7 @@ class Region(IBaseObj):
             r += x.var_neighbors(v)
         return r
     
-    def aux_strengthen(self, addrv = None):
+    def aux_strengthen(self, addrv = None, other_neighbors = None):
         
         if self.aux.isempty():
             return self
@@ -13016,6 +15012,9 @@ class Region(IBaseObj):
         
         for a in self.aux:
             v = self.var_neighbors(a)
+            if other_neighbors is not None:
+                v = v + other_neighbors.var_neighbors(a)
+
             b = allc - v
             if not b.isempty():
                 toadd.exprs_eq.append(Expr.Ic(a, b, v - a))
@@ -15132,6 +17131,19 @@ class Region(IBaseObj):
     def check_getaux(self, hint_pair = None, hint_aux = None):
         """Return whether implication is true, with auxiliary search results."""
         
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            r = None
+            with PsiOpts(truth = None):
+                r = (truth >> self).check_getaux(hint_pair, hint_aux)
+            return r
+        
+        if self.isplain():
+            r = self.check()
+            if r:
+                return []
+            return None
+        
         write_pf_enabled = PsiOpts.settings.get("proof_enabled", False)
         write_pf_repeat_claim = PsiOpts.settings.get("proof_repeat_implicant", False)
 
@@ -15181,12 +17193,86 @@ class Region(IBaseObj):
             return None
         return Comp.substitute_list_to_dict(r, multi = multi)
     
+
     def check_getaux_array(self, multi = True, **kwargs):
         r = self.check_getaux(**kwargs)
         if r is None:
             return None
         return CompArray(Comp.substitute_list_to_dict(r, multi = multi)).add_meta("omit_bracket", True).add_meta("subs", True)
     
+
+    def solve(self, method = "c", full = False, proof = None, multi = True, display_reg = None, **kwargs):
+        """Return whether implication is true, with auxiliary search results."""
+
+        truth = PsiOpts.settings["truth"]
+        truthcomp = Comp.empty()
+        if truth is not None:
+            truthcomp = truth.allcomprv()
+        
+        if display_reg is None:
+            display_reg = PsiOpts.settings["solve_display_reg"]
+            
+        if full:
+            method = "c,-e,-c,e"
+            if proof is None:
+                proof = True
+            if display_reg is None:
+                display_reg = True
+        
+        methods = method.split(",")
+        if len(methods) > 1:
+            t0 = None
+            for cmethod in methods:
+                t = self.solve(method = cmethod, proof = proof, multi = multi, display_reg = display_reg, **kwargs)
+                if t0 is None:
+                    t0 = t
+                if t.truth is not None:
+                    return t
+            return t0
+
+        omethod = method
+
+        negate = False
+        if method.startswith("-"):
+            method = method[1:]
+            negate = True
+        
+        cs = None
+        if negate:
+            cs = ~(self.forall_completed(truthcomp))
+        else:
+            cs = self.copy()
+        
+        if method == "c":
+            cproof = None
+            cont = PsiOpts()
+            if proof:
+                cont = PsiOpts(proof_new = True)
+                
+            with cont:
+                r = cs.check_getaux(**kwargs)
+                if proof:
+                    cproof = PsiOpts.get_proof()
+
+            if r is None:
+                return CheckResult([], reg = self.copy(), truth = None, method = omethod, display_reg = display_reg)
+            return CheckResult(Comp.substitute_list_to_dict(r, multi = multi), reg = self.copy(), truth = not negate, method = omethod, getaux = r, proof = cproof, display_reg = display_reg)
+        
+        if method == "e":
+            r = None
+            try:
+                r = cs.forall_completed(truthcomp).example()
+            except Exception as err:
+                r = None
+
+            if r is None:
+                return CheckResult([], reg = self.copy(), truth = None, method = omethod, display_reg = display_reg)
+
+            return CheckResult([], reg = self.copy(), truth = not negate, method = omethod, model = r, display_reg = display_reg)
+        
+        return CheckResult([], reg = self.copy(), truth = None, method = omethod, display_reg = display_reg)
+
+
     def is_getaux_op(self):
         truth = PsiOpts.settings["truth"]
         if truth is not None:
@@ -15263,11 +17349,15 @@ class Region(IBaseObj):
         
     def check(self):
         """Return whether implication is true"""
+        
+        if iutil.get_solver() == "z3":
+            return self.check_z3()
+
         truth = PsiOpts.settings["truth"]
         if truth is not None:
             with PsiOpts(truth = None):
                 return (truth >> self).check()
-        
+
         if self.isplain():
             return self.check_plain()
     
@@ -15329,12 +17419,76 @@ class Region(IBaseObj):
             r = max(r, abs(t))
         return r
     
-    def example(self):
+
+        
+    def eval_sum_violate(self, f, pow = 1, leak = 0.1):
+        # truth = PsiOpts.settings["truth"]
+        # if truth is not None:
+        #     with PsiOpts(truth = None):
+        #         return (truth >> self).eval_sum_violate(f, pow = pow)
+            
+        r = 0.0
+        for x in self.exprs_ge:
+            t = ConcReal.unbox(f(x))
+            if numpy.isnan(float(t)):
+                continue
+            if t < 0:
+                r = r + (-t) ** pow
+            else:
+                r = r - (t ** pow) * leak
+
+        for x in self.exprs_eq:
+            t = ConcReal.unbox(f(x))
+            if numpy.isnan(float(t)):
+                continue
+            if t < 0:
+                r = r + (-t) ** pow
+            else:
+                r = r + t ** pow
+        return r
+
+        
+    def expr_sum_violate(self, *args, **kwargs):
+        return Expr.fcn(lambda P: self.eval_sum_violate(P, *args, **kwargs))
+
+
+    def example(self, card = None, denom = None):
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            with PsiOpts(truth = None):
+                return (truth & self).example(card = card)
+
         cs = self.exists(self.allcomprv() - self.getaux() - self.getauxi())
-        P = ConcModel()
-        if not P[cs]:
-            return None
-        return P.opt_model()
+
+        if card is None:
+            card = PsiOpts.settings["opt_example_card"]
+        
+        if card is None or isinstance(card, int):
+            card = [card]
+
+        if denom is None:
+            denom = PsiOpts.settings["max_denom_try"]
+            
+        for ccard in card:
+            P = ConcModel()
+            cont = PsiOpts()
+            if ccard is not None:
+                cont = PsiOpts(opt_aux_card = ccard)
+
+            with cont:
+                if not P[cs]:
+                    continue
+
+            if denom > 0:
+                P2 = P.opt_model().copy()
+                P2.fraction_snap(denom = denom, eps = numpy.inf)
+                if P2[cs.noaux()]:
+                    P2.set_force_float(5)
+                    return P2
+
+            return P.opt_model()
+        
+        return None
     
     def implies(self, other, quick = False, bnet = None, **kwargs):
         """Whether self implies other"""
@@ -15373,20 +17527,20 @@ class Region(IBaseObj):
         """Whether self is equivalent to other"""
         return self.implies(other, quick = quick, **kwargs) and other.implies(self, quick = quick, **kwargs)
     
-    def allcomp(self):
-        index = IVarIndex()
-        self.record_to(index)
-        return index.comprv + index.compreal
+    # def allcomp(self):
+    #     index = IVarIndex()
+    #     self.record_to(index)
+    #     return index.comprv + index.compreal
         
-    def allcomprv(self):
-        index = IVarIndex()
-        self.record_to(index)
-        return index.comprv
+    # def allcomprv(self):
+    #     index = IVarIndex()
+    #     self.record_to(index)
+    #     return index.comprv
         
-    def allcompreal(self):
-        index = IVarIndex()
-        self.record_to(index)
-        return index.compreal
+    # def allcompreal(self):
+    #     index = IVarIndex()
+    #     self.record_to(index)
+    #     return index.compreal
         
     def allcomprealvar(self):
         r = Comp.empty()
@@ -15398,9 +17552,6 @@ class Region(IBaseObj):
         # self.record_to(index)
         # return index.compreal - Comp([IVar.eps(), IVar.one()])
         
-    def allcomprealvar_exprlist(self):
-        t = self.allcomprealvar()
-        return ExprArray.make([Expr.real(v) for v in t])
     
     def allcomprv_noaux(self):
         return self.allcomprv() - self.getauxall()
@@ -17865,8 +20016,8 @@ class Region(IBaseObj):
         if isinstance(w, CompArray) or isinstance(w, ExprArray):
             w = w.allcomp()
         
-        if isinstance(w, list):
-            w = sum((a.allcomp() for a in w), Comp.empty())
+        if isinstance(w, (tuple, list)):
+            w = sum((Region.get_allcomp(a) for a in w), Comp.empty())
         
         if isinstance(w, Expr):
             w = w.allcomp()
@@ -17876,7 +20027,7 @@ class Region(IBaseObj):
     def eliminate_ic(self, w):
         self.iand_norename(self.completed_semigraphoid(self.allcomprv() - w))
         self.split()
-        self.remove_present(w)
+        self.remove_relax(w)
         return self
 
     def eliminate(self, w, reg = None, toreal = False, forall = False, quick = False, method = ""):
@@ -17894,7 +20045,8 @@ class Region(IBaseObj):
             toreal = True
         
         if ((not toreal and not forall and not self.auxi.isempty() and any(v.get_type() == IVarType.RV for v in w.allcomp()))
-            or (forall and any(v.get_type() == IVarType.REAL for v in w.allcomp()))):
+            or (forall and any(v.get_type() == IVarType.REAL for v in w.allcomp()))
+            or (not forall and self.imp_present())):
 
             return RegionOp.inter([self]).eliminate(w, reg, toreal, forall)
         
@@ -18273,6 +20425,12 @@ class Region(IBaseObj):
             return t
         return ~RegionOp.union([self])
         
+    def forall_completed(self, exclude = None):
+        toforall = self.rvs - (self.aux + self.auxi)
+        if exclude is not None:
+            toforall -= exclude
+        return self.forall(toforall)
+    
     def noeq(self):
         for a in self.exprs_eq:
             if not a.isnonneg():
@@ -18302,8 +20460,8 @@ class Region(IBaseObj):
         if self.imp_present():
             r.regs.append((self.imp_flippedonly_noaux(), False))
             t = self.consonly().copy_noaux()
-            r.regs.append((t, True))
-            return r.exists(self.aux.copy()).forall(self.auxi.copy())
+            r.regs.append((t.exists(self.aux.copy()), True))
+            return r.forall(self.auxi.copy())
         else:
             if force_split:
                 t = self.copy_noaux().copy_noeq()
@@ -18339,6 +20497,15 @@ class Region(IBaseObj):
             
         return (r, namemap)
         
+        
+    # def nfold(self, bnet = None, n = 2, natural_eqprob = True, all_eqprob = True):
+    #     vs = self.allcomprv_noaux()
+    #     vmap = []
+    #     for v in vs:
+    #         vname = v.get_name()
+    #         vmap[vname] = rv_array(vname, n)
+
+
     def tensorize(self, reg_subset = None, chan_cond = None, nature = None, timeshare = False, hint_aux = None, same_dist = False):
         """Check whether region tensorizes, return auxiliary RVs if tensorizes. 
         chan_cond : The condition on the channel (e.g. degraded broadcast channel)
@@ -18494,12 +20661,29 @@ class Region(IBaseObj):
         """Assume this region is true in the current context.
         """
         PsiOpts.set_setting(truth_add = self)
+
+    def assume_only(self):
+        """Assume this region is true in the current context. Overwrite existing assumptions.
+        """
+        if self.isuniverse():
+            PsiOpts.set_setting(truth = None)
+        else:
+            PsiOpts.set_setting(truth = self.copy())
     
     def assumed(self):
         """Create a context where this region is assumed to be true.
         Use "with region.assumed(): ..."
         """
         return PsiOpts(truth_add = self)
+    
+    def assumed_only(self):
+        """Create a context where this region is assumed to be true. Overwrite existing assumptions.
+        Use "with region.assumed_only(): ..."
+        """
+        if self.isuniverse():
+            return PsiOpts(truth = None)
+        else:
+            return PsiOpts(truth = self.copy())
     
     
     def proof(self, mode = None, **kwargs):
@@ -18584,6 +20768,9 @@ class Region(IBaseObj):
             
         return r
     
+    def union_list(self, distribute = True):
+        return [self.copy()]
+
     class SearchEntry:
         def __init__(self, x, x_reg = None, cmin = -1, cmax = 1):
             self.x = x
@@ -18595,7 +20782,7 @@ class Region(IBaseObj):
             self.cmax = cmax
     
     
-    def discover(self, entries, method = "hull_auto", minsize = 1, maxsize = 2, skip_simplify = False, reg_init = None, skipto_ex = None, toreal_prefix = None, init_pts_outer = None, pts_outer = None):
+    def discover(self, entries, method = "hull_auto", minsize = 1, maxsize = 2, skip_simplify = False, reg_init = None, skipto_ex = None, toreal_prefix = None, balanced = False, init_pts_outer = None, pts_outer = None):
         """Automatically discover inequalities between entries. 
         Parameters:
             entries   : List of variables of interest.
@@ -18620,20 +20807,25 @@ class Region(IBaseObj):
         
         varreal = []
         varrv = []
+        varrv_markers = []
         maxlen = 1
         
-        cs = self.simplified_quick()
+        css = [cs.simplified_quick() for cs in self.union_list()]
+        # cs = self.simplified_quick()
 
         #plain = cs.isplain()
         plain = True
         
-        selfif = None
+        selfifs = None
         progs_self = []
         progs_r = []
         index_self = IVarIndex()
-        cs.record_to(index_self)
+
+        for cs in css:
+            cs.record_to(index_self)
+
         index_r = IVarIndex()
-        isaffine = cs.affine_present()
+        isaffine = any(cs.affine_present() for cs in css)
         
         if isinstance(entries, Expr):
             # entries = entries.allcomp()
@@ -18651,11 +20843,27 @@ class Region(IBaseObj):
         
         for a in entries:
             a2 = a
-            if not isinstance(a, tuple):
-                if isinstance(a, Expr) and toreal_prefix is not None:
-                    a2 = (a, Expr.real(toreal_prefix + str(a)))
+            cmarkers = {}
+            if balanced:
+                cmarkers["balanced"] = True
+                
+            if isinstance(a, tuple):
+                a2 = []
+                for a0 in a:
+                    if isinstance(a0, str):
+                        cmarkers[a0] = True
+                    else:
+                        a2.append(a0)
+                if len(a2) == 1:
+                    a2 = a2[0]
                 else:
-                    a2 = (a, None)
+                    a2 = tuple(a2)
+
+            if not isinstance(a2, tuple):
+                if isinstance(a2, Expr) and toreal_prefix is not None:
+                    a2 = (a2, Expr.real(toreal_prefix + str(a2)))
+                else:
+                    a2 = (a2, None)
                     
             if isinstance(a2[1], ExprArray) or isinstance(a2[1], CompArray):
                 maxlen = max(maxlen, len(a2[1]))
@@ -18678,13 +20886,15 @@ class Region(IBaseObj):
                 varreal.append(a2[0])
             else:
                 varrv.append(a2[0])
+                varrv_markers.append(cmarkers)
                 
 
-        if cs.get_type() == RegionType.NORMAL and not cs.aux.isempty() and not cs.imp_present():
-            cs.aux_strengthen(index_self.comprv)
-            cs.aux = Comp.empty()
+        for cs in css:
+            if cs.get_type() == RegionType.NORMAL and not cs.aux.isempty() and not cs.imp_present():
+                cs.aux_strengthen(index_self.comprv)
+                cs.aux = Comp.empty()
         
-        plain = plain and cs.isplain()
+        plain = plain and all(cs.isplain() for cs in css)
 
         r = Region.universe()
         if reg_init is not None:
@@ -18698,7 +20908,7 @@ class Region(IBaseObj):
         nadd = 0
         
         if plain:
-            selfif = cs.imp_flipped()
+            selfifs = [cs.imp_flipped() for cs in css]
         
         if method == "hull_auto":
             if isaffine:
@@ -18716,6 +20926,8 @@ class Region(IBaseObj):
             method = "semigraphoid"
         
         perform_semigraphoid = method == "semigraphoid" or method == "hull" or method == "hull_cone"
+        if len(css) > 1:
+            perform_semigraphoid = False
 
         sg = None
         if perform_semigraphoid:
@@ -18725,7 +20937,7 @@ class Region(IBaseObj):
                     tvs.append((a[0], a[1]))
                 elif isinstance(a, Comp):
                     tvs.append(a)
-            sg = cs.completed_semigraphoid(vs = tvs)
+            sg = css[0].completed_semigraphoid(vs = tvs)
             if method == "semigraphoid":
                 return sg
 
@@ -18743,6 +20955,14 @@ class Region(IBaseObj):
         else:
             terms = list(itertools.chain(varreal, igen.sI(varrv)))
 
+        for a, markers in zip(varrv, varrv_markers):
+            if markers.get("balanced", False):
+                for t in terms:
+                    c = t.get_coeff(a)
+                    if abs(c) > ceps:
+                        t += Expr.H(a) * -c
+                        t.simplify()
+                terms = [t for t in terms if not t.iszero()]
 
         if verbose:
             print("discover nterms = " + str(len(terms)))
@@ -18773,15 +20993,62 @@ class Region(IBaseObj):
         #print(method)
         
         if method == "hull" or method == "hull_cone":
-            prog = cs.imp_flipped().init_prog(index = index_self, lp_bounded = True)
-            A = SparseMat(0)
-            for a in terms:
-                A.extend(prog.get_vec(expr_tr(a), sparse = True)[0])
-            rt = prog.discover_hull(A, iscone = (method == "hull_cone"), init_pts_outer = init_pts_outer, pts_outer = pts_outer)
+            # prog = cs.imp_flipped().init_prog(index = index_self, lp_bounded = True)
+            # A = SparseMat(0)
+            # for a in terms:
+            #     A.extend(prog.get_vec(expr_tr(a), sparse = True)[0])
+            # rt = prog.discover_hull(A, iscone = (method == "hull_cone"), init_pts_outer = init_pts_outer, pts_outer = pts_outer)
+
+
+            progs = [cs.imp_flipped().init_prog(index = index_self, lp_bounded = True) for cs in css]
+            Ams = []
+            for prog in progs:
+                A = SparseMat(0)
+                for a in terms:
+                    A.extend(prog.get_vec(expr_tr(a), sparse = True)[0])
+                Ams.append(A)
+
+            m = len(terms)
+            def toexpr(x):
+                r = Expr.zero()
+                for i in range(m):
+                    if abs(x[i]) > ceps:
+                        r += terms[i] * x[i]
+                return r
+
+            
+            def cprog(x):
+                ropt = None
+                rr = None
+
+                for A, prog in zip(Ams, progs):
+                    n = prog.nxvar
+                    c = [0.0] * n
+                    for i in range(m):
+                        for j, a in A.x[i]:
+                            c[j] += a * x[i]
+                    
+                    opt, v = prog.call_prog(c)
+                    if opt is None:
+                        return (None, None)
+                    r = [0.0] * m
+                    for i in range(m):
+                        for j, a in A.x[i]:
+                            r[i] += a * v[j]
+                    # return (opt, r)
+                    if ropt is None or opt < ropt:
+                        ropt = opt
+                        rr = r
+
+                return (ropt, rr)
+            
+            rt = LinearProg.proj_hull(cprog, m, toexpr = toexpr, iscone = (method == "hull_cone"), init_pts_outer = init_pts_outer, pts_outer = pts_outer)
+            
+
             if rt is None:
                 return None
 
-            inf_thres = prog.lp_ubound / 5.0
+            inf_thres = progs[0].lp_ubound / 5.0
             for x in rt:
                 if abs(x[0]) > inf_thres:
                     continue
@@ -18861,8 +21128,8 @@ class Region(IBaseObj):
             
             exsum = expr_tr(ex)
             
-            if ((plain and selfif.implies_impflipped_saved(exsum <= 0, index_self, progs_self)) 
-            or (not plain and cs.implies(exsum <= 0))):
+            if ((plain and all(selfif.implies_impflipped_saved(exsum <= 0, index_self, progs_self) for selfif in selfifs)) 
+            or (not plain and all(cs.implies(exsum <= 0) for cs in css))):
                 if verbose:
                     print("ADD " + str(ex) + " <= 0")
                 r &= r2
@@ -18884,6 +21151,35 @@ class Region(IBaseObj):
         return r
     
     
+    def hull(self, entries = None, **kwargs):
+        """Find the convex hull outer bound of this region.
+        """
+        if entries is None:
+            entries = []
+        return self.discover(list(self.rvs) + list(self.reals) + list(entries), **kwargs)
+        
+
+
+    @staticmethod
+    def markov_tostring(cm, style = 0, tosort = False):
+        if len(cm) % 2 == 1 and all(cm[i].isempty() for i in range(1, len(cm), 2)):
+            tlist = [cm[i].tostring(style = style, tosort = tosort, 
+                                    add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(0, len(cm), 2)]
+            
+            if style & PsiOpts.STR_STYLE_LATEX:
+                return (" " + PsiOpts.settings["latex_indep"] + " ").join(tlist)
+            else:
+                return "indep(" + ", ".join(tlist) + ")"
+        else:
+            tlist = [cm[i].tostring(style = style, tosort = tosort, 
+                                    add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(len(cm))]
+            
+            if style & PsiOpts.STR_STYLE_LATEX:
+                return (" " + PsiOpts.settings["latex_markov"] + " ").join(tlist)
+            else:
+                return "markov(" + ", ".join(tlist) + ")"
+
+
     def tostring(self, style = 0, tosort = False, lhsvar = "real", inden = 0, add_bracket = False,
                  small = False, skip_outer_exists = False):
         """Convert to string. 
@@ -19039,22 +21335,24 @@ class Region(IBaseObj):
             for bnet in bnets:
                 ms = bnet.get_markov()
                 for cm in ms:
-                    if len(cm) % 2 == 1 and all(cm[i].isempty() for i in range(1, len(cm), 2)):
-                        tlist = [cm[i].tostring(style = style, tosort = tosort, 
-                                                add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(0, len(cm), 2)]
+                    eqnlist2.append(Region.markov_tostring(cm, style, tosort))
+
+                #     if len(cm) % 2 == 1 and all(cm[i].isempty() for i in range(1, len(cm), 2)):
+                #         tlist = [cm[i].tostring(style = style, tosort = tosort, 
+                #                                 add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(0, len(cm), 2)]
                         
-                        if style & PsiOpts.STR_STYLE_LATEX:
-                            eqnlist2.append((" " + PsiOpts.settings["latex_indep"] + " ").join(tlist))
-                        else:
-                            eqnlist2.append("indep(" + ", ".join(tlist) + ")")
-                    else:
-                        tlist = [cm[i].tostring(style = style, tosort = tosort, 
-                                                add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(len(cm))]
+                #         if style & PsiOpts.STR_STYLE_LATEX:
+                #             eqnlist2.append((" " + PsiOpts.settings["latex_indep"] + " ").join(tlist))
+                #         else:
+                #             eqnlist2.append("indep(" + ", ".join(tlist) + ")")
+                #     else:
+                #         tlist = [cm[i].tostring(style = style, tosort = tosort, 
+                #                                 add_bracket = not (style & PsiOpts.STR_STYLE_PSITIP)) for i in range(len(cm))]
                         
-                        if style & PsiOpts.STR_STYLE_LATEX:
-                            eqnlist2.append((" " + PsiOpts.settings["latex_markov"] + " ").join(tlist))
-                        else:
-                            eqnlist2.append("markov(" + ", ".join(tlist) + ")")
+                #         if style & PsiOpts.STR_STYLE_LATEX:
+                #             eqnlist2.append((" " + PsiOpts.settings["latex_markov"] + " ").join(tlist))
+                #         else:
+                #             eqnlist2.append("markov(" + ", ".join(tlist) + ")")
                     
             if tosort:
                 eqnlist2 = sorted(eqnlist2, key = lambda a: len(a))
@@ -19309,6 +21607,21 @@ class RegionOp(Region):
     def isempty(self):
         return self.isuniverse(False)
     
+    def iseq(self):
+        """Is this pure equality.
+        """
+        return False
+
+    def isineq(self):
+        """Is this pure inequality.
+        """
+        return False
+
+    def expr(self):
+        """Returns the sum of the expressions in this region.
+        """
+        return sum((x.expr() for x, c in self.regs), Expr.zero())
+
     def isplain(self):
         return False
         
@@ -19375,6 +21688,17 @@ class RegionOp(Region):
             else:
                 return RegionOp(self.rtype, [r], [])
     
+    
+    def union_list(self, distribute = True):
+        if distribute:
+            r = self.copy()
+            r.distribute()
+            return r.union_list(distribute = False)
+            
+        if self.get_type() == RegionType.UNION:
+            return list(self.copy())
+        return [self.copy()]
+
     def add_meta(self, key, value):
         for x, c in self.regs:
             x.add_meta(key, value)
@@ -19397,6 +21721,24 @@ class RegionOp(Region):
                 return True
         return False
     
+    def __contains__(self, other):
+        x = other
+        
+        if isinstance(x, str):
+            if x == "exists":
+                if any(c for z, c in self.auxs):
+                    return True
+            if x == "forall":
+                if any(not c for z, c in self.auxs):
+                    return True
+
+        for z, c in self.regs:
+            if x in z:
+                return True
+        for z, c in self.auxs:
+            if x in z:
+                return True
+        return False
         
     def allcomprealvar(self):
         r = Comp.empty()
@@ -19452,6 +21794,15 @@ class RegionOp(Region):
     def getauxs(self):
         return [(x.copy(), c) for x, c in self.auxs]
     
+
+    @property
+    def aux(self):
+        return self.getaux()
+
+    @property
+    def auxi(self):
+        return self.getauxi()
+
     @fcn_substitute
     def substitute(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), in place."""
@@ -19460,6 +21811,16 @@ class RegionOp(Region):
         if not isinstance(v0, Expr):
             for x, c in self.auxs:
                 x.substitute(v0, v1)
+        return self
+
+    @fcn_substitute
+    def substitute_whole(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound), in place."""
+        for x, c in self.regs:
+            x.substitute_whole(v0, v1)
+        if not isinstance(v0, Expr):
+            for x, c in self.auxs:
+                x.substitute_whole(v0, v1)
         return self
     
     @fcn_substitute
@@ -19480,6 +21841,12 @@ class RegionOp(Region):
             x.remove_notpresent(v)
         self.auxs = [(x, c) for x, c in self.auxs if x.ispresent(v)]
         
+    def remove_relax(self, v, sn = 1):
+        for x, c in self.regs:
+            x.remove_relax(v, sn * (1 if c else -1))
+        self.auxs = [(x, c) for x, c in self.auxs if not x.ispresent(v)]
+
+
     def condition(self, b):
         """Condition on random variable b, in place."""
         for x, c in self.regs:
@@ -19571,6 +21938,7 @@ class RegionOp(Region):
                 return Region.empty()
             return self
         
+        other = iutil.ensure_region(other)
         if other.isuniverse(canon = True):
             return self
         
@@ -19601,6 +21969,8 @@ class RegionOp(Region):
                 return Region.universe()
             return self
         
+        other = iutil.ensure_region(other)
+
         if other.isuniverse(sgn = False, canon = True):
             return self
         
@@ -19614,6 +21984,7 @@ class RegionOp(Region):
         
         
     def ior_norename(self, other):
+        other = iutil.ensure_region(other)
         other = RegionOp.pack_type(other, RegionType.UNION)
         self.pack_type_self(RegionType.UNION)
         
@@ -19622,6 +21993,7 @@ class RegionOp(Region):
         return self
         
     def rior(self, other):
+        other = iutil.ensure_region(other)
         other = RegionOp.pack_type(other, RegionType.UNION)
         self.pack_type_self(RegionType.UNION)
         self.aux_avoid(other)
@@ -19688,6 +22060,37 @@ class RegionOp(Region):
         return RegionOp(RegionType.UNION, [], [])
         #return ~Region.universe()
     
+    def z3(self, vardict = None):
+        if z3 is None:
+            return None
+
+        if vardict is None:
+            vardict = iutil.z3_vardict(self.rvs, self.aux, self.auxi, self.reals)
+
+        r = []
+        for x, c in self.regs:
+            t = x.z3(vardict)
+            if not c:
+                t = z3.Not(t)
+            r.append(t)
+
+        if len(r) == 1:
+            r = r[0]
+        else:
+            if self.get_type() == RegionType.UNION:
+                r = z3.Or(r)
+            elif self.get_type() == RegionType.INTER:
+                r = z3.And(r)
+
+        for x, c in self.auxs:
+            if not c:
+                # raise ValueError("Universally-quantified random variables are not supported for Z3. Use another solver.")
+                r = z3.ForAll([y.z3(vardict) for y in x], r)
+            else:
+                r = z3.Exists([y.z3(vardict) for y in x], r)
+        return r
+
+
     def sum_minkowski(self, other):
         cs = self.copy()
         cs.distribute()
@@ -19711,16 +22114,19 @@ class RegionOp(Region):
     
     
     def implicate(self, other, skip_simplify = False):
+        other = iutil.ensure_region(other)
         cs = self
         cs |= ~other
         return cs
     
     def implicate_norename(self, other, skip_simplify = False):
+        other = iutil.ensure_region(other)
         cs = self
         cs.ior_norename(~other)
         return cs
     
     def implicated(self, other, skip_simplify = False):
+        other = iutil.ensure_region(other)
         r = self.copy()
         r = r.implicate(other, skip_simplify)
         return r
@@ -19775,6 +22181,20 @@ class RegionOp(Region):
             return Region.universe()
         return Region.universe()
     
+    
+    def balance(self, v = None, w = None, skip_simplify = False):
+        if w is None:
+            w = self.allcomprv()
+            
+        for x, c in self.regs:
+            x.balance(v, w, skip_simplify = True)
+
+        if not skip_simplify:
+            self.simplify()
+        
+        return self
+
+
     def sign_present(self, term):
         r = [False] * 2
         for x, c in self.regs:
@@ -20142,6 +22562,20 @@ class RegionOp(Region):
             return t
         return self.copy()
     
+    def level(self, mode = ""):
+        """The level of a region in the linear entropy hierarchy.
+        """
+        r = Level()
+        for x, c in self.regs:
+            t = x.level(mode)
+            if not c:
+                t = ~t
+            r = r | t
+
+        for x, c in self.auxs:
+            r = r.exists(not c)
+        return r
+
     def complexity(self):
         return sum(x.complexity() for x, c in self.regs) + len(self.auxs) * 100 + sum(len(x) for x, c in self.auxs) * 100
     
@@ -20491,7 +22925,10 @@ class RegionOp(Region):
             else:
                 ccons = RegionOp.union(cons)
             
-            r.append((req, ccons, auxi.inter(x.allcomp())))
+            cauxi = auxi.inter(x.allcomp())
+            # cauxi = x.auxi
+            # cauxi = x.aux
+            r.append((req, ccons, cauxi))
             
         return r
     
@@ -20525,6 +22962,39 @@ class RegionOp(Region):
 #                else:
 #                    r2[-1] = (r2[-1][0] + a, c)
 #        return r2
+
+    def calc_req_cons(self):
+        
+        self.presolve()
+
+        n = len(self.regs)
+
+        r = []
+        for i in range(n):
+            x, c = self.regs[i]
+            
+            req = Region.universe()
+            cons = []
+            
+            if x.get_type() == RegionType.INTER:
+                for y, cy in x.regs:
+                    if cy:
+                        req &= y
+                    else:
+                        cons.append(y)
+            elif x.get_type() == RegionType.NORMAL:
+                if c:
+                    req &= x
+                else:
+                    cons.append(x)
+            
+            r.append((req, cons))
+        return r
+    
+    def get_req_cons(self):
+        cs = self.copy()
+        r = cs.calc_req_cons()
+        return (r, cs.auxs)
     
     def check_getaux_inplace(self, must_include = None, single_include = None, hint_pair = None, hint_aux = None, hint_aux_avoid = None, max_iter = None, leaveone = None, strengthen = None, get_info = None):
 
@@ -20928,7 +23398,8 @@ class RegionOp(Region):
                             rcase_t.aux = Comp.empty()
 
                         #rcur = req.implicated(rcase).exists(aux).forall(csnonaux)
-                        rcur = req.implicated(rcase_t).exists(aux).forall(csauxiall)
+                        # rcur = req.implicated(rcase_t).exists(aux).forall(csauxiall)
+                        rcur = req.exists(aux).implicated(rcase_t).forall(csauxiall)
                     
                     rcases_toadd = MHashSet()
                     rcases_toadd.add((rcase.copy(), rcase_vis[:]))
@@ -21398,6 +23869,10 @@ class RegionOp(Region):
         
     def check(self):
         """Return whether implication is true."""
+        
+        if iutil.get_solver() == "z3":
+            return self.check_z3()
+            
         return self.check_getaux() is not None
     
     def assumption(self, mode = None):
@@ -21466,6 +23941,42 @@ class RegionOp(Region):
         
         return 0.0
     
+    def eval_sum_violate(self, f, pow = 1, leak = 0.1):
+        # truth = PsiOpts.settings["truth"]
+        # if truth is not None:
+        #     with PsiOpts(truth = None):
+        #         return (truth >> self).eval_sum_violate(f, pow = pow, leak = leak)
+            
+        ceps = PsiOpts.settings["eps_check"]
+
+        if self.get_type() == RegionType.INTER:
+            r = 0.0
+            for x, c in self.regs:
+                t = x.eval_sum_violate(f, pow = pow, leak = leak)
+                
+                if c:
+                    r = r + t
+                else:
+                    if t <= ceps:
+                        return numpy.inf
+            return r
+        
+        elif self.get_type() == RegionType.UNION:
+            r = numpy.inf
+            for x, c in self.regs:
+                t = x.eval_sum_violate(f, pow = pow, leak = leak)
+                
+                if c:
+                    # r = r * t
+                    r = min(r, t)
+                else:
+                    if t > ceps:
+                        return 0.0
+            return r
+        
+        return 0.0
+
+
     def implies_getaux(self, other, hint_pair = None, hint_aux = None):
         """Whether self implies other, with auxiliary search result."""
         return (self <= other).check_getaux(hint_pair, hint_aux)
@@ -21630,35 +24141,118 @@ class RegionOp(Region):
             
         if self.get_type() == RegionType.INTER or self.get_type() == RegionType.UNION:
             isunion = (self.get_type() == RegionType.UNION)
-            for c_pass in [not isunion, isunion]:
-                for x, c in self.regs:
-                    if c == c_pass:
-                        x.simplify(r_assumed, zero_group)
-                        if c ^ isunion:
-                            t = x.tosimple_noaux()
-                            if t is not None:
-                                r_assumed &= t
+
+            regs_sorted = list(self.regs)
+
+            def reg_sort_priority(t):
+                x, c = t
+                return (c == (not isunion), x.complexity())
+
+            regs_sorted.sort(key = reg_sort_priority)
+
+            for i0, (x0, c0) in enumerate(regs_sorted):
+                t_assumed = r_assumed.copy()
+                for i, (x, c) in enumerate(regs_sorted):
+                    if i0 == i:
+                        continue
+                    if c ^ isunion:
+                        t = x.tosimple_noaux()
+                        if t is not None:
+                            t_assumed &= t
+                    else:
+                        flipped = x.tosimple_noaux()
+                        if flipped is not None:
+                            flipped = flipped.one_flipped()
+                            if flipped is not None:
+                                t_assumed &= flipped
+
+                x0.simplify(t_assumed, zero_group)
+
+
+            # def reg_sort_priority(t):
+            #     x, c = t
+            #     if c == (not isunion):
+            #         return 0
+            #     if x.one_flipped() is not None:
+            #         return 1
+            #     return 2
+
+            # regs_sorted.sort(key = reg_sort_priority)
+
+            # for x, c in regs_sorted:
+            #     x.simplify(r_assumed, zero_group)
+            #     if c ^ isunion:
+            #         t = x.tosimple_noaux()
+            #         if t is not None:
+            #             r_assumed &= t
+            #     else:
+            #         flipped = x.tosimple_noaux()
+            #         if flipped is not None:
+            #             flipped = flipped.one_flipped()
+            #             if flipped is not None:
+            #                 r_assumed &= flipped
+
+
+            # for c_pass, one_flipped_need in [(not isunion, None), (isunion, True), (isunion, False)]:
+            #     for x, c in self.regs:
+            #         if c != c_pass:
+            #             continue
+            #         if one_flipped_needed is not None:
+
+            #         if c == c_pass and (one_flipped_need is None or ):
+            #             x.simplify(r_assumed, zero_group)
+            #             if c ^ isunion:
+            #                 t = x.tosimple_noaux()
+            #                 if t is not None:
+            #                     r_assumed &= t
                                 
             if simplify_redundant_op:
                 regs_s = [(x.tosimple_noaux() if not c ^ isunion else None) for x, c in self.regs]
                 regs_rem = [False for x, c in self.regs]
-                for i, j in itertools.permutations([i for i in range(len(self.regs)) if regs_s[i] is not None], 2):
+                # for i, j in itertools.permutations([i for i in range(len(self.regs)) if regs_s[i] is not None], 2):
+
+                for i in range(len(self.regs)):
                     
                     if PsiOpts.is_timer_ended():
                         break
-                    if regs_rem[i] or regs_rem[j]:
+                    if regs_rem[i] or regs_s[i] is None:
                         continue
                     #print("###")
                     
                     t_assumed = r_assumed.copy()
-                    for k in range(len(self.regs)):
-                        if k != i and not regs_rem[k] and not self.regs[k][1] ^ isunion:
-                            tf = self.regs[k][0].one_flipped()
-                            if tf is not None:
-                                t_assumed &= tf
+
+                    
+                    for k, (x, c) in enumerate(self.regs):
+                        if k == i or regs_rem[k]:
+                            continue
+                        if c ^ isunion:
+                            t = x.tosimple_noaux()
+                            if t is not None:
+                                t_assumed &= t
+                        else:
+                            flipped = x.tosimple_noaux()
+                            if flipped is not None:
+                                flipped = flipped.one_flipped()
+                                if flipped is not None:
+                                    t_assumed &= flipped
+
+                    # for k in range(len(self.regs)):
+                    #     if k != i and not regs_rem[k] and not self.regs[k][1] ^ isunion:
+                    #         tf = self.regs[k][0].one_flipped()
+                    #         if tf is not None:
+                    #             t_assumed &= tf
                                 
-                    if (regs_s[i] & t_assumed).implies(regs_s[j]):
-                        regs_rem[i] = True
+                    for j in range(len(self.regs)):
+                        
+                        if PsiOpts.is_timer_ended():
+                            break
+                        if i == j or regs_rem[j] or regs_s[j] is None:
+                            continue
+
+                        if (regs_s[i] & t_assumed).implies(regs_s[j]):
+                            regs_rem[i] = True
+                            break
+
                 self.regs = [(x, c) for i, (x, c) in enumerate(self.regs) if not regs_rem[i]]
             
         
@@ -21996,6 +24590,7 @@ class IBaseArray(IBaseObj):
             self.x = [x]
             cshape = tuple()
         elif iutil.istensor(x):
+            self.x = []
             cshape = tuple(x.shape)
             for xs in itertools.product(*[range(t) for t in cshape]):
                 self.x.append(self.entry_convert(x[xs]))
@@ -22004,6 +24599,8 @@ class IBaseArray(IBaseObj):
             self.x = []
             tshape = []
             def recur(i, y):
+                if isinstance(y, IBaseArray):
+                    y = y.tolist()
                 if not isinstance(y, (list, tuple)):
                     self.x.append(self.entry_convert(y))
                     return
@@ -22107,6 +24704,19 @@ class IBaseArray(IBaseObj):
             return True
         return False
     
+    def tolist(self, key = None):
+        if key is None:
+            key = tuple()
+        shape = self.shape
+        i = len(key)
+        if i == len(shape):
+            return self[key]
+        r = []
+        for j in range(shape[i]):
+            r.append(self.tolist(key + (j,)))
+        
+        return r
+
     
     def to_dict(self):
         shape = self.shape
@@ -22116,6 +24726,26 @@ class IBaseArray(IBaseObj):
         for xs in itertools.product(*[range(t) for t in shape[:-1]]):
             r[self[xs + (0,)]] = self[xs + (1,)]
         return r
+
+    
+    def find_dict(self, key):
+        shape = self.shape
+        if len(shape) < 2:
+            return None
+        r = None
+        for xs in itertools.product(*[range(t) for t in shape[:-1]]):
+            if self[xs + (0,)] == key:
+                r = self[xs + (1,)]
+        return r
+
+    def subsets(self, ndim = 1, minsize = 0, maxsize = 100000, size = None, reverse = False):
+        """Subsets of this array along the first ndim (default = 1) dimensions, as a generator
+        """
+        shape = self.shape
+        t = []
+        for xs in itertools.product(*[range(t) for t in shape[:ndim]]):
+            t.append(self[tuple(xs)])
+        return igen.subset(t, minsize = minsize, maxsize = maxsize, size = size, reverse = reverse)
 
     
     def allcomp(self):
@@ -22163,17 +24793,20 @@ class IBaseArray(IBaseObj):
         return self
     
     @fcn_substitute
+    def substitute_whole(self, v0, v1):
+        """Substitute variable v0 by v1 (v1 can be compound), in place."""
+        for i in range(len(self.x)):
+            self.x[i].substitute_whole(v0, v1)
+        return self
+    
+    @fcn_substitute
     def substitute_aux(self, v0, v1):
         """Substitute variable v0 by v1 (v1 can be compound), and remove auxiliary v0, in place."""
         for i in range(len(self.x)):
             self.x[i].substitute_aux(v0, v1)
         return self
     
-    def substituted(self, *args, **kwargs):
-        """Substitute variable v0 by v1 (v1 can be compound), return result"""
-        r = self.copy()
-        r.substitute(*args, **kwargs)
-        return r
+    
         
     def substituted_aux(self, *args, **kwargs):
         """Substitute variable v0 by v1 (v1 can be compound), and remove auxiliary v0, return result"""
@@ -22192,7 +24825,7 @@ class IBaseArray(IBaseObj):
         return type(self)([-a for a in self.x])
     
     def __iadd__(self, other):
-        if isinstance(other, list):
+        if isinstance(other, (tuple, list)):
             other = type(self)(other)
         if iutil.istensor(other):
             if self.shape != other.shape:
@@ -22216,7 +24849,7 @@ class IBaseArray(IBaseObj):
         return self
     
     def __imul__(self, other):
-        if isinstance(other, list):
+        if isinstance(other, (tuple, list)):
             other = type(self)(other)
         if iutil.istensor(other):
             if self.shape != other.shape:
@@ -22231,7 +24864,7 @@ class IBaseArray(IBaseObj):
         return self
     
     def __itruediv__(self, other):
-        if isinstance(other, list):
+        if isinstance(other, (tuple, list)):
             other = type(self)(other)
         if iutil.istensor(other):
             if self.shape != other.shape:
@@ -22246,7 +24879,7 @@ class IBaseArray(IBaseObj):
         return self
     
     def __ipow__(self, other):
-        if isinstance(other, list):
+        if isinstance(other, (tuple, list)):
             other = type(self)(other)
         if iutil.istensor(other):
             if self.shape != other.shape:
@@ -22296,6 +24929,8 @@ class IBaseArray(IBaseObj):
     def __add__(self, other):
         if isinstance(other, int) and other == 0:
             return self.copy()
+        if isinstance(other, (tuple, list)):
+            other = type(self)(other)
         r = self.copy()
         r += other
         return r
@@ -22303,24 +24938,28 @@ class IBaseArray(IBaseObj):
     def __radd__(self, other):
         if isinstance(other, int) and other == 0:
             return self.copy()
+        if isinstance(other, (tuple, list)):
+            other = type(self)(other)
         r = self.copy()
         r += other
         return r
     
     def __isub__(self, other):
-        if isinstance(other, list):
+        if isinstance(other, (tuple, list)):
             other = type(self)(other)
         self += -other
         return self
     
     def __sub__(self, other):
-        if isinstance(other, list):
+        if isinstance(other, (tuple, list)):
             other = type(self)(other)
         r = self.copy()
         r += -other
         return r
     
     def __rsub__(self, other):
+        if isinstance(other, (tuple, list)):
+            other = type(self)(other)
         r = -self
         r += other
         return r
@@ -22345,14 +24984,40 @@ class IBaseArray(IBaseObj):
             return i
         return 0
     
+    def getitem_str(self, key):
+        key = key.lower()
+        r = type(self).entry_cls_zero()
+        for c in key:
+            if c == "0" or c == "c":
+                r += self.x[0]
+            elif c == "p" and len(self.x) > 1:
+                r += self.x[1]
+            elif c == "f" and len(self.x) > 2:
+                r += self.x[2]
+            elif c == "a":
+                if len(self.x) > 1:
+                    r += self.x[1]
+                for i, y in enumerate(self.x):
+                    if i != 1:
+                        r += y
+        return r
+
+
     def __getitem__(self, key):
         if isinstance(key, int):
             return self.x[key]
+        if isinstance(key, str):
+            return self.getitem_str(key)
+        if isinstance(key, IBaseObj):
+            return self.find_dict(key)
         if isinstance(key, slice):
             r = self.x[key]
             if isinstance(r, list):
                 return type(self)(r)
             return r
+        if isinstance(key, tuple) and len(key) < len(self.shape):
+            return type(self)(self.tolist(key))
+
         return self.x[self.key_to_id(key)]
     
     def __setitem__(self, key, item):
@@ -22468,11 +25133,13 @@ class IBaseArray(IBaseObj):
             return ""
 
         style = iutil.convert_str_style(style)
-        is_subs = not (style & PsiOpts.STR_STYLE_PSITIP) and self.get_meta("subs") is True
+        is_subs = len(self) > 0 and not (style & PsiOpts.STR_STYLE_PSITIP) and self.get_meta("subs") is True
         nlstr = "\n"
         if style & PsiOpts.STR_STYLE_LATEX:
             nlstr = "\\\\\n"
-            
+        
+        latex_hline = "\\hline\n"
+
         shape = self.shape
         r = ""
         add_bracket = True
@@ -22486,7 +25153,8 @@ class IBaseArray(IBaseObj):
             list_bracket0 = PsiOpts.settings["latex_list_bracket_l"]
             list_bracket1 = PsiOpts.settings["latex_list_bracket_r"]
         
-        if not (style & PsiOpts.STR_STYLE_PSITIP) and self.get_meta("omit_bracket") is True:
+        omit_bracket = len(self) > 0 and (self.get_meta("omit_bracket") is True)
+        if not (style & PsiOpts.STR_STYLE_PSITIP) and omit_bracket:
             list_bracket0 = ""
             list_bracket1 = ""
 
@@ -22534,7 +25202,14 @@ class IBaseArray(IBaseObj):
         #         r += "\\[ "
         # else:
         #     r += "[ "
+
+        # float_style = self.get_meta("float_style")
+        # cont = PsiOpts()
+        # if float_style is not None:
+        #     cont = PsiOpts(float_style = float_style)
         
+        # with cont:
+
         for xs in itertools.product(*[range(t) for t in shape]):
             si0 = len(shape)
             while si0 > 0 and xs[si0 - 1] == 0:
@@ -22565,7 +25240,16 @@ class IBaseArray(IBaseObj):
                         if interstr != "":
                             r += interstr + " "
                     else:
-                        r += nlstr * (len(shape) - si1)
+                        if latex_hline is not None:
+                            cc = len(shape) - si1
+                            r += nlstr
+                            if cc > 1:
+                                r += latex_hline
+                            if cc > 2:
+                                r += nlstr * (cc - 2)
+                                r += latex_hline
+                        else:
+                            r += nlstr * (len(shape) - si1)
 
             else:
                 if si1 > 0:
@@ -22734,6 +25418,87 @@ class CompArray(IBaseArray):
         return tuple(r)
         
         
+class CheckResult(CompArray):
+
+    def __init__(self, *args, truth = None, method = None, reg = None, getaux = None, proof = None, model = None, display_reg = False, **kwargs):
+        self.truth = truth
+        self.method = method
+        self.reg = reg
+        self.getaux = getaux
+        self.proof = proof
+        self.model = model
+        self.display_reg = display_reg
+
+        CompArray.__init__(self, *args, **kwargs)
+        self.add_meta("omit_bracket", True)
+        self.add_meta("subs", True)
+
+    
+    def tostring(self, style = 0, *args, **kwargs):
+        
+        style = iutil.convert_str_style(style)
+
+        r = ""
+        
+        nlstr = "\n"
+        if style & PsiOpts.STR_STYLE_LATEX:
+            nlstr = "\\\\\n"
+
+        if style & PsiOpts.STR_STYLE_LATEX:
+            r += "\\begin{array}{l}\n"
+
+        if self.display_reg and self.reg is not None:
+            r += self.reg.tostring(style)
+            if style & PsiOpts.STR_STYLE_LATEX:
+                r += "\\;\\mathrm{is}\\;"
+            else:
+                r += " is "
+        
+        truthstr = ""
+        if self.truth is True:
+            truthstr = "True"
+        elif self.truth is False:
+            truthstr = "False"
+        else:
+            truthstr = "Unknown"
+            
+        if style & PsiOpts.STR_STYLE_LATEX:
+            r += "\\mathrm{" + truthstr + "}"
+        else:
+            r += truthstr
+
+        r += nlstr
+
+        addproof = self.proof is not None
+
+        if not addproof and len(self) > 0:
+            r += CompArray.tostring(self, style = style, *args, **kwargs)
+            r += nlstr
+
+        if self.model is not None:
+            r += nlstr
+            r += self.model.tostring(style = style)
+            r += nlstr
+
+        if style & PsiOpts.STR_STYLE_LATEX:
+            r += "\\end{array}"
+
+        if self.proof is not None and not self.proof.isempty():
+            r += nlstr
+            r = iutil.latex_concat(style, [r, self.proof.tostring(style)])
+
+        return r
+        
+    def __getitem__(self, key):
+        if len(self):
+            return CompArray.__getitem__(self, key)
+        if self.model is not None:
+            return self.model[key]
+        return None
+
+    def __bool__(self):
+        return bool(self.truth)
+
     
 class ExprArray(IBaseArray):
     cls_name = "ExprArray"
@@ -22751,8 +25516,13 @@ class ExprArray(IBaseArray):
             return a.copy()
         elif isinstance(a, (int, float)):
             return Expr.const(a)
+        elif iutil.istensor(a) and len(a.shape) == 0:
+            return Expr.const(float(a))
         return None
     
+    def set_float(self, force_float = True):
+        for x in self:
+            x.add_meta("float_style", force_float)
     
     def get_expr(self):
         return sum(self.x, Expr.zero())
@@ -22826,12 +25596,18 @@ class ExprArray(IBaseArray):
         return r
     
     def __ge__(self, other):
+        # if not isinstance(other, ExprArray):
+        #     other = ExprArray(other)
         return (self - other).ge_region()
     
     def __le__(self, other):
+        # if not isinstance(other, ExprArray):
+        #     other = ExprArray(other)
         return (other - self).ge_region()
     
     def __eq__(self, other):
+        # if not isinstance(other, ExprArray):
+        #     other = ExprArray(other)
         return (self - other).eq_region()
     
     def discover_ic_lex(self, x):
@@ -23882,6 +26658,9 @@ class ProofObj(IBaseObj):
     def empty():
         return ProofObj(None, None, [])
     
+    def isempty(self):
+        return self.claim is None and self.desc is None and len(self.steps) == 0
+
     def copy(self):
         # return ProofObj([(x.copy(), list(d), c) for x, d, c in self.steps])
         return ProofObj(iutil.copy(self.claim), iutil.copy(self.desc), 
@@ -24563,7 +27342,7 @@ class CodingModel(IBaseObj):
             
         if convexify is not False:
             if convexify is True:
-                convexify = Comp.rv("Q_i")
+                convexify = Comp.index("Q_i")
         
         if not isinstance(convexify, Comp):
             convexify = Comp.empty()
@@ -24773,7 +27552,7 @@ class CodingModel(IBaseObj):
             
         if convexify is not False:
             if convexify is True:
-                convexify = Comp.rv("Q_i")
+                convexify = Comp.index("Q_i")
         
         self.calc_nodes()
         for node in self.nodes:
@@ -24853,7 +27632,11 @@ class CodingModel(IBaseObj):
                         expr += aux_rates[ci]
                         expr -= I(c & cc + (aux_dec + node.aux_ndec - cd) + y)
                         cc += c
-                    r &= expr <= 0
+                    
+                    pf_note = ["decode ", cdec.copy(), " by ", y.copy()]
+                    if not node.aux_ndec.isempty():
+                        pf_note += [" ", "(", "nonunique ", node.aux_ndec.copy(), ")"]
+                    r &= (expr <= 0).add_meta("pf_note", pf_note)
             
             for ce in igen.subset(node.aux_out, minsize = 1):
                 expr = Expr.zero()
@@ -24863,7 +27646,13 @@ class CodingModel(IBaseObj):
                     expr += aux_rates[ci]
                     expr -= I(c & cc + aux_dec + y)
                     cc += c
-                r &= expr >= 0
+                
+                if self.is_rate(y):
+                    r &= (expr >= 0)
+                else:
+                    pf_note = ["encode ", y.copy(), " to ", ce.copy()]
+                    r &= (expr >= 0).add_meta("pf_note", pf_note).add_meta("pf_note_priority", -1)
+        
         
         
         if convexify is not False:
@@ -24888,7 +27677,10 @@ class CodingModel(IBaseObj):
             print("============== Inner bound ==============")
             print(r)
         
+        
+
         r = r.eliminate(sum(aux_rates))
+        
         
         
         # if convexify is not False:
@@ -24914,6 +27706,7 @@ class CodingModel(IBaseObj):
             r = r.eliminate(caux.inter(r.allcomprv()))
         
         
+        
         if verbose:
             print("============== Elim aux rate ==============")
             print(r)
@@ -24929,6 +27722,8 @@ class CodingModel(IBaseObj):
         for tozero, toconst in self.sublist_const:
             r.substitute(tozero, toconst)
             
+        
+
         # print(r)
         if skip_simplify:
             return r
@@ -25094,7 +27889,7 @@ class CodingModel(IBaseObj):
             
         if convexify is not False:
             if convexify is True:
-                convexify = Comp.rv("Q_o")
+                convexify = Comp.index("Q_o")
                 
         # auxs = self.get_aux()
         # reg_out_aux = auxs.copy()
@@ -25251,7 +28046,8 @@ class CodingModel(IBaseObj):
                                     r_fcn &= Expr.Hc(txm, b2) == 0
 
                 else:
-                    bnet_out.set_fcn(xm)
+                    if future:
+                        bnet_out.set_fcn(xm)
         
         bnet_out = bnet_out.scc()
         
@@ -25936,7 +28732,7 @@ class CommModel(IBaseObj):
         
         # if convexify is not False:
         #     if convexify is True:
-        #         convexify = Comp.rv("Q_T")
+        #         convexify = Comp.index("Q_T")
         #     r.condition(convexify)
         #     encout = self.get_encout()
         #     encout_map
@@ -26238,7 +29034,7 @@ class CommModel(IBaseObj):
             
         if convexify is not False:
             if convexify is True:
-                convexify = Comp.rv("Q_i")
+                convexify = Comp.index("Q_i")
             r.condition(convexify)
             encout = self.get_encout()
             r &= markov(r.allcomprv() - encout - convexify, encout, convexify)
@@ -26331,6 +29127,8 @@ class igen:
                         yield Comp.empty()
                     elif isinstance(x[0], Expr):
                         yield Expr.zero()
+                    elif isinstance(x[0], IBaseArray):
+                        yield type(x[0]).zeros(shape = x[0].shape)
                     else:
                         yield 0
                 else:
@@ -26338,6 +29136,8 @@ class igen:
                         yield Comp.empty()
                     elif isinstance(x, Expr):
                         yield Expr.zero()
+                    elif isinstance(x, IBaseArray):
+                        yield type(x).zeros(shape = x.shape)
                     else:
                         yield 0
                     
@@ -26780,7 +29580,16 @@ class RegionParser:
         self.parser = lark.Lark(RegionTree.grammar, parser = "lalr", transformer = self.tree)
     
     def parse(self, s):
-        return self.parser.parse(parse_sanitize(s))
+        s = parse_sanitize(s)
+        if "\n" in s:
+            try:
+                return self.parser.parse(s)
+            except lark.exceptions.LarkError as err:
+                lines = [x.strip() for x in s.split("\n")]
+                lines = [x for x in lines if len(x)]
+                s = ",\n".join(lines)
+        
+        return self.parser.parse(s)
 
     def clear(self):
         self.tree.clear()
@@ -26816,20 +29625,33 @@ def anyor(a):
             r |= x
     return r
     
-def rv(*args, latex = None, **kwargs):
+def rv(*args, latex = None, index = False, split = True, **kwargs):
     """Random variable"""
     
-    args = [x for b in args for x in iutil.split_comma(b)]
+    if split:
+        args = [x for b in args for x in iutil.split_comma(b)]
 
     if isinstance(latex, str):
-        latex = iutil.split_comma(latex)
+        if split:
+            latex = iutil.split_comma(latex)
+        else:
+            latex = [latex]
     if latex is not None:
         args = [x + "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@" + y for x, y in zip(args, latex)]
 
     r = Comp.empty()
     for a in args:
-        r += Comp.rv(a)
+        t = iutil.ensure_comp(a)
+        if t is not None:
+            r += t
+        # if isinstance(a, str):
+        #     r += Comp.rv(a)
+        # elif isinstance(a, IBaseObj):
+        #     r += a.allcomprv_noaux()
     
+    if index:
+        r.add_markers([("index_shift", 0)])
+
     for key, value in kwargs.items():
         r.add_markers([(key, value)])
         
@@ -26843,18 +29665,42 @@ def rv_array(name, st, en = None):
     """Array of random variables"""
     return CompArray.make(*(Comp.array(name, st, en)))
     
-def real(*args, latex = None):
+    
+def rv_series(name, future = True, sufp = "P", suff = "F"):
+    """Array of random variables, with past, current and future random variables"""
+    if not future:
+        suff = None
+    return CompArray.series_sym(name, sufp = sufp, suff = suff)
+    
+def real(*args, latex = None, split = True):
     """Real variable"""
-    args = [x for b in args for x in iutil.split_comma(b)]
+    if split:
+        args = [x for b in args for x in iutil.split_comma(b)]
 
     if isinstance(latex, str):
-        latex = iutil.split_comma(latex)
+        if split:
+            latex = iutil.split_comma(latex)
+        else:
+            latex = [latex]
+
     if latex is not None:
         args = [x + "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@" + y for x, y in zip(args, latex)]
         
-    if len(args) == 1:
-        return Expr.real(args[0])
-    return ExprArray([Expr.real(a) for a in args])
+    is_one = len(args) == 1
+    r = []
+    for a in args:
+        if isinstance(a, str):
+            r.append(Expr.real(a))
+        elif iutil.isnumeric(a):
+            r.append(Expr.const(a))
+        elif isinstance(a, IBaseObj):
+            for b in a.allcomprealvar_exprlist():
+                r.append(b.copy())
+            is_one = False
+
+    if is_one and len(r) == 1:
+        return r[0]
+    return ExprArray(r)
     
 def real_array(name, st, en = None):
     """Array of random variables"""
@@ -26866,6 +29712,30 @@ def real_seq(name, st, en = None):
     t = rv_seq(name, st, en)
     return ExprArray([Expr.real(a.name) for a in t.varlist])
 
+def expr(*args):
+    """Convert to an expression"""
+    r = None
+    for a in args:
+        t = iutil.ensure_expr(a)
+        if t is not None:
+            if r is None:
+                r = t
+            else:
+                r += t
+    return r
+
+
+def region(*args):
+    """Convert to a region"""
+    r = None
+    for a in args:
+        t = iutil.ensure_region(a)
+        if t is not None:
+            if r is None:
+                r = t
+            else:
+                r &= t
+    return r
 
 def rv_empty():
     """Empty random variable"""
@@ -26894,33 +29764,37 @@ def emptyset():
     return RegionOp.empty()
     
 @fcn_list_to_list
-def H(x):
+def H(*args):
     """Entropy. 
     Returns a symbolic expression for the entropy 
     e.g. use H(X + Y | Z + W) for H(X,Y|Z,W)
     """
-    if isinstance(x, Comp):
-        if x.isempty():
-            return Expr.zero()
-        return Expr.H(x)
-    if isinstance(x, ConcDist):
-        return x.entropy()
-    if x.isempty():
-        return Expr.zero()
-    return Expr([(x.copy(), 1.0)])
+    if len(args) == 1:
+        x = args[0]
+        if isinstance(x, Comp):
+            if x.isempty():
+                return Expr.zero()
+            return Expr.H(x)
+        if isinstance(x, ConcDist):
+            return x.entropy()
+        if isinstance(x, Term):
+            return Expr([(x.copy(), 1.0)])
+        return Expr.H(iutil.ensure_comp(x))
+    else:
+        return Expr.fromterm(Term.from_symbols(args))
     
-def I(x):
+def I(*args):
     """Mutual information. 
     Returns a symbolic expression for the mutual information 
     e.g. use I(X + Y & Z | W) for I(X,Y;Z|W)
     """
-    return H(x)
+    return H(*args)
     
-def I0(x):
+def I0(*args):
     """Shorthand for I(...)==0. 
     e.g. use I0(X + Y & Z | W) for I(X,Y;Z|W)==0
     """
-    return H(x) == 0
+    return H(*args) == 0
     
 @fcn_list_to_list
 def Hc(x, z):
@@ -26939,6 +29813,7 @@ def Ic(x, y, z):
 @fcn_list_to_list
 def indep(*args):
     """Return Region where the arguments are independent."""
+    args = [iutil.ensure_comp(t) for t in args]
     r = Region.universe()
     for i in range(1, len(args)):
         r &= Expr.I(iutil.sumlist(args[:i]), iutil.sumlist(args[i])) == 0
@@ -26953,6 +29828,7 @@ def indep_across(*args):
 @fcn_list_to_list
 def equiv(*args):
     """Return Region where the arguments contain the same information."""
+    args = [iutil.ensure_comp(t) for t in args]
     if len(args) <= 1:
         return Region.universe()
     r = Region.universe()
@@ -26968,6 +29844,7 @@ def equiv(*args):
 @fcn_list_to_list
 def markov(*args):
     """Return Region where the arguments form a Markov chain."""
+    args = [iutil.ensure_comp(t) for t in args]
     r = Region.universe()
     for i in range(2, len(args)):
         r &= Expr.Ic(iutil.sumlist(args[:i-1]), iutil.sumlist(args[i]), iutil.sumlist(args[i-1])) == 0
@@ -26988,7 +29865,9 @@ def eqdist(*args):
                 if mask & (1 << j) != 0:
                     x += args[0][j]
                     y += args[i][j]
-            r &= Expr.H(x) == Expr.H(y)
+            
+            if x != y:
+                r &= Expr.H(x) == Expr.H(y)
     return r
 
 
@@ -27033,6 +29912,19 @@ def iidseq_across(*args):
     return indep(*vec) & eqdist(*vec)
 
 
+def bnet(*args):
+    """Create a Bayesian network with a list of edges (each edge is a tuple), 
+    or obtain the Bayesian network of a region.
+    """
+    r = BayesNet()
+    for a in args:
+        if isinstance(a, Region):
+            r += a.get_bayesnet()
+        else:
+            r += a
+    return r
+
+
 @fcn_list_to_list
 def sfrl_cons(x, y, u, k = None, gap = None):
     """Strong functional representation lemma. 
@@ -27070,7 +29962,7 @@ def sunflower(*args):
 def stardep(*args):
     """Star dependency.
     """
-    SU = Comp.rv("SU")
+    SU = Comp.rv("SU").avoid(*args)
     r = Region.universe()
     for a in args:
         r &= H(SU | a) == 0
@@ -27084,7 +29976,7 @@ def cardbd(x, n):
     
     loge = PsiOpts.settings["ent_coeff"]
     
-    V = rv_seq("V", 0, n-1)
+    V = rv_seq("V", 0, n-1).avoid(x)
     r = Expr.H(V[n - 2]) == 0
     r2 = Region.universe()
     for i in range(0, n - 1):
@@ -27098,6 +29990,18 @@ def cardbd(x, n):
 def isbin(x):
     """Return Region where x is a binary random variable."""
     return cardbd(x, 2)
+
+@fcn_list_to_list
+def isuniform(x):
+    """Return Region where x is a uniformly distributed random variable.
+    Zhen Zhang and Raymond W Yeung, "A non-Shannon-type conditional inequality 
+    of information quantities", IEEE Trans. Inf. Theory 43, 6 (1997), pp. 1982-1986.
+    """
+    U = rv("U").avoid(x)
+    V = rv("V").avoid(x)
+    r = (H(x | U+V) == 0) & (H(U | x+V) == 0) & (H(V | x+U) == 0)
+    r &= indep(x, U) & indep(x, V) & indep(U, V)
+    return r.exists(U+V)
 
 
 def sfrl(gap = None):
@@ -27300,7 +30204,7 @@ def exists_linear(n, p = 2, maxsize = None):
             cname += "V" + str(i)
             cname_latex += "V_{" + str(i) + "}"
         
-        crv = rv(cname, latex = cname_latex)
+        crv = rv(cname, latex = cname_latex, split = False)
         r &= Expr.H(crv) == logp
         V += crv
         
@@ -27391,8 +30295,8 @@ def meet(*args):
     Peter Gacs and Janos Korner. Common information is far less than mutual information.
     Problems of Control and Information Theory, 2(2):149-162, 1973.
     """
-    U = Comp.rv(iutil.fcn_name_maker("meet", args))
-    V = Comp.rv("V")
+    U = Comp.rv(iutil.fcn_name_maker("meet", args)).avoid(*args)
+    V = Comp.rv("V").avoid(*args)
     U.add_markers([("mustuse", 1), ("symm_args", 1), ("nonsubset_args", 1)])
     V.add_markers([("nonempty", 1)])
     r = Region.universe()
@@ -27410,8 +30314,8 @@ def meet(*args):
 def mss(x, y):
     """Minimal sufficient statistic of x about y."""
     
-    U = Comp.rv(iutil.fcn_name_maker("mss", [x, y]))
-    V = Comp.rv("V")
+    U = Comp.rv(iutil.fcn_name_maker("mss", [x, y])).avoid(x, y)
+    V = Comp.rv("V").avoid(x, y)
     U.add_markers([("mustuse", 1), ("nonsubset_args", 1)])
     r = (Expr.Hc(U, x) == 0) & (Expr.Ic(x, y, U) == 0)
     r2 = (Expr.Hc(V, x) == 0) & (Expr.Ic(x, y, V) == 0)
@@ -27427,7 +30331,7 @@ def sfrl_rv(x, y, gap = None):
     Li, C. T., & El Gamal, A. (2018). Strong functional representation lemma and
     applications to coding theorems. IEEE Trans. Info. Theory, 64(11), 6967-6978.
     """
-    U = Comp.rv(iutil.fcn_name_maker("sfrl", [x, y], pname = "sfrl_rv"))
+    U = Comp.rv(iutil.fcn_name_maker("sfrl", [x, y], pname = "sfrl_rv")).avoid(x, y)
     #U = Comp.rv(y.tostring(add_bracket = True) + "%" + x.tostring(add_bracket = True))
     r = (Expr.Hc(y, x + U) == 0) & (Expr.I(x, U) == 0)
     if gap is not None:
@@ -27442,8 +30346,8 @@ def esfrl_rv(x, y, gap = None):
     Li, C. T., & El Gamal, A. (2018). Strong functional representation lemma and
     applications to coding theorems. IEEE Trans. Info. Theory, 64(11), 6967-6978.
     """
-    U = Comp.rv(iutil.fcn_name_maker("esfrl", [x, y], pname = "esfrl_rv"))
-    K = Comp.rv(iutil.fcn_name_maker("esfrl_K", [x, y], pname = "esfrl_rv_K"))
+    U = Comp.rv(iutil.fcn_name_maker("esfrl", [x, y], pname = "esfrl_rv")).avoid(x, y)
+    K = Comp.rv(iutil.fcn_name_maker("esfrl_K", [x, y], pname = "esfrl_rv_K")).avoid(x, y)
     r = (Expr.Hc(K, x + U) == 0) & (Expr.Hc(Y, U + K) == 0) & (Expr.I(x, U) == 0)
     if gap is not None:
         if not isinstance(gap, Expr):
@@ -27460,30 +30364,32 @@ def copylem_rv(x, y):
     Randall Dougherty, Chris Freiling, and Kenneth Zeger. "Non-Shannon information 
     inequalities in four random variables." arXiv preprint arXiv:1104.3602 (2011).
     """
-    U = Comp.rv(iutil.fcn_name_maker("copy", [x, y], pname = "copylem_rv"))
+    U = Comp.rv(iutil.fcn_name_maker("copy", [x, y], pname = "copylem_rv")).avoid(x, y)
     r = eqdist(list(x) + [y], list(x) + [U]) & markov(y, sum(x), U)
     return Comp.rv_reg(U, r, reg_det = False)
 
 
 @fcn_list_to_list
-def total_corr(x):
+def total_corr(*args):
     """Total correlation. 
     Watanabe S (1960). Information theoretical analysis of multivariate correlation, 
     IBM Journal of Research and Development 4, 66-82. 
     e.g. total_corr(X & Y & Z | W)
     """
+    x = Term.from_symbols(args)
     if isinstance(x, Comp):
         return Expr.H(x)
     return sum([Expr.Hc(a, x.z) for a in x.x]) - Expr.Hc(sum(x.x), x.z)
 
 
 @fcn_list_to_list
-def dual_total_corr(x):
+def dual_total_corr(*args):
     """Dual total correlation. 
     Han T. S. (1978). Nonnegative entropy measures of multivariate symmetric 
     correlations, Information and Control 36, 133-156. 
     e.g. dual_total_corr(X & Y & Z | W)
     """
+    x = Term.from_symbols(args)
     if isinstance(x, Comp):
         return Expr.H(x)
     r = Expr.Hc(sum(x.x), x.z)
@@ -27494,13 +30400,14 @@ def dual_total_corr(x):
 
 
 @fcn_list_to_list
-def gacs_korner(x, mi = None):
+def gacs_korner(*args, mi = None):
     """Gacs-Korner common information. 
     Peter Gacs and Janos Korner. Common information is far less than mutual information.
     Problems of Control and Information Theory, 2(2):149-162, 1973. 
     e.g. gacs_korner(X & Y & Z | W)
     """
-    U = Comp.rv("U")
+    x = Term.from_symbols(args)
+    U = Comp.rv("U").avoid(x)
     R = real(iutil.fcn_name_maker("K", x, pname = "gacs_korner" + ("_mi" if mi is True else ""), cropi = True))
 
     r = None
@@ -27529,13 +30436,14 @@ def gacs_korner(x, mi = None):
 
 
 @fcn_list_to_list
-def gacs_korner_mi(x):
+def gacs_korner_mi(*args):
     """Gacs-Korner common information, alternative characterization via mutual information. 
     Peter Gacs and Janos Korner. Common information is far less than mutual information.
     Problems of Control and Information Theory, 2(2):149-162, 1973. 
     e.g. gacs_korner_mi(X & Y & Z | W)
     """
-    U = Comp.rv("U")
+    x = Term.from_symbols(args)
+    U = Comp.rv("U").avoid(x)
     R = real(iutil.fcn_name_maker("\\tilde{K}", x, pname = "gacs_korner_mi", cropi = True))
     r = universe()
     sumx = sum(x.x, Comp.empty())
@@ -27546,13 +30454,14 @@ def gacs_korner_mi(x):
 
 
 @fcn_list_to_list
-def wyner_ci(x):
+def wyner_ci(*args):
     """Wyner's common information. 
     A. D. Wyner. The common information of two dependent random variables.
     IEEE Trans. Info. Theory, 21(2):163-179, 1975. 
     e.g. wyner_ci(X & Y & Z | W)
     """
-    U = Comp.rv("U")
+    x = Term.from_symbols(args)
+    U = Comp.rv("U").avoid(x)
     R = real(iutil.fcn_name_maker("J", x, pname = "wyner_ci", cropi = True))
     r = indep(*(x.x)).conditioned(U + x.z)
     r &= R >= Expr.Ic(U, sum(x.x), x.z)
@@ -27560,13 +30469,14 @@ def wyner_ci(x):
 
 
 @fcn_list_to_list
-def exact_ci(x):
+def exact_ci(*args):
     """Common entropy (one-shot exact common information). 
     G. R. Kumar, C. T. Li, and A. El Gamal. Exact common information. In Information
     Theory (ISIT), 2014 IEEE International Symposium on, 161-165. IEEE, 2014. 
     e.g. exact_ci(X & Y & Z | W)
     """
-    U = Comp.rv("U")
+    x = Term.from_symbols(args)
+    U = Comp.rv("U").avoid(x)
     R = real(iutil.fcn_name_maker("G", x, pname = "exact_ci", cropi = True))
     r = indep(*(x.x)).conditioned(U + x.z)
     r &= R >= Expr.Hc(U, x.z)
@@ -27574,13 +30484,14 @@ def exact_ci(x):
 
 
 @fcn_list_to_list
-def H_nec(x):
+def H_nec(*args):
     """Necessary conditional entropy. 
     Cuff, P. W., Permuter, H. H., & Cover, T. M. (2010). Coordination capacity.
     IEEE Transactions on Information Theory, 56(9), 4181-4206. 
     e.g. H_nec(X + Y | W)
     """
-    U = Comp.rv("U")
+    x = Term.from_symbols(args)
+    U = Comp.rv("U").avoid(x)
     R = real(iutil.fcn_name_maker("Hnec", x, pname = "H_nec", lname = "H^\\dagger", cropi = True))
     r = markov(x.z, U, x.x[0]) & (Expr.Hc(U, x.x[0]) == 0)
     r &= R >= Expr.Hc(U, x.z)
@@ -27594,7 +30505,7 @@ def excess_fi(x, y):
     applications to coding theorems. IEEE Trans. Info. Theory, 64(11), 6967-6978. 
     e.g. excess_fi(X, Y)
     """
-    U = Comp.rv("U")
+    U = Comp.rv("U").avoid(x, y)
     R = real(iutil.fcn_name_maker("excess_fi", [x, y], pname = "excess_fi", lname = "\\Psi"))
     r = indep(U, x)
     r &= R >= Expr.Hc(y, U) - Expr.I(x, y)
@@ -27610,7 +30521,7 @@ def korner_graph_ent(x, y):
     causal side information," IEEE Transactions on Information Theory 64.8 (2017): 5862-5878.
     e.g. korner_graph_ent(X, Y)
     """
-    U = Comp.rv("U")
+    U = Comp.rv("U").avoid(x, y)
     R = real(iutil.fcn_name_maker("korner_graph_ent", [x, y], lname = "H_K"))
     r = markov(U, x, y) & (Expr.Hc(x, y+U) == 0)
     r &= R >= Expr.I(x, U)
@@ -27626,7 +30537,7 @@ def perfect_privacy(x, y):
     Control, and Computing (Allerton), 2014 52nd Annual Allerton Conference on, Sept 2014, pp. 1272-1278.
     e.g. perfect_privacy(X, Y)
     """
-    U = Comp.rv("U")
+    U = Comp.rv("U").avoid(x, y)
     R = real(iutil.fcn_name_maker("perfect_privacy", [x, y], lname = "g_0"))
     r = markov(x, y, U) & (Expr.I(x, U) == 0)
     r &= R <= Expr.I(y, U)
@@ -27640,7 +30551,7 @@ def max_interaction_info(x, y):
     causal side information," IEEE Transactions on Information Theory 64.8 (2017): 5862-5878.
     e.g. max_interaction_info(X, Y)
     """
-    U = Comp.rv("U")
+    U = Comp.rv("U").avoid(x, y)
     R = real(iutil.fcn_name_maker("max_interaction_info", [x, y], lname = "G_{NNI}"))
     r = Region.universe()
     r &= R <= Expr.Ic(x, y, U) - Expr.I(x, y)
@@ -27654,7 +30565,7 @@ def asymm_interaction_info(x, y):
     causal side information," IEEE Transactions on Information Theory 64.8 (2017): 5862-5878.
     e.g. max_interaction_info(X, Y)
     """
-    U = rv("U")
+    U = rv("U").avoid(x, y)
     R = real(iutil.fcn_name_maker("asymm_interaction_info", [x, y], lname = "G_{PNI}"))
     r = indep(x, U)
     r &= R <= Expr.Ic(x, y, U) - Expr.I(x, y)
@@ -27668,7 +30579,7 @@ def symm_interaction_info(x, y):
     causal side information," IEEE Transactions on Information Theory 64.8 (2017): 5862-5878.
     e.g. max_interaction_info(X, Y)
     """
-    U = Comp.rv("U")
+    U = Comp.rv("U").avoid(x, y)
     R = real(iutil.fcn_name_maker("symm_interaction_info", [x, y], lname = "G_{PPI}"))
     r = indep(x, U) & indep(y, U)
     r &= R <= Expr.Ic(x, y, U) - Expr.I(x, y)
@@ -27693,7 +30604,7 @@ def minent_coupling(x, y):
     Probability Distributions," https://arxiv.org/abs/2006.07955 , 2020.
     e.g. minent_coupling(X, Y)
     """
-    U = Comp.rv("U")
+    U = Comp.rv("U").avoid(x, y)
     R = real(iutil.fcn_name_maker("MEC", [x, y], pname = "minent_coupling", lname = "H_{couple}"))
     r = indep(U, x) & (Expr.Hc(y, x + U) == 0)
     r &= R >= Expr.H(U)
@@ -27733,7 +30644,7 @@ def intrinsic_mi(x):
     conditional information." IEEE Transactions on Information Theory 45.2 (1999): 499-514.
     e.g. intrinsic_mi(X & Y | Z)
     """
-    U = Comp.rv("U")
+    U = Comp.rv("U").avoid(x)
     R = real(iutil.fcn_name_maker("IMI", x, pname = "intrinsic_mi", lname = "I_{intrinsic}", cropi = True))
     r = markov(sum(x.x), x.z, U) & (R >= mutual_dep(Term(x.x, U)))
     return r.exists(U).minimum(R, None, allow_reuse = True)
@@ -27863,29 +30774,50 @@ def ent_region(n, real_name = "R", var_name = "X"):
     return (re == H(cv)).exists(xs)
 
 
-def csiszar_sum(*args):
+def csiszar_sum(*args, telescoping = False, seq_cond = False, timerv = None):
     """Csiszar sum identity.
+    J. Korner and K. Marton, "Images of a set via two channels and their role in multi-user communication," 
+    IEEE Trans. Inf. Theory, vol. 23, no. 6, pp. 751-761, 1977.
+    I. Csiszar and J. Korner, "Broadcast channels with confidential messages," 
+    IEEE Trans. Inf. Theory, vol. 24, no. 3, pp. 339-348, 1978.
     """
     r = Region.universe()
     vecs = []
+    vecs_f_mask = 0
     ones = []
     for a in args:
         if isinstance(a, CompArray) or isinstance(a, list):
             vecs.append(a)
+            if len(a) >= 3:
+                vecs_f_mask |= 1 << (len(vecs) - 1)
             # ones.append(sum(a))
+            if timerv is not None:
+                for i in range(1, len(a)):
+                    r &= H(timerv | a[i]) == 0
         else:
             ones.append(a)
     
-    for xmask in range(1, 1 << len(vecs)):
+    for xmask in igen.subset_mask(vecs_f_mask):
+        if xmask == 0:
+            continue
         x = sum(vecs[i] for i in range(len(vecs)) if xmask & (1 << i))
         #for ymask in igen.subset_mask((1 << len(vecs)) - 1 - xmask):
         for ymask in range(1, 1 << len(vecs)):
             if ymask == 0:
                 continue
-            y = sum(vecs[i] for i in range(len(vecs)) if ymask & (1 << i))
-            for umask in range(1 << len(ones)):
-                u = sum((ones[i] for i in range(len(ones)) if umask & (1 << i)), Comp.empty())
-                r &= Expr.Ic(x[2], y[0], y[1]+u) == Expr.Ic(y[1], x[0], x[2]+u)
+            y = sum(vecs[i][0:2] for i in range(len(vecs)) if ymask & (1 << i))
+            vmask_all = 0
+            if seq_cond:
+                vmask_all = ((1 << len(vecs)) - 1) & ~(xmask | ymask)
+            for vmask in igen.subset_mask(vmask_all):
+                for umask in range(1 << len(ones)):
+                    u = (sum((ones[i] for i in range(len(ones)) if umask & (1 << i)), Comp.empty())
+                        + sum(sum(vecs[i]) for i in range(len(vecs)) if vmask & (1 << i)))
+                    
+                    if telescoping:
+                        r &= Expr.Ic(x[0] + x[2], y[1], u) == Expr.Ic(x[2], y[0] + y[1], u)
+                    else:
+                        r &= Expr.Ic(x[2], y[0], y[1]+u) == Expr.Ic(y[1], x[0], x[2]+u)
                 
     return r.add_meta("pf_note", ["Csiszar sum"])
         

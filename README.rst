@@ -33,6 +33,7 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - `Bayesian network optimization`_. Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
 
+- (Experimental) Quantum information theory and von Neumann entropy.
 
 
 Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psitip/blob/master/demo_readme.ipynb>`_ :
@@ -46,6 +47,8 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
     PsiOpts.setting(repr_latex = True)         # Jupyter Notebook LaTeX display
     PsiOpts.setting(venn_latex = True)         # LaTeX in diagrams
     PsiOpts.setting(proof_note_color = "blue") # Reasons in proofs are blue
+    PsiOpts.setting(solve_display_reg = True)  # Display claims in solve commands
+    numpy.random.seed(1)  # Random search of examples uses numpy.random
     
     X, Y, Z, W, U, V, M, S = rv("X, Y, Z, W, U, V, M, S") # Declare random variables
 
@@ -78,23 +81,13 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 .. code:: python
 
-    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).display_bool() # Implication
+    # Prove an implication
+    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).solve(full = True)
+
 
 
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block11.svg
-
---------------
-
-.. code:: python
-
-    # Proof of the implication
-    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).proof()
-
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block13.svg
 
 --------------
 
@@ -105,7 +98,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_6_0.png
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_5_0.png
 
 
 
@@ -114,6 +107,18 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
     <Figure size 432x288 with 0 Axes>
 
 
+
+--------------
+
+.. code:: python
+
+    # Disprove an implication by a counterexample
+    (markov(X+W, Y, Z) >> (I(X & W | Y) * 3 / 2 <= H(X | Z))).solve(full = True)
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.svg
 
 --------------
 
@@ -159,7 +164,8 @@ User-defined information quantities
 
 .. code:: python
 
-    (gkci <= I(X & Y)).display_bool()        # Gács-Körner <= I(X;Y)
+    (gkci <= I(X & Y)).solve()        # Gács-Körner <= I(X;Y)
+
 
 
 
@@ -169,7 +175,8 @@ User-defined information quantities
 
 .. code:: python
 
-    (I(X & Y) <= wci).display_bool()         # I(X;Y) <= Wyner
+    (I(X & Y) <= wci).solve()         # I(X;Y) <= Wyner
+
 
 
 
@@ -179,7 +186,8 @@ User-defined information quantities
 
 .. code:: python
 
-    (wci <= emin(H(X), H(Y))).display_bool() # Wyner <= min(H(X),H(Y))
+    (wci <= emin(H(X), H(Y))).solve() # Wyner <= min(H(X),H(Y))
+
 
 
 
@@ -189,7 +197,7 @@ User-defined information quantities
 
 .. code:: python
 
-    (gkci <= wci).proof(detail = True) # Output proof of Gács-Körner <= Wyner
+    (gkci <= wci).solve(full = True) # Output proof of Gács-Körner <= Wyner
 
 
 
@@ -207,18 +215,6 @@ User-defined information quantities
 
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block33.svg
-
---------------
-
-.. code:: python
-
-    # The meet or Gács-Körner common part [Gács-Körner 1973] between X and Y
-    # is a function of the GK common part between X and (Y,Z)
-    (H(meet(X, Y) | meet(X, Y + Z)) == 0).display_bool()
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block35.svg
 
 --------------
 
@@ -247,7 +243,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_19_0.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_18_0.svg
 
 
 
@@ -260,7 +256,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block42.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block40.svg
 
 --------------
 
@@ -272,19 +268,19 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block42.svg
 
 --------------
 
 .. code:: python
 
     # Converse proof, print auxiliary random variables
-    (model.get_outer() >> r).check_getaux_array()
+    (model.get_outer() >> r).solve(display_reg = False)
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
 
 --------------
 
@@ -296,7 +292,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
 
 --------------
 
@@ -307,7 +303,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
 
 --------------
 
@@ -318,7 +314,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
 
 --------------
 
@@ -329,7 +325,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
 
 --------------
 
@@ -342,7 +338,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block56.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
 
 --------------
 
@@ -352,11 +348,12 @@ Non-Shannon-type Inequalities
 .. code:: python
 
     # Zhang-Yeung inequality [Zhang-Yeung 1998] cannot be proved by Shannon-type inequalities
-    (2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).display_bool()
+    (2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).solve()
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.svg
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.svg
 
 --------------
 
@@ -366,12 +363,12 @@ Non-Shannon-type Inequalities
     # You may use the built-in "with copylem().assumed():" instead of the below
     with eqdist([X, Y, U], [X, Y, Z]).exists(U).forall(X+Y+Z).assumed():
         
-        # Prove Zhang-Yeung inequality
-        (2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).display_bool()
+        # Prove Zhang-Yeung inequality, and print how the copy lemma is used
+        display((2*I(Z&W) <= I(X&Y) + I(X & Z+W) + 3*I(Z&W | X) + I(Z&W | Y)).solve())
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.svg
 
 --------------
 
@@ -387,7 +384,9 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block64.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
+
+
 
 --------------
 
@@ -486,11 +485,13 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - **Random variables** are declared as :code:`X = rv("X")`. The name "X" passed to "rv" must be unique. Variables with the same name are treated as being the same. The return value is a :code:`Comp` object (compound random variable).
 
- - As a shorthand, you may declare multiple random variables in the same line as :code:`X, Y = rv("X, Y")`. Variable names are separated by :code:`", "` (the space cannot be omitted).
+ - As a shorthand, you may declare multiple random variables in the same line as :code:`X, Y = rv("X, Y")`. Variable names are separated by :code:`", "`.
 
 - The joint random variable (X,Y) is expressed as :code:`X + Y` (a :code:`Comp` object).
 
 - **Entropy** H(X) is expressed as :code:`H(X)`. **Conditional entropy** H(X|Y) is expressed as :code:`H(X | Y)`. **Conditional mutual information** I(X;Y|Z) is expressed as :code:`I(X & Y | Z)`. The return values are :code:`Expr` objects (expressions).
+
+ - Joint entropy can be expressed as :code:`H(X+Y)` (preferred) or :code:`H(X, Y)`. One may also write expressions like :code:`I(X+Y & Z+W | U+V)` (preferred) or :code:`I(X,Y & Z,W | U,V)`.
 
 - **Real variables** are declared as :code:`a = real("a")`. The return value is an :code:`Expr` object (expression).
 
@@ -504,6 +505,8 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - When two expressions are compared (using :code:`<=`, :code:`>=` or :code:`==`), the return value is a :code:`Region` object (not a :code:`bool`). The :code:`Region` object represents the set of distributions where the condition is satisfied. E.g. :code:`I(X & Y) == 0`, :code:`H(X | Y) <= H(Z) + a`.
  
+ - :code:`~a` is a shorthand for :code:`a == 0` (where :code:`a` is an :code:`Expr`). The reason for this shorthand is that :code:`not a` is the same as :code:`a == 0` for :code:`a` being :code:`int/float` in Python. For example, the region where :code:`Y` is a function of :code:`X` (both :code:`Comp`) can be expressed as :code:`~H(Y|X)`.
+
  - While Psitip can handle general affine and half-space constraints like :code:`H(X) <= 1` (i.e., comparing an expression with a nonzero constant, or comparing affine expressions), they are unrecommended as they are prone to numerical error in the solver.
  
  - While Psitip can handle strict inequalities like :code:`H(X) > H(Y)`, strict inequalities are unrecommended as they are prone to numerical error in the solver.
@@ -553,6 +556,8 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 - **Logical equivalence**. To test whether the region :code:`r1` is equivalent to the region :code:`r2`, use :code:`r1.equiv(r2)` (which returns :code:`bool`). This uses :code:`implies` internally, and the same options can be used.
 
 - Use :code:`str(x)` to convert :code:`x` (a :code:`Comp`, :code:`Expr` or :code:`Region` object) to string. The :code:`tostring` method of :code:`Comp`, :code:`Expr` and :code:`Region` provides more options. For example, :code:`r.tostring(tosort = True, lhsvar = R)` converts the region :code:`r` to string, sorting all terms and constraints, and putting the real variable :code:`R` to the left hand side of all expressions (and the rest to the right).
+
+- **(Warning: experimental) Quantum information theory**. To use von Neumann entropy instead of Shannon entropy, add the line :code:`PsiOpts.setting(quantum = True)` to the beginning. Only supports limited functionalities (e.g. verifying inequalities and implications). Uses the basic inequalities in [Pippenger 2003].
 
 |
 |
@@ -607,9 +612,13 @@ Advanced
  - Uniqueness does not imply existence. For both existence and uniqueness, use :code:`Region.exists_unique`.
 
 
-- **Substitution**. The function call :code:`r.substituted(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`. To replace :code:`x1` by :code:`y1`, and :code:`x2` by :code:`y2`, use :code:`r.substituted({x1: y1, x2: y2})` or :code:`r.substituted(x1 = y1, x2 = y2)` (the latter only works if :code:`x1` has name :code:`"x1"`).
+- To check whether a variable / expression / constraint :code:`x` (:code:`Comp`, :code:`Expr` or :code:`Region` object) appears in :code:`y` (:code:`Comp`, :code:`Expr` or :code:`Region` object), use :code:`x in y`.
 
- - Call :code:`substituted_aux` instead of :code:`substituted` to stop treating :code:`x` as an auxiliary in the region :code:`r` (useful in substituting a known value of an auxiliary).
+- To obtain all random variables (excluding auxiliaries) in :code:`x` (:code:`Expr` or :code:`Region` object), use :code:`x.rvs`. To obtain all real variables in :code:`x` (:code:`Expr` or :code:`Region` object), use :code:`x.reals`. To obtain all existentially-quantified (resp. universally-quantified) auxiliary random variables in :code:`x` (`Region` object), use :code:`x.aux` (resp. :code:`x.auxi`). 
+
+- **Substitution**. The function call :code:`r.subs(x, y)` (where :code:`r` is an :code:`Expr` or :code:`Region`, and :code:`x`, :code:`y` are either both :code:`Comp` or both :code:`Expr`) returns an expression/region where all appearances of :code:`x` in :code:`r` are replaced by :code:`y`. To replace :code:`x1` by :code:`y1`, and :code:`x2` by :code:`y2`, use :code:`r.subs({x1: y1, x2: y2})` or :code:`r.subs(x1 = y1, x2 = y2)` (the latter only works if :code:`x1` has name :code:`"x1"`).
+
+ - Call :code:`subs_aux` instead of :code:`subs` to stop treating :code:`x` as an auxiliary in the region :code:`r` (useful in substituting a known value of an auxiliary).
 
   .. _information bottleneck:
 
@@ -659,25 +668,25 @@ Advanced
 
   See `Fourier-Motzkin elimination`_ for another example. For a projection operation that also eliminates random variables, see `Discover inequalities`_.
 
-- While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the auxiliary random variables, instead call :code:`r.check_getaux()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments (returns None if :code:`bool(r)` is False). For example:
+- While one can check the conditions in :code:`r` (a :code:`Region` object) by calling :code:`bool(r)`, to also obtain the **auxiliary random variables**, instead call :code:`r.solve()`, which returns a list of pairs of :code:`Comp` objects that gives the auxiliary random variable assignments (returns None if :code:`bool(r)` is False). For example:
 
   .. code-block:: python
 
-    (markov(X, U, Y).exists(U).minimum(I(U & X+Y)) <= H(X)).check_getaux()
+    res = (markov(X, U, Y).minimum(I(U & X+Y), U) <= H(X)).solve()
 
-  returns :code:`[(U, X)]`.
+  returns :code:`U := X`. Note that :code:`res` is a :code:`CompArray` object, and its content can be accessed via :code:`res[U]` (which gives :code:`X`) or :code:`(res[0,0],res[0,1])` (which gives :code:`(U,X)`).
 
- - If branching is required (e.g. for union of regions), :code:`check_getaux` may give a list of lists of pairs, where each list represents a branch. For example:
+ - If branching is required (e.g. for union of regions), :code:`solve` may give a list of lists of pairs, where each list represents a branch. For example:
 
   .. code-block:: python
 
-    (markov(X, U, Y).exists(U).minimum(I(U & X+Y))
-        <= emin(H(X),H(Y))).check_getaux()
+    (markov(X, U, Y).minimum(I(U & X+Y), U) <= emin(H(X),H(Y))).solve()
 
-  returns :code:`[[(U, X)], [(U, X+Y)], [(U, Y)]]`.
+  returns :code:`[[(U, X)], [(U, Y)]]`.
 
- - The function :code:`check_getaux_dict` returns the results as a :code:`dict`. The function :code:`check_getaux_array` returns the results as a :code:`CompArray`. These two methods should only be used on simple implications (without union, negation and maximization/minimization quantities).
+- **Proving / disproving a region**. To automatically prove :code:`r` (a :code:`Region` object) or disprove it using a counterexample, use :code:`r.solve(full = True)`. Loosely speaking, it will call :code:`r.solve()`, :code:`(~r).example()`, :code:`(~r).solve()` and :code:`r.example()` in this sequence to try to prove / find counterexample / disprove / find example respectively. This is extremely slow, and should be used only for simple statements. 
 
+ - To perform only one of the aforementioned four operations, use :code:`r.solve(method = "c")` / :code:`r.solve(method = "-e")` / :code:`r.solve(method = "-c")` / :code:`r.solve(method = "e")` respectively.
 
 - To draw the **Bayesian network** of a region :code:`r`, use :code:`r.graph()` (which gives a Graphviz digraph). To draw the Bayesian network only on the random variables in :code:`a` (:code:`Comp` object), use :code:`r.graph(a)`.
 
@@ -743,7 +752,7 @@ Also see `Example 3: Lossy source coding with side information at decoder`_.
 Interactive mode and Parsing LaTeX code
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Interactive mode can be entered by calling the main function of the Psitip package (if the Psitip package is installed, type :code:`python -m psitip` in the terminal). It has a lax syntax, accepting the Psitip syntax, common notations and LaTeX input. Common functions are :code:`check` (checking the conditions), :code:`implies` (material implication), :code:`simplify`, :code:`assume` (assume a region is true; assumption can be accessed via :code:`assumption`, and cleared via :code:`clear assume`) and :code:`latex` (latex output). Parsing can also be accessed using :code:`Expr.parse("3I(X,Y;Z)")` and :code:`Region.parse("3I(X,Y;Z) \le 2")` in Python code (`Jupyter Notebook example <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_latex.ipynb>`_). Interactive mode examples:
+Interactive mode can be entered by calling the main function of the Psitip package (if the Psitip package is installed, type :code:`python -m psitip` in the terminal). It has a lax syntax, accepting the Psitip syntax, common notations and LaTeX input. Common functions are :code:`check` (checking the conditions), :code:`implies` (material implication), :code:`simplify`, :code:`assume` (assume a region is true; assumption can be accessed via :code:`assumption`, and cleared via :code:`clear assume`) and :code:`latex` (latex output). Parsing can also be accessed using :code:`expr("3I(X,Y;Z)")` and :code:`region("3I(X,Y;Z) \le 2")` in Python code (`Jupyter Notebook example <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_latex.ipynb>`_). Interactive mode examples:
 
 .. code-block:: text
 
@@ -896,6 +905,8 @@ Letting :code:`P = ConcModel()`, we have the following operations:
 
 - :code:`P[r]` for a region (:code:`Region`) :code:`r` gives the truth value of the conditions in :code:`r`.
 
+- :code:`region(P)` gives the region (:code:`Region` object) that contains the entropy information in the model. For example,:code:`P[X] = [0.5, 0.5]; region(P)` gives :code:`H(X) == 1`.
+
 - :code:`P.venn()` draws the information diagram of the random variables.
 
 - :code:`P.graph()` gives the Bayesian network of the random variables as a Graphviz graph.
@@ -948,7 +959,9 @@ The function :code:`ConcModel.minimize(expr, vs, reg)` (or :code:`maximize`) tak
 
  .. _Finding examples:
 
-- **Finding examples**. For a :code:`Region` :code:`r`, to find an example of distributions of random variables where :code:`r` is satisfied, use :code:`r.example()`, which returns a :code:`ConcModel`. E.g. :code:`P = ((I(X & Y) == 0.2) & (H(X) == 0.3)).example(); print(P[X+Y])`. It uses :code:`ConcModel.minimize` internally, and all above options apply (turning on :code:`opt_basinhopping` is highly recommended).
+- **Finding examples**. For a :code:`Region` :code:`r`, to find an example of distributions of random variables where :code:`r` is satisfied, use :code:`r.example(card = 3)` (fixing the cardinality of random variables with undeclared cardinalities to 3), which returns a :code:`ConcModel`. E.g. :code:`P = ((I(X & Y) == 0.2) & (H(X) == 0.3)).example(); print(P[X+Y])`. It uses :code:`ConcModel.minimize` internally, and all above options apply (turning on :code:`opt_basinhopping` is highly recommended).
+
+ - To find a **counter example** of a :code:`Region` :code:`r`, simply find an example of its negation, i.e., :code:`(~r).example()`.
 
 
 Example 1: Channel coding, finding optimal input distribution
@@ -1189,7 +1202,7 @@ After a setting is specified, call:
 
 - :code:`model.get_outer()` to obtain an outer bound (:code:`Region`). 
 
- - Note that the outer bound includes all past/future random variables, and is not simplified. Though this is useful for checking other outer bounds. For example, :code:`(model.get_outer() >> r).check_getaux()` checks whether :code:`r` is an outer bound (by checking whether the outer bound implies :code:`r`), and if so, outputs the choices of auxiliaries for the proof. If :code:`r` is an inner bound, this checks whether :code:`r` is tight.
+ - Note that the outer bound includes all past/future random variables, and is not simplified. Though this is useful for checking other outer bounds. For example, :code:`(model.get_outer() >> r).solve()` checks whether :code:`r` is an outer bound (by checking whether the outer bound implies :code:`r`), and if so, outputs the choices of auxiliaries for the proof. If :code:`r` is an inner bound, this checks whether :code:`r` is tight.
 
  - Use :code:`model.get_outer(n)` instead to limit the number of auxiliary random variables to :code:`n` (an :code:`int` zero or above). Including this parameter can give an outer bound in a simpler, more familiar form, but requires a significant computational time (especially when :code:`n` is at least 2).
 
@@ -1244,7 +1257,7 @@ Example 1: Degraded broadcast channel
     r_out = model.get_outer() # Get outer bound
 
     # Check outer bound implies inner bound and output auxiliaries for proof
-    print((r_out >> r).check_getaux())
+    print((r_out >> r).solve())
 
 
     # *** Plot capacity region for Z-channel ***
@@ -1317,7 +1330,7 @@ Example 2: Less noisy and more capable broadcast channel
     r_out = model.get_outer() # Get outer bound
 
     # Check outer bound implies inner bound and output auxiliaries for proof
-    print((r_out >> r).check_getaux())
+    print((r_out >> r).solve())
 
 
 Example 3: Lossy source coding with side information at decoder
@@ -1346,7 +1359,7 @@ Example 3: Lossy source coding with side information at decoder
     r_out = model.get_outer() # Get outer bound
 
     with PsiOpts(proof_new = True):        # Record human-readable proof
-        print((r_out >> r).check_getaux()) # Tightness, output auxiliaries
+        print((r_out >> r).solve()) # Tightness, output auxiliaries
         print(PsiOpts.get_proof())         # Print tightness proof
 
 
@@ -1525,11 +1538,11 @@ The following are true statements (:code:`Region` objects) that allow Psitip to 
     # Using double Markov property
     with dblmarkov().assumed():
         aux = ((markov(X, Y, Z) & markov(Y, X, Z))
-            >> (H(mss(X, Z) | mss(Y, Z)) == 0)).check_getaux()
+            >> (H(mss(X, Z) | mss(Y, Z)) == 0)).solve()
         print(iutil.list_tostr_std(aux))
         
         aux = ((markov(X, Y, Z) & markov(Y, X, Z))
-            >> markov(X+Y, meet(X, Y), Z)).check_getaux()
+            >> markov(X+Y, meet(X, Y), Z)).solve()
         print(iutil.list_tostr_std(aux))
 
 - The approximate infinite divisibility of information [Li 2020] is given by :code:`ainfdiv(n)`.
@@ -1735,6 +1748,8 @@ Some of the options are:
 
 - :code:`auxsearch_level` : The level of searching (integer in 0,...,10) for deducing implications. A higher level takes more time.
 
+- :code:`level` : Set both :code:`simplify_level` and :code:`auxsearch_level`. A higher level takes more time.
+
 - :code:`cases` : Set to True to handle case decomposition in auxiliary search. Default is False.
 
 - :code:`forall_multiuse` : Set to False to only allow one value for variables with universal quantification. Default is True. Note that if this option is True, then the auxiliary search result for variables with universal quantification will be meaningless.
@@ -1742,6 +1757,8 @@ Some of the options are:
 - :code:`str_style` : The style of string conversion :code:`str(x)` and verbose output. Values are :code:`"standard"` (e.g. :code:`3I(X,Y;Z|W)-H(X) >= 0`, default), :code:`"code"` (e.g. :code:`3*I(X+Y&Z|W)-H(X) >= 0`, consistent with the Psitip syntax so the output can be copied back to the code), or :code:`"latex"` (e.g. :code:`3I(X,Y;Z|W)-H(X) \ge 0`, for LaTeX equations).
 
 - :code:`str_eqn_prefer_ge` : Whether "a >= b" is preferred over "b <= a" in string conversion. Default is False.
+
+- :code:`str_float_dp` : The number of digits after decimal point to display for floats. Default is 5.
 
 - :code:`repr_simplify` : Whether the repr of an :code:`Expr` or :code:`Region` object is simplified (useful for console and Jupyter Notebook). Default is True.
 
@@ -1823,7 +1840,7 @@ theoretic inequality is based on the following work:
 
 - \S. W. Ho, L. Ling, C. W. Tan, and R. W. Yeung, "Proving and disproving information inequalities: Theory and scalable algorithms," IEEE Transactions on Information Theory, vol. 66, no. 9, pp. 5522–5536, 2020.
 
-There are several other pieces of software based on the linear programming approach in ITIP, for example, `Xitip <http://xitip.epfl.ch/>`_, `FME-IT <http://www.ee.bgu.ac.il/~fmeit/index.html>`_, `Minitip <https://github.com/lcsirmaz/minitip>`_, `Citip <https://github.com/coldfix/Citip>`_, `AITIP <https://github.com/convexsoft/AITIP>`_ and `CAI <https://github.com/ct2641/CAI>`_.
+There are several other pieces of software based on the linear programming approach in ITIP, for example, `Xitip <http://xitip.epfl.ch/>`_, `FME-IT <http://www.ee.bgu.ac.il/~fmeit/index.html>`_, `Minitip <https://github.com/lcsirmaz/minitip>`_, `Citip <https://github.com/coldfix/Citip>`_, `AITIP <https://github.com/convexsoft/AITIP>`_, `CAI <https://github.com/ct2641/CAI>`_, and `ITTP <http://itl.kaist.ac.kr/ittp.html>`_ (which uses an axiomatic approach instead).
 
 We remark that there is a Python package for discrete information theory called dit ( https://github.com/dit/dit ), which contains a collection of numerical optimization algorithms for information theory. Though it is not for proving information theoretic results.
 
@@ -1835,11 +1852,19 @@ Convex hull method for polyhedron projection:
 
 General coding theorem for network information theory:
 
-- Si-Hyeon Lee, and Sae-Young Chung. "A unified approach for network information theory." 2015 IEEE International Symposium on Information Theory (ISIT). IEEE, 2015.
+- Si-Hyeon Lee and Sae-Young Chung, "A unified approach for network information theory," 2015 IEEE International Symposium on Information Theory (ISIT), IEEE, 2015.
+
+- Si-Hyeon Lee and Sae-Young Chung, "A unified random coding bound," IEEE Transactions on Information Theory, vol. 64, no. 10, pp. 6779–6802, 2018.
 
 Semi-graphoid axioms for conditional independence implication:
 
 - Judea Pearl and Azaria Paz, "Graphoids: a graph-based logic for reasoning about relevance relations", Advances in Artificial Intelligence (1987), pp. 357--363.
+
+
+Basic inequalities of quantum information theory:
+
+- Pippenger, Nicholas. "The inequalities of quantum information theory." IEEE Transactions on Information Theory 49.4 (2003): 773-789.
+
 
 Optimization algorithms:
 
