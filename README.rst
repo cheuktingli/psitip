@@ -1,15 +1,15 @@
-Psitip
+PSITIP
 ======
 
 Python Symbolic Information Theoretic Inequality Prover
 
-Psitip is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it implements a versatile deduction system for automated theorem proving. Psitip supports features such as:
+PSITIP is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it implements a versatile deduction system for automated theorem proving. PSITIP supports features such as:
 
-- Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ). See `References`_ for other software based on this method.
+- Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ).
+
+- `Automated inner and outer bounds`_ for multiuser settings in network information theory. PSITIP is capable of proving 57.1% (32 out of 56) of the theorems in Chapters 1-14 of Network Information Theory by El Gamal and Kim. (See the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ ).
 
 - Proving first-order logic statements on random variables (involving arbitrary combinations of information inequalities, existence, uniqueness, and, or, not, implication, etc).
-
-- `Automated inner and outer bounds`_ for multiuser settings in network information theory (see the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ ).
 
 - `Numerical optimization`_ over distributions, and evaluation of rate regions involving auxiliary random variables (e.g. `Example 1: Degraded broadcast channel`_).
 
@@ -31,7 +31,7 @@ Psitip is a computer algebra system for information theory written in Python. Ra
 
 - User-defined information quantities (see `Real-valued information quantities`_, e.g. `information bottleneck`_, and Wyner's CI and Gács-Körner CI in the example below). 
 
-- `Bayesian network optimization`_. Psitip is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
+- `Bayesian network optimization`_. PSITIP is optimized for random variables following a Bayesian network structure, which can greatly improve performance.
 
 - (Experimental) Quantum information theory and von Neumann entropy.
 
@@ -400,18 +400,18 @@ Non-Shannon-type Inequalities
 About
 ~~~~~
 
-Author: Cheuk Ting Li ( https://www.ie.cuhk.edu.hk/people/ctli.shtml ). The source code of Psitip is released under the GNU General Public License v3.0 ( https://www.gnu.org/licenses/gpl-3.0.html ). The author would like to thank Raymond W. Yeung and Chandra Nair for their invaluable comments.
+Author: Cheuk Ting Li ( https://www.ie.cuhk.edu.hk/people/ctli.shtml ). The source code of PSITIP is released under the GNU General Public License v3.0 ( https://www.gnu.org/licenses/gpl-3.0.html ). The author would like to thank Raymond W. Yeung and Chandra Nair for their invaluable comments.
 
-The working principle of Psitip (existential information inequalities) is described in the following article:
+The working principle of PSITIP (existential information inequalities) is described in the following article:
 
 - \C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," arXiv preprint, available: https://arxiv.org/pdf/2101.12370.pdf , 2021.
 
-If you find Psitip useful in your research, please consider citing the above article.
+If you find PSITIP useful in your research, please consider citing the above article.
 
 WARNING
 ~~~~~~~
 
-This program comes with ABSOLUTELY NO WARRANTY. This program is a work in progress, and bugs are likely to exist. The deduction system is incomplete, meaning that it may fail to prove true statements (as expected in most automated deduction programs). On the other hand, declaring false statements to be true should be less common. If you encounter a false accept in Psitip, please let the author know.
+This program comes with ABSOLUTELY NO WARRANTY. This program is a work in progress, and bugs are likely to exist. The deduction system is incomplete, meaning that it may fail to prove true statements (as expected in most automated deduction programs). On the other hand, declaring false statements to be true should be less common. If you encounter a false accept in PSITIP, please let the author know.
 
 |
 |
@@ -420,7 +420,7 @@ This program comes with ABSOLUTELY NO WARRANTY. This program is a work in progre
 Installation
 ~~~~~~~~~~~~
 
-Download `psitip.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/psitip.py>`_ and place it in the same directory as your code, or open an IPython shell in the same directory as psitip.py. The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ and the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ contain examples of usages of Psitip. Use :code:`from psitip import *` in your code to import all functions in psitip.
+Download `psitip.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/psitip.py>`_ and place it in the same directory as your code, or open an IPython shell in the same directory as psitip.py. The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ and the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ contain examples of usages of PSITIP. Use :code:`from psitip import *` in your code to import all functions in psitip.
 
 Python 3 and numpy are required to run psitip. It also requires at least one of the following for sparse linear programming:
 
@@ -472,7 +472,7 @@ For Pyomo (see https://pyomo.readthedocs.io/en/stable/solving_pyomo_models.html#
 
 See `Options`_ for options for the solver.
 
-WARNING: It is possible for inaccuracies in the solver to result in wrong output in Psitip. Try switching to another solver if a problem is encountered.
+WARNING: It is possible for inaccuracies in the solver to result in wrong output in PSITIP. Try switching to another solver if a problem is encountered.
 
 |
 |
@@ -497,7 +497,7 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 - Expressions can be added and subtracted with each other, and multiplied and divided by scalars, e.g. :code:`I(X + Y & Z) * 3 - a * 4`.
  
- - While Psitip can handle affine expressions like :code:`H(X) + 1` (i.e., adding or subtracting a constant), affine expressions are unrecommended as they are prone to numerical error in the solver.
+ - While PSITIP can handle affine expressions like :code:`H(X) + 1` (i.e., adding or subtracting a constant), affine expressions are unrecommended as they are prone to numerical error in the solver.
 
  - While expressions can be multiplied and divided by each other (e.g. :code:`H(X) * H(Y)`), most symbolic capabilities are limited to linear and affine expressions. **Numerical only:** non-affine expressions can be used in concrete models, and support automated gradient for numerical optimization tasks, but do not support most symbolic capabilities for automated deduction.
 
@@ -507,9 +507,9 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
  
  - :code:`~a` is a shorthand for :code:`a == 0` (where :code:`a` is an :code:`Expr`). The reason for this shorthand is that :code:`not a` is the same as :code:`a == 0` for :code:`a` being :code:`int/float` in Python. For example, the region where :code:`Y` is a function of :code:`X` (both :code:`Comp`) can be expressed as :code:`~H(Y|X)`.
 
- - While Psitip can handle general affine and half-space constraints like :code:`H(X) <= 1` (i.e., comparing an expression with a nonzero constant, or comparing affine expressions), they are unrecommended as they are prone to numerical error in the solver.
+ - While PSITIP can handle general affine and half-space constraints like :code:`H(X) <= 1` (i.e., comparing an expression with a nonzero constant, or comparing affine expressions), they are unrecommended as they are prone to numerical error in the solver.
  
- - While Psitip can handle strict inequalities like :code:`H(X) > H(Y)`, strict inequalities are unrecommended as they are prone to numerical error in the solver.
+ - While PSITIP can handle strict inequalities like :code:`H(X) > H(Y)`, strict inequalities are unrecommended as they are prone to numerical error in the solver.
 
 - The **intersection** of two regions (i.e., the region where the conditions in both regions are satisfied) can be obtained using the ":code:`&`" operator. E.g. :code:`(I(X & Y) == 0) & (H(X | Y) <= H(Z) + a)`.
 
@@ -752,7 +752,7 @@ Also see `Example 3: Lossy source coding with side information at decoder`_.
 Interactive mode and Parsing LaTeX code
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Interactive mode can be entered by calling the main function of the Psitip package (if the Psitip package is installed, type :code:`python -m psitip` in the terminal). It has a lax syntax, accepting the Psitip syntax, common notations and LaTeX input. Common functions are :code:`check` (checking the conditions), :code:`implies` (material implication), :code:`simplify`, :code:`assume` (assume a region is true; assumption can be accessed via :code:`assumption`, and cleared via :code:`clear assume`) and :code:`latex` (latex output). Parsing can also be accessed using :code:`expr("3I(X,Y;Z)")` and :code:`region("3I(X,Y;Z) \le 2")` in Python code (`Jupyter Notebook example <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_latex.ipynb>`_). Interactive mode examples:
+Interactive mode can be entered by calling the main function of the PSITIP package (if the PSITIP package is installed, type :code:`python -m psitip` in the terminal). It has a lax syntax, accepting the PSITIP syntax, common notations and LaTeX input. Common functions are :code:`check` (checking the conditions), :code:`implies` (material implication), :code:`simplify`, :code:`assume` (assume a region is true; assumption can be accessed via :code:`assumption`, and cleared via :code:`clear assume`) and :code:`latex` (latex output). Parsing can also be accessed using :code:`expr("3I(X,Y;Z)")` and :code:`region("3I(X,Y;Z) \le 2")` in Python code (`Jupyter Notebook example <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_latex.ipynb>`_). Interactive mode examples:
 
 .. code-block:: text
 
@@ -845,11 +845,11 @@ Examples:
 Numerical optimization
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Psitip supports numerical optimization on distributions of random variables. While :code:`Comp` are abstract random variables without information on their distributions, you can use a :code:`ConcModel` object (concrete model) to assign joint distributions to random variables.
+PSITIP supports numerical optimization on distributions of random variables. While :code:`Comp` are abstract random variables without information on their distributions, you can use a :code:`ConcModel` object (concrete model) to assign joint distributions to random variables.
 
 **WARNING:** Numerical optimization is prone to numerical errors. For nonconvex optimization, the algorithm is not guaranteed to find the global optimum.
 
-**Caution:** In order to use the numerical functions of Psitip, the cardinality of random variables must be specified using :code:`set_card`, e.g. :code:`X = rv("X").set_card(2)`. For numerical optimization, add the line :code:`PsiOpts.setting(istorch = True)` at the beginning to enable PyTorch.
+**Caution:** In order to use the numerical functions of PSITIP, the cardinality of random variables must be specified using :code:`set_card`, e.g. :code:`X = rv("X").set_card(2)`. For numerical optimization, add the line :code:`PsiOpts.setting(istorch = True)` at the beginning to enable PyTorch.
 
 
 Concrete distributions
@@ -1169,7 +1169,7 @@ Automated inner and outer bounds
 - `Network coding: Butterfly network and Vámos network <https://nbviewer.jupyter.org/github/cheuktingli/psitip/blob/master/examples/demo_networkcoding.ipynb>`_
 
 
-Psitip supports automated achievability and converse proofs in network information theory. The achievability part uses the general coding theorem for network information theory in [Lee-Chung 2015], whereas the converse part follows the general strategy of identifying auxiliaries using past and future random variables pioneered by Gallager [Gallager 1974], using Csiszár sum identity [Körner-Marton 1977], [Csiszár-Körner 1978].
+PSITIP supports automated achievability and converse proofs in network information theory. The achievability part uses the general coding theorem for network information theory in [Lee-Chung 2015], whereas the converse part follows the general strategy of identifying auxiliaries using past and future random variables pioneered by Gallager [Gallager 1974], using Csiszár sum identity [Körner-Marton 1977], [Csiszár-Körner 1978].
 
 A setting in network information theory is represented by a :code:`CodingModel` object. To specify a setting, use the following four functions (here we let :code:`model = CodingModel()`):
 
@@ -1369,7 +1369,7 @@ Example 3: Lossy source coding with side information at decoder
 Integration with Jupyter Notebook and LaTeX output
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Psitip can be used within Jupyter Notebook.
+PSITIP can be used within Jupyter Notebook.
 
 - Add the line :code:`PsiOpts.setting(repr_latex = True)` at the beginning to turn on LaTeX output.
 
@@ -1496,7 +1496,7 @@ There are several built-in information functions listed below. While they can be
 Theorems
 --------
 
-The following are true statements (:code:`Region` objects) that allow Psitip to prove results not provable by Shannon-type inequalities (at the expense of longer computation time). They can either be used in the context manager (e.g. :code:`with sfrl(logg).assumed():`), or directly (e.g. sfrl().implies(excess_fi(X, Y) <= H(X | Y))).
+The following are true statements (:code:`Region` objects) that allow PSITIP to prove results not provable by Shannon-type inequalities (at the expense of longer computation time). They can either be used in the context manager (e.g. :code:`with sfrl(logg).assumed():`), or directly (e.g. sfrl().implies(excess_fi(X, Y) <= H(X | Y))).
 
 - **Strong functional representation lemma** [Li-El Gamal 2018] is given by :code:`sfrl(logg)`. It states that for any random variables (X, Y), there exists random variable Z independent of X such that Y is a function of (X, Z), and I(X;Z|Y) <= log(I(X;Y) + 1) + 4. The "log(I(X;Y) + 1) + 4" term is usually represented by the real variable :code:`logg = real("logg")` (which is the argument of :code:`sfrl(logg)`). Omitting the :code:`logg` argument gives the original functional representation lemma [El Gamal-Kim 2011]. For example:
 
@@ -1521,7 +1521,7 @@ The following are true statements (:code:`Region` objects) that allow Psitip to 
 
  - Note that writing :code:`with sfrl(logg).assumed():` allows SFRL to be used only once. To allow it to be used twice, write :code:`with (sfrl(logg) & sfrl(logg)).assumed():`.
 
-- **Copy lemma** [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011] is given by :code:`copylem(n, m)`. It states that for any random variables X_1,...,X_n,Y_1,...,Y_m, there exists Z_1,...,Z_m such that (X_1,...,X_n,Y_1,...,Y_m) has the same distribution as (X_1,...,X_n,Z_1,...,Z_m) (only equalities of entropies are enforced in Psitip), and (Y_1,...,Y_m)-(X_1,...,X_n)-(Z_1,...,Z_m) forms a Markov chain. The default values of n, m are 2, 1 respectively. For example:
+- **Copy lemma** [Zhang-Yeung 1998], [Dougherty-Freiling-Zeger 2011] is given by :code:`copylem(n, m)`. It states that for any random variables X_1,...,X_n,Y_1,...,Y_m, there exists Z_1,...,Z_m such that (X_1,...,X_n,Y_1,...,Y_m) has the same distribution as (X_1,...,X_n,Z_1,...,Z_m) (only equalities of entropies are enforced in PSITIP), and (Y_1,...,Y_m)-(X_1,...,X_n)-(Z_1,...,Z_m) forms a Markov chain. The default values of n, m are 2, 1 respectively. For example:
 
   .. code-block:: python
 
@@ -1547,6 +1547,12 @@ The following are true statements (:code:`Region` objects) that allow Psitip to 
 
 - The approximate infinite divisibility of information [Li 2020] is given by :code:`ainfdiv(n)`.
 
+- The non-Shannon inequalities in four variables in [Dougherty-Freiling-Zeger 2011] are given by :code:`dfz_thm()`.
+ 
+  - This is a "for all" statement. To obtain the bound on all permutations of the random variables X, Y, Z, W, use :code:`dfz_thm().instantiated(X, Y, Z, W)`.
+
+- The family of non-Shannon inequalities in four variables in [Matus 2007] are given by :code:`matus_thm(min_s, max_s)`.
+
 - The non-Shannon inequality in [Makarychev-Makarychev-Romashchenko-Vereshchagin 2002] is given by :code:`mmrv_thm(n)`.
 
 - The non-Shannon inequalities in four variables in [Zhang-Yeung 1998] and [Dougherty-Freiling-Zeger 2006] are given by :code:`zydfz_thm()`.
@@ -1570,6 +1576,8 @@ The following are conditions (:code:`Region` objects) on the random variable arg
 - **Exchangeability** is expressed as :code:`exchangeable(X, Y, Z)`. The function :code:`exchangeable` can take any number of arguments. For random sequence :code:`X = rv_seq("X", 5)`, the condition that it is an exchangeable sequence of random variables can be expressed as :code:`exchangeable(*X)`. Note that only equalities of entropies are enforced.
 
 - **IID sequence** is expressed as :code:`iidseq(X, Y, Z)`. The function :code:`iidseq` can take any number of arguments. For random sequence :code:`X = rv_seq("X", 5)`, the condition that it is an IID sequence of random variables can be expressed as :code:`iidseq(*X)`. Note that only equalities of entropies are enforced.
+
+- **Linear rank inequalities** The condition that X, Y, Z, W are representable by vector subspaces is given by :code:`linear_bound(X, Y, Z, W)`. The Ingleton inequality [Ingleton 1971] and the outer bound in [Dougherty-Freiling-Zeger 2009] are used, which are tight for 5 or fewer random variables.
 
 
 Random variables
@@ -1754,7 +1762,7 @@ Some of the options are:
 
 - :code:`forall_multiuse` : Set to False to only allow one value for variables with universal quantification. Default is True. Note that if this option is True, then the auxiliary search result for variables with universal quantification will be meaningless.
 
-- :code:`str_style` : The style of string conversion :code:`str(x)` and verbose output. Values are :code:`"standard"` (e.g. :code:`3I(X,Y;Z|W)-H(X) >= 0`, default), :code:`"code"` (e.g. :code:`3*I(X+Y&Z|W)-H(X) >= 0`, consistent with the Psitip syntax so the output can be copied back to the code), or :code:`"latex"` (e.g. :code:`3I(X,Y;Z|W)-H(X) \ge 0`, for LaTeX equations).
+- :code:`str_style` : The style of string conversion :code:`str(x)` and verbose output. Values are :code:`"standard"` (e.g. :code:`3I(X,Y;Z|W)-H(X) >= 0`, default), :code:`"code"` (e.g. :code:`3*I(X+Y&Z|W)-H(X) >= 0`, consistent with the PSITIP syntax so the output can be copied back to the code), or :code:`"latex"` (e.g. :code:`3I(X,Y;Z|W)-H(X) \ge 0`, for LaTeX equations).
 
 - :code:`str_eqn_prefer_ge` : Whether "a >= b" is preferred over "b <= a" in string conversion. Default is False.
 
@@ -1815,7 +1823,7 @@ Some of the options are:
 License
 ~~~~~~~
 
-The source code of Psitip is released under the GNU General Public License v3.0 ( https://www.gnu.org/licenses/gpl-3.0.html ).
+The source code of PSITIP is released under the GNU General Public License v3.0 ( https://www.gnu.org/licenses/gpl-3.0.html ).
 
 This program comes with ABSOLUTELY NO WARRANTY.
 
@@ -1964,3 +1972,11 @@ Results used as examples above:
 - \G. R. Kumar, C. T. Li, and A. El Gamal, "Exact common information," in Proc. IEEE Symp. Info. Theory. IEEE, 2014, pp. 161-165.
 
 - \V. M. Prabhakaran and M. M. Prabhakaran, "Assisted common information with an application to secure two-party sampling," IEEE Transactions on Information Theory, vol. 60, no. 6, pp. 3413-3434, 2014.
+
+- Dougherty, Randall, Chris Freiling, and Kenneth Zeger. "Non-Shannon information inequalities in four random variables." arXiv preprint arXiv:1104.3602 (2011).
+
+- \F. Matus, "Infinitely many information inequalities", Proc. IEEE International Symposium on Information Theory, 2007
+
+- Dougherty, Randall, Chris Freiling, and Kenneth Zeger. "Linear rank inequalities on five or more variables." arXiv preprint arXiv:0910.0284 (2009).
+
+- \A. W. Ingleton, "Representation of matroids," in Combinatorial mathematics and its applications, D. Welsh, Ed. London: Academic Press, pp. 149-167, 1971.
