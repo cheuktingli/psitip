@@ -9,7 +9,9 @@ PSITIP is a computer algebra system for information theory written in Python. Ra
 
 - `Automated inner and outer bounds`_ for multiuser settings in network information theory. PSITIP is capable of proving 57.1% (32 out of 56) of the theorems in Chapters 1-14 of Network Information Theory by El Gamal and Kim. (See the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ ).
 
-- Proving first-order logic statements on random variables (involving arbitrary combinations of information inequalities, existence, uniqueness, and, or, not, implication, etc).
+- Proving and discovering entropy inequalities in `additive combinatorics`_, e.g. the entropy forms of Ruzsa triangle inequality and sum-difference inequality [Ruzsa 1996], [Tao 2010]. (See the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/demo_additive.ipynb>`_ ).
+
+- Proving first-order logic statements on random variables (involving arbitrary combinations of information inequalities, existence, for all, and, or, not, implication, etc).
 
 - `Numerical optimization`_ over distributions, and evaluation of rate regions involving auxiliary random variables (e.g. `Example 1: Degraded broadcast channel`_).
 
@@ -38,6 +40,7 @@ PSITIP is a computer algebra system for information theory written in Python. Ra
 
 Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psitip/blob/master/demo_readme.ipynb>`_ :
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 
 
 .. code:: python
@@ -82,7 +85,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 .. code:: python
 
     # Prove an implication
-    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).solve(full = True)
+    (markov(X+W, Y, Z) >> (I(X & W | Y) / 2 <= H(X | Z))).solve(full=True)
 
 
 
@@ -113,25 +116,12 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 .. code:: python
 
     # Disprove an implication by a counterexample
-    (markov(X+W, Y, Z) >> (I(X & W | Y) * 3 / 2 <= H(X | Z))).solve(full = True)
+    (markov(X+W, Y, Z) >> (I(X & W | Y) * 3 / 2 <= H(X | Z))).solve(full=True)
 
 
 
 
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.svg
-
---------------
-
-.. code:: python
-
-    # The condition "X is independent of Y and X-Y-Z forms a
-    # Markov chain" can be simplified to "X is independent of (Y,Z)"
-    markov(X, Y, Z) & indep(X, Y)
-
-
-
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block18.svg
 
 --------------
 
@@ -144,7 +134,36 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block20.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block18.svg
+
+--------------
+
+Additive combinatorics
+----------------------
+
+.. code:: python
+
+    A, B, C = rv("A, B, C", alg="abelian")  # Abelian-group-valued RVs
+    
+    # Entropy of sum (or product) is submodular [Madiman 2008]
+    (indep(A, B, C) >> (H(A*B*C) + H(B) <= H(A*B) + H(B*C))).solve(full=True)
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block22.svg
+
+--------------
+
+.. code:: python
+
+    # Entropy form of Ruzsa triangle inequality [Ruzsa 1996], [Tao 2010]
+    (indep(A, B, C) >> (H(A/C) <= H(A/B) + H(B/C) - H(B))).solve(full=True)
+
+
+
+
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block24.svg
 
 --------------
 
@@ -169,7 +188,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block25.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block29.svg
 
 --------------
 
@@ -180,7 +199,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block27.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block31.svg
 
 --------------
 
@@ -191,18 +210,18 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block29.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block33.svg
 
 --------------
 
 .. code:: python
 
-    (gkci <= wci).solve(full = True) # Output proof of Gács-Körner <= Wyner
+    (gkci <= wci).solve(full=True) # Output proof of Gács-Körner <= Wyner
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block31.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block35.svg
 
 --------------
 
@@ -214,7 +233,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block33.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block37.svg
 
 --------------
 
@@ -228,13 +247,13 @@ Automatic inner/outer bound for degraded broadcast channel
     R1, R2 = real_array("R", 1, 3)
     
     model = CodingModel()
-    model.add_node(M1+M2, X)  # Encoder maps M1,M2 to X
-    model.add_edge(X, Y)      # Channel X -> Y -> Z
+    model.add_node(M1+M2, X, label="Enc")  # Encoder maps M1,M2 to X
+    model.add_edge(X, Y)                   # Channel X -> Y -> Z
     model.add_edge(Y, Z)
-    model.add_node(Y, M1)     # Decoder1 maps Y to M1
-    model.add_node(Z, M2)     # Decoder2 maps Z to M2
-    model.set_rate(M1, R1)    # Rate of M1 is R1
-    model.set_rate(M2, R2)    # Rate of M2 is R2
+    model.add_node(Y, M1, label="Dec 1")   # Decoder1 maps Y to M1
+    model.add_node(Z, M2, label="Dec 2")   # Decoder2 maps Z to M2
+    model.set_rate(M1, R1)                 # Rate of M1 is R1
+    model.set_rate(M2, R2)                 # Rate of M2 is R2
 
 .. code:: python
 
@@ -243,20 +262,19 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_18_0.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_20_0.svg
 
 
 
 .. code:: python
 
     # Inner bound via [Lee-Chung 2015], give superposition region [Bergmans 1973], [Gallager 1974]
-    r = model.get_inner()
-    r
+    r = model.get_inner(is_proof=True)  # Display codebook, encoding and decoding info
+    r.display(note=True)
 
 
 
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block40.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
 
 --------------
 
@@ -268,19 +286,19 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block42.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
 
 --------------
 
 .. code:: python
 
     # Converse proof, print auxiliary random variables
-    (model.get_outer() >> r).solve(display_reg = False)
+    (model.get_outer() >> r).solve(display_reg=False)
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
 
 --------------
 
@@ -292,7 +310,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
 
 --------------
 
@@ -303,7 +321,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
 
 --------------
 
@@ -314,7 +332,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
 
 --------------
 
@@ -325,7 +343,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block56.svg
 
 --------------
 
@@ -338,7 +356,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.svg
 
 --------------
 
@@ -353,7 +371,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
 
 --------------
 
@@ -368,7 +386,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block60.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block64.svg
 
 --------------
 
@@ -378,13 +396,12 @@ Non-Shannon-type Inequalities
     r = eqdist([X, Y, U], [X, Y, Z]).exists(U)
     
     # Automatically discover non-Shannon-type inequalities using copy lemma
-    PsiOpts.setting(discover_max_facet = None) # Unlimited number of facets
     r.discover([X, Y, Z, W]).simplified()
 
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block66.svg
 
 
 
@@ -565,6 +582,14 @@ The following classes and functions are in the :code:`psitip` module. Use :code:
 
 Advanced
 ~~~~~~~~
+
+ .. _additive combinatorics:
+
+- **Group-valued random variables** are declared as :code:`X = rv("X", alg="group")`. Choices of the parameter :code:`alg` are :code:`"semigroup"`, :code:`"group"`, :code:`"abelian"` (abelian group), :code:`"torsionfree"` (torsion-free abelian group), :code:`"vector"` (vector space over reals), and :code:`"real"`.
+
+ - Multiplication is denoted as :code:`X * Y`. Power is denoted as :code:`X**3`. Inverse is denoted as :code:`1 / X`.
+
+ - Group operation is denoted by multiplication, even for (the additive group of) vectors and real numbers. E.g. for vectors X, Y, denote X + 2Y by :code:`X * Y**2`. For real numbers, :code:`X * Y` means X + Y, and actual multiplication between real numbers is not supported.
 
  .. _auxiliary random variable:
 
@@ -1432,7 +1457,7 @@ The :code:`discover` method of :code:`Region` accepts a list of variables of int
 
 - Use :code:`PsiOpts.setting(verbose_discover_terms_outer = True)` to enable output of intermediate results.
 
-- **Caution:** A randomized algorithm will be used if the problem is larger than a threshold (which can be set by :code:`PsiOpts.setting(discover_max_facet = ???)`; default is 100000). In this case, the program will not terminate unless the block is enclosed by :code:`with PsiOpts(timelimit = ???):` or :code:`with PsiOpts(stop_file = ???):`.
+- Use :code:`PsiOpts.setting(discover_max_facet = 100000)` to switch to a randomized algorithm if the problem is larger than the threshold 100000. In this case, the program will not terminate unless the block is enclosed by :code:`with PsiOpts(timelimit = ???):` or :code:`with PsiOpts(stop_file = ???):`.
 
 Example:
 
@@ -1963,7 +1988,7 @@ Results used as examples above:
 
 - Polyanskiy, Yury, H. Vincent Poor, and Sergio Verdu. "Channel coding rate in the finite blocklength regime." IEEE Transactions on Information Theory 56.5 (2010): 2307-2359.
 
-- Hellinger, Ernst (1909), "Neue Begründung der Theorie quadratischer Formen von unendlichvielen Veränderlichen", Journal für die reine und angewandte Mathematik, 136: 210–271.
+- Hellinger, Ernst (1909), "Neue Begründung der Theorie quadratischer Formen von unendlichvielen Veränderlichen", Journal für die reine und angewandte Mathematik, 136: 210-271.
 
 - \A. El Gamal, "The capacity of a class of broadcast channels," IEEE Transactions on Information Theory, vol. 25, no. 2, pp. 166-169, 1979.
 
@@ -1980,3 +2005,9 @@ Results used as examples above:
 - Dougherty, Randall, Chris Freiling, and Kenneth Zeger. "Linear rank inequalities on five or more variables." arXiv preprint arXiv:0910.0284 (2009).
 
 - \A. W. Ingleton, "Representation of matroids," in Combinatorial mathematics and its applications, D. Welsh, Ed. London: Academic Press, pp. 149-167, 1971.
+
+- Madiman, Mokshay. "On the entropy of sums." 2008 IEEE Information Theory Workshop. IEEE, 2008.
+
+- Ruzsa, Imre Z. "Sums of finite sets." Number Theory: New York Seminar 1991–1995. Springer, New York, NY, 1996.
+
+- Tao, Terence. "Sumset and inverse sumset theory for Shannon entropy." Combinatorics, Probability and Computing 19.4 (2010): 603-639.

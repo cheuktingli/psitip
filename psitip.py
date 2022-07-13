@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.1.3
+Version 1.1.4
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -87,6 +87,7 @@ import logging
 import random
 import contextlib
 import io
+import heapq
 
 
 try:
@@ -186,6 +187,22 @@ except ImportError:
     lark_Transformer = object
 
 
+# try:
+#     import sympy
+#     import sympy.matrices.normalforms
+# except ImportError:
+#     sympy = None
+
+
+# try:
+#     import smithnormalform
+#     import smithnormalform.matrix
+#     import smithnormalform.snfproblem
+#     import smithnormalform.z
+# except ImportError:
+#     smithnormalform = None
+
+
 class LinearProgType:
     NIL = 0
     H = 1    # H(X_C)
@@ -239,6 +256,10 @@ class PsiOpts:
         "random": None,
 
         "quantum": False,
+        "hge0": True,
+        "hcge0": True,
+        "ige0": True,
+        "icge0": True,
         
         "eps": 1e-10,
         "eps_lp": 1e-5,
@@ -269,6 +290,7 @@ class PsiOpts:
         "truth": None,
         "proof": None,
         "use_global_index": True,
+        "indreg_enabled": True,
         
         "timer_start": None,
         "timer_end": None,
@@ -376,6 +398,9 @@ class PsiOpts:
         "presolve_aux_eq_quick": True,
         "presolve_simplify": False,
 
+        "alg_group_nit": 10,
+        "alg_normalize": True,
+
         "bayesnet_semigraphoid_iter": 1000,
         
         "proof_enabled": False,
@@ -408,7 +433,7 @@ class PsiOpts:
         
         "discover_hull_frac_enabled": True,
         "discover_hull_frac_denom": 1000,
-        "discover_max_facet": 1000000,
+        "discover_max_facet": None, # 1000000,
         "discover_num_simplex": 0,
         
         "str_ineq_sep": ",",
@@ -457,6 +482,8 @@ class PsiOpts:
         "latex_subs": ":=",
         "latex_subs_bracket_l": "\\{",
         "latex_subs_bracket_r": ".",
+        "latex_group_mul": "", # "\\cdot",
+        "latex_group_id": "\\mathrm{id}",
         
         "latex_color": None,
         "latex_line_len": None,
@@ -1003,6 +1030,21 @@ class iutil:
             return t
         return x
     
+    
+    @staticmethod
+    def isconstzero(x, eps = None):
+        if eps is None:
+            eps = PsiOpts.settings["eps"]
+        if isinstance(x, Expr):
+            x = x.get_const()
+        if isinstance(x, bool):
+            return not x
+        if isinstance(x, (int, fractions.Fraction)):
+            return x == 0
+        if isinstance(x, float):
+            return abs(x) <= eps
+        return False
+
     @staticmethod
     def tostr_verbose(x):
         if isinstance(x, float):
@@ -1112,6 +1154,28 @@ class iutil:
         if isinstance(a, (tuple, list)):
             return any(iutil.hasinstance(x, t) for x in a)
     
+    @staticmethod
+    def convert_algtype(algtype):
+        if algtype is None:
+            return 0
+        if isinstance(algtype, str):
+            if algtype == "":
+                return 0
+            if algtype == "semigroup":
+                return AlgType.SEMIGROUP
+            if algtype == "group":
+                return AlgType.GROUP
+            if algtype == "abelian":
+                return AlgType.ABELIAN
+            if algtype in ("torsionfree", "vector", "real"):
+                return AlgType.REAL
+            
+            raise ValueError("Algebraic structure \"" + algtype + "\" not supported. Options are " 
+                + ", ".join("\"" + x + "\"" for x in ("semigroup", "group", "abelian", "torsionfree", "vector", "real")))
+            return 0
+            
+        return algtype
+
     @staticmethod
     def convert_str_style(style):
         if isinstance(style, str):
@@ -1442,7 +1506,7 @@ class iutil:
         if x is None:
             return None
             
-        if isinstance(x, BayesNet):
+        if isinstance(x, (BayesNet, FcnRelation)):
             x = x.get_region()
 
         if isinstance(x, Comp):
@@ -1478,6 +1542,11 @@ class iutil:
         if isinstance(x, BayesNet):
             if strict:
                 raise ValueError("Cannot convert BayesNet to Expr.")
+            x = x.get_region()
+            
+        if isinstance(x, FcnRelation):
+            if strict:
+                raise ValueError("Cannot convert FcnRelation to Expr.")
             x = x.get_region()
 
         if isinstance(x, Region):
@@ -1531,7 +1600,7 @@ class iutil:
             else:
                 return Region.empty()
 
-        if isinstance(x, BayesNet):
+        if isinstance(x, (BayesNet, FcnRelation)):
             return x.get_region()
         if isinstance(x, ConcModel):
             return x.get_region(vals = True)
@@ -1921,6 +1990,11 @@ class iutil:
                 
                 
             for i, a in enumerate(v):
+                apow = None
+                if isinstance(a, tuple):
+                    apow = a[1]
+                    a = a[0]
+
                 a_single_term = iutil.is_single_term(a)
                 
                 if (i == 0) ^ infix:
@@ -1930,6 +2004,10 @@ class iutil:
                         r += pname or name
                     elif style & PsiOpts.STR_STYLE_LATEX:
                         r += lname or name
+                
+                if isinstance(a, str) and a == "#break":
+                    break
+
                 if not infix:
                     if i == 0:
                         r += "("
@@ -1955,6 +2033,20 @@ class iutil:
                 else:
                     t = str(a)
                     
+                if apow is not None:
+                    apow = iutil.float_tostr(apow)
+                    if style & PsiOpts.STR_STYLE_PSITIP:
+                        t += "**" + apow
+                    elif style & PsiOpts.STR_STYLE_LATEX:
+                        t += "^"
+                        if len(apow) != 1:
+                            t += "{"
+                        t += apow
+                        if len(apow) != 1:
+                            t += "}"
+                    else:
+                        t += "^" + apow
+
                 if cropi and isinstance(a, Term) and len(t) >= 3 and (t.startswith("I(") or t.startswith("H(")):
                     r += t[2:-1]
                 else:
@@ -2007,6 +2099,68 @@ class iutil:
             return x.copy()
         return x
     
+    
+    @staticmethod
+    def allcomprv(x):
+        if isinstance(x, (list, tuple, set)):
+            r = Comp.empty()
+            for a in x:
+                r += iutil.allcomprv(a)
+            return r
+
+        return x.allcomprv()
+
+    
+    @staticmethod
+    def is_solvable_inteqn(A, b):
+        """Solve A x = b for integer vector x.
+        """
+        h = len(A)
+        if h == 0:
+            return True
+
+        w = len(A[0])
+        if w == 0:
+            return all(x == 0 for x in b)
+
+        A2 = smithnormalform.matrix.Matrix(h, w, [smithnormalform.z.Z(int(round(x))) for Ar in A for x in Ar])
+        prob = smithnormalform.snfproblem.SNFProblem(A2)
+
+        print(A2)
+        prob.computeSNF()
+        if not prob.isValid():
+            return False
+
+        b2 = smithnormalform.matrix.Matrix(h, 1, [smithnormalform.z.Z(int(round(x))) for x in b])
+        c = prob.S * b2
+
+        for i in range(h):
+            t = 0
+            if i < w:
+                t = prob.J.get(i, i).a
+            
+            if t == 0:
+                if c.get(i, 0).a != 0:
+                    return False
+            else:
+                if c.get(i, 0).a % t != 0:
+                    return False
+
+        return True
+
+        # bv = numpy.array(b)
+        # Av = numpy.array(A)
+        # Sv = numpy.reshape(numpy.array([x.a for x in prob.S.elements]), (prob.S.h, prob.S.w))
+        # Tv = numpy.reshape(numpy.array([x.a for x in prob.T.elements]), (prob.T.h, prob.T.w))
+        # Jv = numpy.reshape(numpy.array([x.a for x in prob.J.elements]), (prob.J.h, prob.J.w))
+
+        # cv = Sv.dot(bv)
+
+
+
+
+
+    @staticmethod
     def check_meta_subs_criteria(v0, v1, cobj = None):
 
         mode = PsiOpts.settings["meta_subs_criteria"]
@@ -2470,6 +2624,13 @@ class IVarType:
     RV = 1
     REAL = 2
     
+class AlgType:
+    NIL = 0
+    SEMIGROUP = 1
+    GROUP = 2
+    ABELIAN = 3
+    REAL = 4
+
     
 class IBaseObj:
     """Base class of objects
@@ -2695,12 +2856,15 @@ class IVar(IBaseObj):
     Do NOT use this class directly. Use Comp instead
     """
     
-    def __init__(self, vartype, name, reg = None, reg_det = False, markers = None):
+    def __init__(self, vartype, name, reg = None, reg_det = False, markers = None, algtype = 0, alglist = None):
         self.vartype = vartype
         self.name = name
         self.reg = reg
         self.reg_det = reg_det
         self.markers = markers
+
+        self.algtype = algtype
+        self.alglist = alglist
         
     @staticmethod
     def rv(name):
@@ -2775,12 +2939,286 @@ class IVar(IBaseObj):
         
     def copy(self):
         return IVar(self.vartype, self.name, None if self.reg is None else self.reg.copy(), 
-                    self.reg_det, None if self.markers is None else self.markers[:])
+                    self.reg_det, None if self.markers is None else self.markers[:],
+                    self.algtype, iutil.copy(self.alglist))
         
     def copy_noreg(self):
         return IVar(self.vartype, self.name, None, 
-                    False, None if self.markers is None else self.markers[:])
+                    False, None if self.markers is None else self.markers[:],
+                    self.algtype, iutil.copy(self.alglist))
 
+    @staticmethod
+    def word_normalize(algtype, x):
+        if algtype in (AlgType.ABELIAN, AlgType.REAL):
+            x.sort(key = lambda a: str(a[0]))
+
+    @staticmethod
+    def word_combine_to(algtype, x, y):
+        if algtype in (AlgType.ABELIAN, AlgType.REAL):
+            for b, bc in y:
+                for i in range(len(x)):
+                    if x[i][0] == b:
+                        x[i] = (x[i][0], x[i][1] + bc)
+                        break
+                else:
+                    x.append((iutil.copy(b), bc))
+
+        elif algtype in (AlgType.GROUP, AlgType.SEMIGROUP):
+            y = iutil.copy(y)
+            while x and y and x[-1][0] == y[0][0] and x[-1][1] + y[0][1] == 0:
+                x.pop()
+                y.pop(0)
+            if x and y and x[-1][0] == y[0][0]:
+                x[-1] = (x[-1][0], x[-1][1] + y[0][1])
+                y.pop(0)
+            x += y
+        
+        x[:] = [(a, ac) for a, ac in x if ac != 0]
+        
+    @staticmethod
+    def word_combine(algtype, x, y):
+        x = iutil.copy(x)
+        IVar.word_combine_to(algtype, x, y)
+        return x
+
+    @staticmethod
+    def word_pow(algtype, x, p):
+        if p == 0:
+            return []
+
+        x = iutil.copy(x)
+        if p == 1:
+            return x
+
+        if algtype in (AlgType.ABELIAN, AlgType.REAL):
+            return [(a, ac * p) for a, ac in x]
+        
+        if p < 0:
+            x = [(a, -ac) for a, ac in reversed(x)]
+            p = -p
+        
+        r = list(x)
+        for i in range(p - 1):
+            IVar.word_combine_to(algtype, r, x)
+        
+        return r
+
+    @staticmethod
+    def word_name(algtype, x):
+        if len(x) == 0:
+            return iutil.fcn_name_maker("id", ["#break"], lname = PsiOpts.settings["latex_group_id"])
+        return iutil.fcn_name_maker("*", [(a, ac) if ac != 1 else a for a, ac in x], 
+            lname = PsiOpts.settings["latex_group_mul"] + " ", infix = True)
+
+    def get_alglist(self):
+        if self.algtype == 0:
+            return []
+        if self.alglist is None:
+            return [[(self, 1)]]
+        return self.alglist
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float, fractions.Fraction)) and other == 1:
+            return self.copy()
+
+        if self.algtype == 0:
+            raise ValueError("Cannot multiply non-group-valued variables.")
+            return
+        if self.algtype != other.algtype:
+            raise ValueError("Cannot multiply variables with different types.")
+            return
+        r = self.copy()
+        r.alglist = []
+        for x in self.get_alglist():
+            for y in other.get_alglist():
+                r.alglist.append(IVar.word_combine(self.algtype, x, y))
+
+        if PsiOpts.settings["alg_normalize"]:
+            for a in r.alglist:
+                IVar.word_normalize(r.algtype, a)
+
+        r.name = IVar.word_name(r.algtype, r.alglist[0])
+        return r
+
+
+    def __pow__(self, other):
+        if self.algtype == 0:
+            raise ValueError("Cannot take power of non-group-valued variables.")
+            return
+        r = self.copy()
+        r.alglist = iutil.copy(r.get_alglist())
+        for x in r.alglist:
+            x[:] = IVar.word_pow(r.algtype, x, other)
+
+        if PsiOpts.settings["alg_normalize"]:
+            for a in r.alglist:
+                IVar.word_normalize(r.algtype, a)
+
+        r.name = IVar.word_name(r.algtype, r.alglist[0])
+        return r
+
+    def __truediv__(self, other):
+        return self * (other ** -1)
+
+    def __rtruediv__(self, other):
+        if isinstance(other, (int, float, fractions.Fraction)) and other == 1:
+            return self ** -1
+        return other * (self ** -1)
+
+    def __rmul__(self, other):
+        return self * other
+
+    @staticmethod
+    def word_recordto(algtype, index, x):
+        for a, ac in x:
+            index.record(Comp([a]))
+
+    @staticmethod
+    def word_toarray(algtype, index, x):
+        r = numpy.zeros(len(index.comprv))
+        for a, ac in x:
+            r[index.get_index(a)] += ac
+        return r
+
+    @staticmethod
+    def word_tointlist(algtype, index, x):
+        r = [0] * len(index.comprv)
+        for a, ac in x:
+            r[index.get_index(a)] += ac
+        return r
+
+
+    @staticmethod
+    def word_toid(index, x):
+        return [(index.get_index(a), ac) for a, ac in x]
+
+    @staticmethod
+    def word_hash(x):
+        return hash(tuple(x))
+
+    @staticmethod
+    def word_complexity(x):
+        return sum(abs(ac) + 1 for a, ac in x)
+
+    @staticmethod
+    def word_checkfcn(algtype, xs, y):
+        index = IVarIndex()
+        IVar.word_recordto(algtype, index, y)
+        if len(index.comprv) == 0:
+            return True
+        if len(xs) == 0:
+            return False
+        for x in xs:
+            IVar.word_recordto(algtype, index, x)
+
+        if algtype == AlgType.REAL:
+            m = numpy.vstack([IVar.word_toarray(algtype, index, x) for x in xs])
+            m2 = numpy.vstack([m, IVar.word_toarray(algtype, index, y)])
+            return numpy.linalg.matrix_rank(m2) <= numpy.linalg.matrix_rank(m)
+        
+        # elif algtype == AlgType.ABELIAN:
+        #     A = [IVar.word_tointlist(algtype, index, x) for x in xs]
+        #     return iutil.is_solvable_inteqn([[A[j][i] for j in range(len(A))] for i in range(len(A[0]))], 
+        #         IVar.word_tointlist(algtype, index, y))
+            
+        elif algtype in (AlgType.GROUP, AlgType.SEMIGROUP, AlgType.ABELIAN):
+            xs = [IVar.word_toid(index, x) for x in xs]
+            y = IVar.word_toid(index, y)
+
+            wlist = []
+            vis = set()
+            nit = [0]
+            maxnit = (len(xs) + 1) * PsiOpts.settings["alg_group_nit"]
+
+            found = [False]
+
+            start_inv = (algtype == AlgType.GROUP or algtype == AlgType.ABELIAN)
+            push_inv = start_inv
+            push_left = (algtype == AlgType.GROUP or algtype == AlgType.SEMIGROUP)
+
+            def trypush(a):
+                if found[0]:
+                    return False
+                if start_inv:
+                    if len(a) == 0:
+                        found[0] = True
+                        return False
+                else:
+                    if a == y:
+                        found[0] = True
+                        return False
+
+                if nit[0] > maxnit:
+                    return False
+                ahash = tuple(a) # IVar.word_hash(a)
+                if ahash in vis:
+                    return False
+                heapq.heappush(wlist, (IVar.word_complexity(a), a))
+                vis.add(ahash)
+                nit[0] += 1
+                return True
+
+
+            if start_inv:
+                trypush(IVar.word_pow(algtype, y, -1))
+            else:
+                trypush([])
+            
+            while wlist:
+                if found[0]:
+                    break
+                acomp, a = heapq.heappop(wlist)
+                for x in xs:
+                    if found[0]:
+                        break
+                    trypush(IVar.word_combine(algtype, a, x))
+                    if push_left:
+                        trypush(IVar.word_combine(algtype, x, a))
+                    if push_inv:
+                        xinv = IVar.word_pow(algtype, x, -1)
+                        trypush(IVar.word_combine(algtype, a, xinv))
+                        if push_left:
+                            trypush(IVar.word_combine(algtype, xinv, a))
+            
+            return found[0]
+
+
+        return False
+
+
+    @staticmethod
+    def word_fcnrelation(algtype, xs):
+        fcns = FcnRelation()
+        index = IVarIndex()
+        for x in xs:
+            IVar.word_recordto(algtype, index, x)
+        
+        xmasks = []
+        for x in xs:
+            index2 = IVarIndex()
+            IVar.word_recordto(algtype, index2, x)
+            xmasks.append(index.get_mask(index2.comprv))
+        
+
+        n = len(xs)
+        for i in range(n):
+            for jmask in igen.subset_mask((1 << n) - 1 - (1 << i)):
+                jmask2 = 0
+                for k, a in enumerate(xmasks):
+                    if jmask & (1 << k):
+                        jmask2 |= a
+                
+                if jmask2 | xmasks[i] != jmask2:
+                    continue
+
+                if fcns.check_fcn(jmask, 1 << i):
+                    continue
+
+                if IVar.word_checkfcn(algtype, [a for k, a in enumerate(xs) if (1 << k) & jmask], xs[i]):
+                    fcns.add_fcn(jmask, 1 << i)
+
+        fcns.simplify()
+        return fcns
     
 class Comp(IBaseObj):
     """Compound random variable or real variable
@@ -2955,6 +3393,12 @@ class Comp(IBaseObj):
         r.varlist[i], r.varlist[j] = r.varlist[j], r.varlist[i]
         return r
     
+    def set_algtype(self, algtype):
+        algtype = iutil.convert_algtype(algtype)
+        for a in self.varlist:
+            a.algtype = algtype
+        return self
+
     def set_markers(self, markers):
         for a in self.varlist:
             if markers is None:
@@ -3197,8 +3641,8 @@ class Comp(IBaseObj):
         r -= other
         return r
         
-    def __truediv__(self, other):
-        return BayesNet([self]) / other
+    def __floordiv__(self, other):
+        return BayesNet([self]) // other
 
     def __xor__(self, other):
         return BayesNet([self]) ^ other
@@ -3213,21 +3657,13 @@ class Comp(IBaseObj):
         return r.aux
 
     def __imul__(self, other):
-        ceps = PsiOpts.settings["eps"]
-        if isinstance(other, bool) and not other:
+        if iutil.isconstzero(other):
             self.varlist = []
             return self
-        if isinstance(other, int) and other == 0:
-            self.varlist = []
-            return self
-        if isinstance(other, float) and abs(other) <= ceps:
-            self.varlist = []
-            return self
-        if isinstance(other, Expr):
-            other = other.get_const()
-            if other is not None and abs(other) <= ceps:
-                self.varlist = []
-                return self
+
+        if isinstance(other, Comp):
+            self.varlist = [a * b for a in self.varlist for b in other.varlist]
+
         return self
         
     def __mul__(self, other):
@@ -3240,6 +3676,70 @@ class Comp(IBaseObj):
         r *= other
         return r
     
+    def __ipow__(self, other):
+        self.varlist = [a ** other for a in self.varlist]
+        return self
+        
+    def __pow__(self, other):
+        r = self.copy()
+        r **= other
+        return r
+
+    def __truediv__(self, other):
+        return self * (other ** -1)
+
+    def __rtruediv__(self, other):
+        if isinstance(other, (int, float, fractions.Fraction)) and other == 1:
+            return self ** -1
+        return other * (self ** -1)
+
+    def product(self):
+        if len(self.varlist) == 0:
+            return 1
+        r = None
+        for a in self.varlist:
+            if r is None:
+                r = Comp([a]).copy()
+            else:
+                r *= Comp([a])
+        return r
+
+    def alg_region(self):
+        ws = []
+        was = []
+        algtypes = set(a.algtype for a in self.varlist)
+
+        r = Expr.zero()
+
+        for algtype in algtypes:
+            if algtype == 0:
+                continue
+            for a in self.varlist:
+                if a.algtype == algtype:
+                    for x in a.get_alglist():
+                        ws.append(x)
+                        was.append(Comp([a]).copy())
+
+            fcns = IVar.word_fcnrelation(algtype, ws)
+
+            for t in fcns.fcn:
+                t2 = []
+                for x in t:
+                    ct = Comp.empty()
+                    for i, a in enumerate(was):
+                        if x & (1 << i):
+                            ct += a
+                    t2.append(ct)
+                r += Expr.Hc(t2[1], t2[0])
+
+        if r.iszero():
+            return Region.universe()
+
+        return r <= 0
+
+    def get_indreg(self):
+        return self.alg_region()
+
     def inter(self, other):
         """Intersection."""
         return Comp([a for a in self.varlist if a in other.varlist])
@@ -3977,7 +4477,22 @@ class Term(IBaseObj):
                     return self.z.isempty() or (self.x[0].inter(self.x[1])).isempty()
                 return False
             else:
-                return len(self.x) <= 2
+                if len(self.x) == 0:
+                    return True
+                elif len(self.x) == 1:
+                    if self.z.isempty():
+                        return PsiOpts.settings.get("hge0", False)
+                    else:
+                        return PsiOpts.settings.get("hcge0", False)
+                elif len(self.x) == 2:
+                    if self.z.isempty():
+                        return PsiOpts.settings.get("ige0", False)
+                    else:
+                        return PsiOpts.settings.get("icge0", False)
+                else:
+                    return False
+                # return len(self.x) <= 2
+
         if self.isone() or self.iseps() or self.isinf():
             return True
         return False
@@ -6631,6 +7146,102 @@ class Expr(IBaseObj):
         return r
         
         
+class FcnRelation(IBaseObj):
+    """Stores functional dependencies"""
+    
+    def __init__(self, fcn = None):
+        self.index = IVarIndex()
+        self.fcn = []
+        if fcn is not None:
+            self += fcn
+
+    def copy(self):
+        r = FcnRelation()
+        r.index = self.index.copy()
+        r.fcn = list(self.fcn)
+        return r
+
+    def check_fcn(self, x, y):
+        if y | x == x:
+            return True
+        i = 0
+        elapsed = 0
+        while elapsed < len(self.fcn):
+            if self.fcn[i][0] | x == x and self.fcn[i][1] | x != x:
+                x |= self.fcn[i][1]
+                if y | x == x:
+                    return True
+                elapsed = 0
+            i = (i + 1) % len(self.fcn)
+            elapsed += 1
+        return False
+
+    def simplify(self):
+        i = 0
+        while i < len(self.fcn):
+            t = self.fcn[i]
+            self.fcn.pop(i)
+            if not self.check_fcn(t[0], t[1]):
+                self.fcn.insert(i, t)
+                i += 1
+
+    def add_fcn(self, x, y):
+        y = y & ~x
+        if not self.check_fcn(x, y):
+            self.fcn.append((x, y))
+
+    def check(self, x, y):
+        if isinstance(x, Comp):
+            x = self.index.get_mask(x)
+        if isinstance(y, Comp):
+            y = self.index.get_mask(y)
+        return self.check_fcn(x, y)
+
+    def __iadd__(self, other):
+        if isinstance(other, list):
+            for x in other:
+                self += x
+            return self
+        
+        if isinstance(other, tuple):
+            t = list(other)
+            if isinstance(t[0], Comp):
+                self.index.record(t[0])
+                t[0] = self.index.get_mask(t[0])
+            if isinstance(t[1], Comp):
+                self.index.record(t[1])
+                t[1] = self.index.get_mask(t[1])
+            t[1] &= ~(t[0])
+            self.fcn.append(tuple(t))
+
+        elif isinstance(other, FcnRelation):
+            for a in other.fcn:
+                self += (other.index.from_mask(a[0]), other.index.from_mask(a[1]))
+            return self
+
+        elif isinstance(other, IBaseObj):
+            other.record_to(self.index)
+                
+        return self
+    
+    def __add__(self, other):
+        r = self.copy()
+        r += other
+        return r
+
+    def get_hc(self):
+        r = Expr.zero()
+        for a in self.fcn:
+            r += Expr.Hc(self.index.from_mask(a[1]), self.index.from_mask(a[0]))
+        return r
+
+    def get_region(self):
+        return self.get_hc() <= 0
+
+
+    def __bool__(self):
+        return bool(self.get_region())
+        
 class BayesNet(IBaseObj):
     """Bayesian network"""
     
@@ -6851,7 +7462,7 @@ class BayesNet(IBaseObj):
                         r += (x, y)
         return r
 
-    def __truediv__(self, other):
+    def __floordiv__(self, other):
         return self.join(other)
         
     def __xor__(self, other):
@@ -10528,7 +11139,11 @@ class LinearProg:
 
         
         self.quantum = PsiOpts.settings.get("quantum", False)
-        if self.quantum:
+        self.hge0 = PsiOpts.settings.get("hge0", False)
+        self.hcge0 = PsiOpts.settings.get("hcge0", False)
+        self.ige0 = PsiOpts.settings.get("ige0", False)
+        self.icge0 = PsiOpts.settings.get("icge0", False)
+        if self.quantum or not self.hge0 or not self.hcge0 or not self.ige0 or not self.icge0:
             self.lptype = LinearProgType.H
 
         self.noskip = (PsiOpts.settings["proof_noskip"] and PsiOpts.settings["proof_enabled"])
@@ -10738,7 +11353,7 @@ class LinearProg:
             if termType == TermType.IC:
                 k = len(a.x)
                 for t in range(1 << k):
-                    csgn = -1;
+                    csgn = -1
                     mask = self.index.get_mask(a.z)
                     for i in range(k):
                         if (t & (1 << i)) != 0:
@@ -10844,6 +11459,28 @@ class LinearProg:
 
         n = self.index.num_rv()
         npow = (1 << n)
+
+
+        hge0 = self.hge0
+        hcge0 = self.hcge0
+        ige0 = self.ige0
+        icge0 = self.icge0
+
+        if not quantum and (not hge0 or not hcge0 or not ige0 or not icge0):
+            if ige0:
+                for xmask in range(1, 1 << n):
+                    for ymask in range(xmask + 1, 1 << n):
+                        self.addExpr_ge0(Expr.I(self.index.comprv.from_mask(xmask), self.index.comprv.from_mask(ymask)))
+            if hge0:
+                for xmask in range(1, 1 << n):
+                    self.addExpr_ge0(Expr.H(self.index.comprv.from_mask(xmask)))
+            if hcge0:
+                for zmask in range(1, 1 << n):
+                    for x in range(n):
+                        if (zmask & (1 << x)) == 0:
+                            self.addExpr_ge0(Expr.Hc(self.index.comprv[x], self.index.comprv.from_mask(zmask)))
+
+            return
 
         if quantum:
             for x in range(n):
@@ -14407,7 +15044,8 @@ class Region(IBaseObj):
     
     def implicated(self, other, skip_simplify = False):
         other = iutil.ensure_region(other)
-        if isinstance(other, RegionOp) or self.imp_present() or other.imp_present() or not other.aux.isempty():
+        # if isinstance(other, RegionOp) or self.imp_present() or other.imp_present() or not other.aux.isempty():
+        if isinstance(other, RegionOp) or not self.auxi.isempty() or other.imp_present() or not other.aux.isempty():
             return RegionOp.union([self]).implicated(other, skip_simplify)
         
         r = self.copy()
@@ -15248,6 +15886,12 @@ class Region(IBaseObj):
             with PsiOpts(truth = None):
                 return (truth >> self).check_z3()
 
+                
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).check_z3()
+
         vardict = iutil.z3_vardict(self.rvs, self.aux, self.auxi, self.reals)
         t = self.z3(vardict)
         solver = vardict["#solver"]
@@ -15359,20 +16003,100 @@ class Region(IBaseObj):
             allc += addrv
         
         toadd = Region.universe()
-        
+
+        ag = []
+        acon = []
+
         for a in self.aux:
             v = self.var_neighbors(a)
             if other_neighbors is not None:
                 v = v + other_neighbors.var_neighbors(a)
+            ag.append(v.copy())
+            acon.append(v.copy())
 
-            b = allc - v
-            if not b.isempty():
-                toadd.exprs_eq.append(Expr.Ic(a, b, v - a))
+        for it in range(len(self.aux)):
+            for i, a in enumerate(self.aux):
+                for j, b in enumerate(self.aux):
+                    if acon[i].ispresent(b):
+                        acon[i] += acon[j]
+                        acon[j] += acon[i]
+        
+        def recur(ca, prevv):
+            v = Comp.empty()
+            maxdeg = -1
+            maxdega = None
+            for i, a in enumerate(self.aux):
+                if ca.ispresent(a):
+                    if not acon[i].super_of(ca):
+                        recur(acon[i].inter(ca), None)
+                        recur(ca - acon[i], None)
+                        return
+                    v += ag[i]
+                    deg = len(ag[i]) + len(ag[i] - ca) * 50
+                    if deg > maxdeg:
+                        maxdeg = deg
+                        maxdega = a
+            
+            if maxdeg < 0:
+                return
+
+            # print(str(ca) + "  " + str(v) + "  " + str(allc-v) + "  " + str(prevv))
+            if prevv is None or v != prevv:
+                b = allc - v
+                if not b.isempty():
+                    toadd.exprs_eq.append(Expr.Ic(ca, b, v - ca))
+            
+            recur(ca - maxdega, v)
+            
+        recur(self.aux.copy(), None)
         
         self.iand_norename(toadd)
         
         return self
     
+    
+    def aux_strengthen_old(self, addrv = None, other_neighbors = None):
+        
+        if self.aux.isempty():
+            return self
+        
+        if self.imp_present():
+            cs = self.consonly()
+            cs.aux_strengthen(addrv)
+            self.cons_shallow_copy_(cs)
+            return self
+        
+        allc = self.allcomprv()
+        if addrv is not None:
+            allc += addrv
+        
+        toadd = Region.universe()
+
+        allc_on = allc
+        if other_neighbors is not None:
+            allc_on += other_neighbors.allcomprv()
+        
+        allc -= self.aux
+        allc_on -= self.aux
+
+        for a in self.aux:
+            v = self.var_neighbors(a)
+            if other_neighbors is not None:
+                v = v + other_neighbors.var_neighbors(a)
+
+            v = v.inter(allc_on)
+            b = allc - v
+            if not b.isempty():
+                toadd.exprs_eq.append(Expr.Ic(a, b, v - a))
+            
+            allc += a
+            allc_on += a
+        
+        self.iand_norename(toadd)
+        
+        return self
+    
+
     def simplify_aux_commonpart(self, reg = None, minlen = 1, maxlen = 1, forbid_h = True):
         
         if self.aux.isempty():
@@ -17488,6 +18212,13 @@ class Region(IBaseObj):
                 r = (truth >> self).check_getaux(hint_pair, hint_aux)
             return r
         
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            r = None
+            with PsiOpts(indreg_enabled = False):
+                r = (indreg >> self).check_getaux(hint_pair, hint_aux)
+            return r
+
         if self.isplain():
             r = self.check()
             if r:
@@ -17650,6 +18381,18 @@ class Region(IBaseObj):
                 self.simplify_aux_eq(quick = True)
             return self
         
+    def get_indreg(self, reg_add = None):
+        allcomprv = self.allcomprv()
+        if reg_add is not None:
+            allcomprv = allcomprv + iutil.allcomprv(reg_add)
+        return allcomprv.get_indreg()
+
+    def get_indreg_checked(self, reg_add = None):
+        if PsiOpts.settings["indreg_enabled"]:
+            indreg = self.get_indreg(reg_add)
+            if indreg is not None and not indreg.isuniverse():
+                return indreg
+        return None
 
 
     def check_getaux_gen(self, hint_pair = None, hint_aux = None):
@@ -17661,6 +18404,13 @@ class Region(IBaseObj):
                     yield rr
                 return
         
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                for rr in (indreg >> self).check_getaux_gen(hint_pair, hint_aux):
+                    yield rr
+                return
+
         if self.isregtermpresent():
             cs = RegionOp.inter([self])
             for rr in cs.check_getaux_gen(hint_pair, hint_aux):
@@ -17708,6 +18458,11 @@ class Region(IBaseObj):
             with PsiOpts(truth = None):
                 return (truth >> self).check()
 
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).check()
+
         if self.isplain():
             return self.check_plain()
     
@@ -17719,11 +18474,29 @@ class Region(IBaseObj):
         """
         return RegionOp.inter([self]).assumption(mode = mode)
 
+
+    def truth(self):
+        """The region given by the assumptions.
+        """
+        r = Region.universe()
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            r &= truth
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            r &= indreg
+        return r
+
     def evalcheck(self, f):
         truth = PsiOpts.settings["truth"]
         if truth is not None:
             with PsiOpts(truth = None):
                 return (truth >> self).evalcheck(f)
+
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).evalcheck(f)
         
         ceps = PsiOpts.settings["eps_check"]
         for x in self.exprs_gei:
@@ -17746,6 +18519,12 @@ class Region(IBaseObj):
             with PsiOpts(truth = None):
                 return (truth >> self).eval_max_violate(f)
         
+
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).eval_max_violate(f)
+
         ceps = PsiOpts.settings["eps_check"]
         for x in self.exprs_gei:
             t = float(f(x))
@@ -17807,6 +18586,11 @@ class Region(IBaseObj):
         if truth is not None:
             with PsiOpts(truth = None):
                 return (truth & self).example(card = card)
+
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg & self).example(card = card)
 
         cs = self.exists(self.allcomprv() - self.getaux() - self.getauxi())
 
@@ -17910,6 +18694,7 @@ class Region(IBaseObj):
         self.aux = Comp.empty()
         self.auxi = Comp.empty()
         return self
+        
         
     def completed_semigraphoid_ic(self, vs = None, max_iter = None):
         verbose = PsiOpts.settings.get("verbose_semigraphoid", False)
@@ -18123,6 +18908,279 @@ class Region(IBaseObj):
         r = Expr.zero()
         for a0, a1, az in icl:
             r += Expr.Ic(index.from_mask(a0), index.from_mask(a1), index.from_mask(az))
+        return r
+               
+               
+    def completed_semigraphoid_ic_new(self, vs = None, max_iter = None, include_hc = True):
+        verbose = PsiOpts.settings.get("verbose_semigraphoid", False)
+
+        if vs is not None:
+            tvs = []
+            for t in vs:
+                if isinstance(t, Comp):
+                    tvs.append((t, t))
+                else:
+                    tvs.append(t)
+            if len(tvs) == 0:
+                return Expr.zero()
+            vs = tvs
+        
+        def mask_impl(a, b):
+            a0, a1, az = a
+            b0, b1, bz = b
+            
+            a0x = a0 & (bz & ~az)
+            a0 &= ~a0x
+            az |= a0x
+            a1x = a1 & (bz & ~az)
+            a1 &= ~a1x
+            az |= a1x
+            
+            if az != bz:
+                return False
+            return a0 | b0 == a0 and a1 | b1 == a1
+        
+        
+        icexpr = self.get_ic(include_hc = include_hc)
+        index = IVarIndex()
+        icexpr.record_to(index)
+        icl = set()
+        nvar = len(index.comprv)
+        
+        # fcn_masks = [1 << i for i in range(nvar)]
+
+        fcns = []
+        def fcn_expand(x):
+            did = True
+            while did:
+                did = False
+                for mz, m0 in fcns:
+                    if x & mz == mz and x | m0 != x:
+                        x |= m0
+                        did = True
+            return x
+
+
+        def clean(a):
+            a0, a1, az = a
+            # for i in range(nvar):
+            #     if a0 & (1 << i):
+            #         a0 |= fcn_masks[i]
+            #     if a1 & (1 << i):
+            #         a1 |= fcn_masks[i]
+            #     if az & (1 << i):
+            #         az |= fcn_masks[i]
+
+            az = fcn_expand(az)
+            a0 = fcn_expand(a0 | az) & ~az
+            a1 = fcn_expand(a1 | az) & ~az
+
+            if a0 > a1:
+                a0, a1 = a1, a0
+            return (a0, a1, az)
+
+
+        if verbose:
+            print("==========   SEMIGRAPHOID   =========")
+            print(icexpr)
+            print("=====================================")
+        
+        for a, c in icexpr.terms:
+            if len(a.x) == 1:
+                mz = index.get_mask(a.z)
+                m0 = index.get_mask(a.x[0])
+                fcns.append((mz, mz | m0))
+        
+        fcns = [(mz, fcn_expand(m0)) for mz, m0 in fcns]
+
+        for a, c in icexpr.terms:
+            if len(a.x) == 1:
+                pass
+                # mz = index.get_mask(a.z)
+                # m0 = index.get_mask(a.x[0]) & ~mz
+                # m1 = ((1 << nvar) - 1) & ~mz
+                # # icl.add((m0, m0, mz))
+                # icl.add((m0, m1, mz))
+
+            elif len(a.x) == 2:
+                mz = index.get_mask(a.z)
+                m0 = index.get_mask(a.x[0]) & ~mz
+                m1 = index.get_mask(a.x[1]) & ~mz
+                # if m0 > m1:
+                #     m0, m1 = m1, m0
+
+                icl.add(clean((m0, m1, mz)))
+        
+        # for a0, a1, az in icl:
+        #    print(str(Expr.Ic(index.from_mask(a0), index.from_mask(a1), index.from_mask(az))))
+                            
+        
+        citer = 0
+        iclw = icl.copy()
+        did = True
+        while did:
+            did = False
+            icl2 = icl.copy()
+
+            # Check contraction axiom
+            for a0k, a1k, azk in icl:
+                if max_iter is not None and citer > max_iter:
+                    break
+                if PsiOpts.is_timer_ended():
+                    break
+
+                for b0k, b1k, bzk in icl:
+                    if max_iter is not None and citer > max_iter:
+                        break
+                    if (a0k, a1k, azk) == (b0k, b1k, bzk):
+                        continue
+                    if azk & ~(b0k | b1k | bzk) != 0:
+                        continue
+                    if bzk & ~(a0k | a1k | azk) != 0:
+                        continue
+                    
+                    for aj in range(2):
+                        for bj in range(2):
+                            citer += 1
+                            if max_iter is not None and citer > max_iter:
+                                break
+                            
+                            a0, a1, az = a0k, a1k, azk
+                            b0, b1, bz = b0k, b1k, bzk
+                            if aj != 0:
+                                a0, a1 = a1, a0
+                            a0o, a1o, azo = a0, a1, az
+                            if bj != 0:
+                                b0, b1 = b1, b0
+                            b0o, b1o, bzo = b0, b1, bz
+                            
+                            if a0 & b0 == 0:
+                                continue
+                            
+                            b0x = b0 & (az & ~bz)
+                            b0 &= ~b0x
+                            bz |= b0x
+                            
+                            b1z = b1 | bz
+                            a0x = a0 & (b1z & ~az)
+                            a0 &= ~a0x
+                            az |= a0x
+                            a1x = a1 & (b1z & ~az)
+                            a1 &= ~a1x
+                            az |= a1x
+                            
+                            b1 &= az
+                            
+                            a0 &= b0 & ~bz
+                            a1 &= ~bz
+                            b1 &= ~bz
+                            
+                            # if verbose:  # REMOVE
+                            #     print(str(Expr.Ic(index.from_mask(a0o), index.from_mask(a1o), index.from_mask(azo)))
+                            #           + " - " + str(Expr.Ic(index.from_mask(b0o), index.from_mask(b1o), index.from_mask(bzo)))
+                            #           + " : " + str(Expr.Ic(index.from_mask(a0), index.from_mask(a1 | b1), index.from_mask(bz)))
+                            #           + " / " + str(index.from_mask(az)) + "=" + str(index.from_mask(b1 | bz))
+                            #           )
+                            
+                            if az != b1 | bz:
+                                continue
+                            
+                            if a0 == 0 or a1 | b1 == 0:
+                                continue
+                            
+                            t = clean((a0, a1 | b1, bz))
+                            if mask_impl((a0o, a1o, azo), t) or mask_impl((b0o, b1o, bzo), t):
+                                continue
+                            
+                            if verbose:
+                                print(str(citer) + ": " + str(Expr.Ic(index.from_mask(a0o), index.from_mask(a1o), index.from_mask(azo)))
+                                      + " & " + str(Expr.Ic(index.from_mask(b0o), index.from_mask(b1o), index.from_mask(bzo)))
+                                      + " -> " + str(Expr.Ic(index.from_mask(a0), index.from_mask(a1 | b1), index.from_mask(bz)))
+                                      )
+                                
+                            # if t[0] > t[1]:
+                            #     t = (t[1], t[0], t[2])
+                                
+                            if t in iclw:
+                                continue
+                            
+                            #print(str(Expr.Ic(index.from_mask(t[0]), index.from_mask(t[1]), index.from_mask(t[2]))))
+                            icl2.add(t)
+                            iclw.add(t)
+                            did = True
+                            
+            icl.clear()
+            for a0, a1, az in icl2:
+                for b0, b1, bz in icl2:
+                    if (a0, a1, az) == (b0, b1, bz):
+                        continue
+                    if (mask_impl((b0, b1, bz), (a0, a1, az)) 
+                        or mask_impl((b0, b1, bz), (a1, a0, az))):
+                        break
+                else:
+                    icl.add((a0, a1, az))
+        
+        if vs is not None:
+            vmasks = [index.get_mask(b) for a, b in vs]
+            vvars = CompArray([a for a, b in vs])
+            
+            icl2 = set()
+            for a0, a1, az in icl:
+                b0 = 0
+                b1 = 0
+                bz = 0
+                for i in range(len(vs)):
+                    if a0 | vmasks[i] == a0:
+                        b0 |= 1 << i
+                    if a1 | vmasks[i] == a1:
+                        b1 |= 1 << i
+
+                if b0 == 0 or b1 == 0:
+                    continue
+
+                def recur(i, zmask, azvis):
+                    if i == len(vs):
+                        if azvis & az == az:
+                            c0 = b0 & ~zmask
+                            c1 = b1 & ~zmask
+                            if c0 != 0 and c1 != 0:
+                                if c0 > c1:
+                                    c0, c1 = c1, c0
+                                icl2.add((c0, c1, zmask))
+                        return
+
+                    vm = vmasks[i]
+                    recur(i + 1, zmask, azvis)
+                    if vm & az != 0 and (a0 | a1 | az) & vm == vm:
+                        recur(i + 1, zmask + (1 << i), azvis | vm)
+                    
+                recur(0, 0, 0)
+                
+            icl.clear()
+            for a0, a1, az in icl2:
+                for b0, b1, bz in icl2:
+                    if (a0, a1, az) == (b0, b1, bz):
+                        continue
+                    if (mask_impl((b0, b1, bz), (a0, a1, az)) 
+                        or mask_impl((b0, b1, bz), (a1, a0, az))):
+                        break
+                else:
+                    icl.add((a0, a1, az))
+
+            r = Expr.zero()
+            for a0, a1, az in icl:
+                r += Expr.Ic(vvars.from_mask(a0), vvars.from_mask(a1), vvars.from_mask(az))
+            
+            for mz, m0 in fcns:
+                r += Expr.Hc(vvars.from_mask(m0 & ~mz), vvars.from_mask(mz))
+            return r
+
+        r = Expr.zero()
+        for a0, a1, az in icl:
+            r += Expr.Ic(index.from_mask(a0), index.from_mask(a1), index.from_mask(az))
+            
+        for mz, m0 in fcns:
+            r += Expr.Hc(index.from_mask(m0 & ~mz), index.from_mask(mz))
         return r
                
     
@@ -19903,7 +20961,7 @@ class Region(IBaseObj):
         return (r0, r1)
         
     
-    def get_ic(self, skip_simplify = False):
+    def get_ic(self, include_hc = False, skip_simplify = False):
         cs = self
         if not skip_simplify:
             cs = self.simplified_quick(zero_group = 2)
@@ -19931,7 +20989,7 @@ class Region(IBaseObj):
                 
         for x in exprs:
             for a, c in x.terms:
-                if a.isic2():
+                if a.isic2() or (include_hc and a.ishc()):
                     r += Expr.fromterm(a)
         return r
     
@@ -19977,7 +21035,7 @@ class Region(IBaseObj):
             icexpr = self.completed_semigraphoid_ic(vs = vs, max_iter = semigraphoid_iter)
         
         else:
-            icexpr = self.get_ic(skip_simplify)
+            icexpr = self.get_ic(skip_simplify = skip_simplify)
             
             if semigraphoid_iter > 0:
                 icexpr += self.completed_semigraphoid_ic(max_iter = semigraphoid_iter)
@@ -21226,8 +22284,16 @@ class Region(IBaseObj):
         truth = PsiOpts.settings["truth"]
         if truth is not None:
             with PsiOpts(truth = None):
-                return (self & truth).discover(entries, method, minsize, maxsize, skip_simplify, reg_init, skipto_ex, toreal_prefix)
+                return (self & truth).discover(entries, method, minsize, maxsize, skip_simplify, reg_init, skipto_ex,
+                 toreal_prefix, balanced, init_pts_outer, pts_outer)
             
+
+        indreg = self.get_indreg_checked(reg_add = entries)
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (self & indreg).discover(entries, method, minsize, maxsize, skip_simplify, reg_init, skipto_ex,
+                 toreal_prefix, balanced, init_pts_outer, pts_outer)
+
         verbose = PsiOpts.settings.get("verbose_discover", False)
         verbose_detail = PsiOpts.settings.get("verbose_discover_detail", False)
         verbose_terms = PsiOpts.settings.get("verbose_discover_terms", False)
@@ -24344,6 +25410,11 @@ class RegionOp(Region):
             with PsiOpts(truth = None):
                 return (truth >> self).check_getaux(hint_pair, hint_aux)
             
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).check_getaux(hint_pair, hint_aux)
+
         cs = self.copy()
         return cs.check_getaux_inplace(hint_pair = hint_pair, hint_aux = hint_aux)
         
@@ -24385,6 +25456,11 @@ class RegionOp(Region):
             with PsiOpts(truth = None):
                 return (truth >> self).evalcheck(f)
         
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).evalcheck(f)
+
         ceps = PsiOpts.settings["eps_check"]
         
         isunion = (self.get_type() == RegionType.UNION)
@@ -24398,6 +25474,11 @@ class RegionOp(Region):
         if truth is not None:
             with PsiOpts(truth = None):
                 return (truth >> self).eval_max_violate(f)
+                
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).eval_max_violate(f)
         
         ceps = PsiOpts.settings["eps_check"]
         
@@ -25462,6 +26543,18 @@ class IBaseArray(IBaseObj):
     def __len__(self):
         return len(self.x)
     
+
+    def product(self):
+        if len(self.x) == 0:
+            return 1
+        r = None
+        for a in self.x:
+            if r is None:
+                r = a.copy()
+            else:
+                r *= a
+        return r
+
     def key_to_id(self, key):
         if isinstance(key, int):
             key = (key,)
@@ -27532,6 +28625,9 @@ class CodingModel(IBaseObj):
 
         self.aux_importance = []
         self.aux_dummy = Comp.empty()
+
+        self.created_rv = Comp.empty()
+        
     
     def copy(self):
         r = CodingModel()
@@ -27548,6 +28644,7 @@ class CodingModel(IBaseObj):
         r.use_union = self.use_union
         r.aux_importance = iutil.copy(self.aux_importance)
         r.aux_dummy = iutil.copy(self.aux_dummy)
+        r.created_rv = iutil.copy(self.created_rv)
         return r
     
     def __iadd__(self, other):
@@ -27597,6 +28694,8 @@ class CodingModel(IBaseObj):
             cname += "?[" + a.tostring(style = PsiOpts.STR_STYLE_LATEX) + "]"
 
             exc = Comp.rv(cname)
+
+            self.created_rv += exc
             self.bnet.add_edge(ac, exc)
             if is_fcn:
                 self.bnet.set_fcn(exc)
@@ -29171,7 +30270,8 @@ class CodingModel(IBaseObj):
     def get_outer(self, aux = None, oneshot = False, future = True, convexify = None, 
                   add_csiszar_sum = True, leaf_remove = True, node_fcn = True,
                   node_fcn_force = False, skip_simplify = True, convexify_test = False,
-                  is_proof = False, include_nondecode_series = False, include_last_future = False, full = False):
+                  is_proof = False, include_nondecode_series = False, include_last_future = False,
+                  remove_created = True, full = False):
         """Get an outer bound of the capacity region.
         """
 
@@ -29360,13 +30460,25 @@ class CodingModel(IBaseObj):
                     if future:
                         bnet_out.set_fcn(xm)
         
-        bnet_out = bnet_out.scc()
+        bnet_out_final = bnet_out.copy()
+
+        if remove_created:
+        
+            for x in self.bnet.allcomp():
+                if self.created_rv.ispresent(x) and self.is_rate(x):
+                    xm = reg_out_map[x.get_name()]
+                    for a in xm:
+                        bnet_out_final = bnet_out_final.eliminated(a)
+                    
+
+        bnet_out_final = bnet_out_final.scc()
         
         # if convexify_test:
         #     return False
         
         if not convexify_test:
             # print(bnet_out)
+            self.bnet_out_final = bnet_out_final
             self.bnet_out = bnet_out
             self.bnet_out_arrays = []
             for x in self.bnet.allcomp():
@@ -29376,7 +30488,7 @@ class CodingModel(IBaseObj):
                     if len(t) > 1:
                         self.bnet_out_arrays.append(t)
             
-        r = bnet_out.get_region().add_meta("pf_note", ["Bayesian network"])
+        r = bnet_out_final.get_region().add_meta("pf_note", ["Bayesian network"])
         
         # if not self.reg.isuniverse():
         #     # r = r & self.reg
@@ -31063,7 +32175,7 @@ def anyor(a):
             r |= x
     return r
     
-def rv(*args, latex = None, index = False, split = True, **kwargs):
+def rv(*args, latex = None, index = False, split = True, alg = None, **kwargs):
     """Random variable"""
     
     if split:
@@ -31092,16 +32204,27 @@ def rv(*args, latex = None, index = False, split = True, **kwargs):
 
     for key, value in kwargs.items():
         r.add_markers([(key, value)])
+
+    if alg is not None:
+        r.set_algtype(alg)
         
     return r
     
-def rv_seq(name, st, en = None):
+def rv_seq(name, st, en = None, alg = None):
     """Sequence of random variables"""
-    return Comp.array(name, st, en)
+
+    r = Comp.array(name, st, en)
+
+    if alg is not None:
+        r.set_algtype(alg)
+        
+    return r
     
-def rv_array(name, st, en = None):
+def rv_array(name, st, en = None, alg = None):
     """Array of random variables"""
-    return CompArray.make(*(Comp.array(name, st, en)))
+
+    r = rv_seq(name, st, en, alg)
+    return CompArray.make(*r)
     
     
 def rv_series(name, future = True, sufp = "P", suff = "F"):
