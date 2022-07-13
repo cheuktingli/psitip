@@ -1169,6 +1169,36 @@ class TestPsitip(unittest.TestCase):
             '( ( H(U|X) <= 1 )\n &( I(U&X) == I(U&Y)+1 )\n &( markov(X, U, Y) ) ).exists(U)')
 
     
+    def test_group(self):
+        
+        print("test_group")
+
+        X, Y, Z, U, V, W = rv("X, Y, Z, U, V, W", alg="group")
+        self.assertTrue(~H(X/Y | X+Y))
+        self.assertTrue(~H(X | X/Y**2 + Y))
+        self.assertFalse(~H(Y | X/Y**2 + X))
+        self.assertFalse(~H(X * Y**3 * Z**4 | X*Y + Y*Z**2))
+        self.assertTrue(~H(X * Y**3 * Z**4 | X*Y + Y**2 * Z**4))
+        self.assertFalse(~H(Z * Y * X * (Y*Z)**2 * Z | X*Y + Y*Z**2))
+
+        X, Y, Z, U, V, W = rv("X, Y, Z, U, V, W", alg="abelian")
+        self.assertTrue(~H(X/Y | X+Y))
+        self.assertTrue(~H(X | X/Y**2 + Y))
+        self.assertFalse(~H(Y | X/Y**2 + X))
+        self.assertTrue(~H(X * Y**3 * Z**4 | X*Y + Y*Z**2))
+        self.assertTrue(~H(X * Y**3 * Z**4 | X*Y + Y**2 * Z**4))
+        self.assertTrue(~H(Z * Y * X * (Y*Z)**2 * Z | X*Y + Y*Z**2))
+
+        X, Y, Z, U, V, W = rv("X, Y, Z, U, V, W", alg="torsionfree")
+        self.assertTrue(~H(X/Y | X+Y))
+        self.assertTrue(~H(X | X/Y**2 + Y))
+        self.assertTrue(~H(Y | X/Y**2 + X))
+        self.assertTrue(~H(X * Y**3 * Z**4 | X*Y + Y*Z**2))
+        self.assertTrue(~H(X * Y**3 * Z**4 | X*Y + Y**2 * Z**4))
+        self.assertTrue(~H(Z * Y * X * (Y*Z)**2 * Z | X*Y + Y*Z**2))
+
+
+    
     def test_performance(self):
         
         ls = [(3, 6), (6, 2), (9, 1)]
