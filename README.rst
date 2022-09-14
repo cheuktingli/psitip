@@ -3,6 +3,8 @@ PSITIP
 
 Python Symbolic Information Theoretic Inequality Prover
 
+Click here for the `Installation Guide`_
+
 PSITIP is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it implements a versatile deduction system for automated theorem proving. PSITIP supports features such as:
 
 - Proving linear information inequalities via the linear programming method by Yeung and Zhang (see `References`_). The linear programming method was first implemented in the ITIP software developed by Yeung and Yan ( http://user-www.ie.cuhk.edu.hk/~ITIP/ ).
@@ -434,10 +436,63 @@ This program comes with ABSOLUTELY NO WARRANTY. This program is a work in progre
 |
 
 
-Installation
-~~~~~~~~~~~~
+Installation Guide
+~~~~~~~~~~~~~~~~~~
 
-Download `psitip.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/psitip.py>`_ and place it in the same directory as your code, or open an IPython shell in the same directory as psitip.py. The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ and the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ contain examples of usages of PSITIP. Use :code:`from psitip import *` in your code to import all functions in psitip.
+
+Running :code:`pip install psitip` will install PSITIP without the necessary solvers (which may not work correctly), and is not recommended. To install PSITIP with its dependencies, use one of the following two options:
+
+A. Installation with conda (recommended)
+----------------------------------------
+
+1. Install Python via Anaconda (https://www.anaconda.com/).
+
+2. Open Anaconda prompt and run:
+
+    .. code:: text
+
+        conda install -c conda-forge glpk
+        conda install -c conda-forge pulp
+        conda install -c conda-forge pyomo
+        conda install -c conda-forge lark-parser
+        pip install pycddlib
+        pip install --no-deps psitip
+
+3. (Optional) Graphviz (https://graphviz.org/) is required for drawing Bayesian networks and communication network model. It can be installed via :code:`conda install -c conda-forge python-graphviz`
+
+4. (Optional) If numerical optimization is needed, also install PyTorch (https://pytorch.org/).
+
+
+B. Installation with pip
+------------------------
+
+1. Install Python (https://www.python.org/downloads/).
+
+2. Run (you might need to use :code:`python3 -m pip` or :code:`py -m pip` instead of :code:`pip`):
+
+    .. code:: text
+
+        pip install numpy
+        pip install scipy
+        pip install matplotlib
+        pip install pulp
+        pip install pyomo
+        pip install lark-parser
+        pip install pycddlib
+        pip install psitip
+
+3. A linear programming solver supported by `Pyomo <https://github.com/Pyomo/pyomo>`_ or `PuLP <https://github.com/coin-or/pulp>`_ is required. We recommend GLPK, which can be installed on https://www.gnu.org/software/glpk/ or via conda.
+
+4. (Optional) Graphviz (https://graphviz.org/) is required for drawing Bayesian networks and communication network model. A Python binding can be installed via :code:`pip install graphviz`
+
+5. (Optional) If numerical optimization is needed, also install PyTorch (https://pytorch.org/).
+
+
+Dependencies
+------------
+
+
+The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ and the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ contain examples of usages of PSITIP. Use :code:`from psitip import *` in your code to import all functions in psitip.
 
 Python 3 and numpy are required to run psitip. It also requires at least one of the following for sparse linear programming:
 
