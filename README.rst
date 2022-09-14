@@ -3,7 +3,7 @@ PSITIP
 
 Python Symbolic Information Theoretic Inequality Prover
 
-Click here for the `Installation Guide`_
+**Click here for the** `Installation Guide`_
 
 PSITIP is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it implements a versatile deduction system for automated theorem proving. PSITIP supports features such as:
 
