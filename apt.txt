@@ -1,0 +1,2 @@
+libgmp-dev
+python3-dev
