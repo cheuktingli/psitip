@@ -16,7 +16,7 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.1.5
+Version 1.1.6
 Copyright (C) 2020  Cheuk Ting Li
 
 Based on the general method of using linear programming for proving information 
@@ -132,6 +132,13 @@ except ImportError:
 
 
 try:
+    import ortools
+    import ortools.linear_solver
+    import ortools.linear_solver.pywraplp
+except ImportError:
+    ortools = None
+
+try:
     import cdd
 except ImportError:
     cdd = None
@@ -153,6 +160,7 @@ try:
     import matplotlib.patches
     import matplotlib.lines
     import matplotlib.patheffects
+    import matplotlib.colors
     from matplotlib.collections import PatchCollection
 except ImportError:
     matplotlib = None
@@ -261,6 +269,8 @@ class PsiOpts:
         "hcge0": True,
         "ige0": True,
         "icge0": True,
+
+        "figsize": None,
         
         "eps": 1e-10,
         "eps_lp": 1e-5,
@@ -293,6 +303,8 @@ class PsiOpts:
         "use_global_index": True,
         "indreg_enabled": True,
         "maxent_lex_enabled": True,
+
+        "example_opt_num_points_mul": 1,
         
         "timer_start": None,
         "timer_end": None,
@@ -300,7 +312,7 @@ class PsiOpts:
         "stop_file_last_check": None,
         "stop_file_exists_cache": False,
         
-        "solver": "scipy",
+        "solver": None,
         "lptype": LinearProgType.HMIN,
         "lptype_H_if_proof": False,
         "lp_zero_group": True,
@@ -797,6 +809,11 @@ class PsiOpts:
         elif key == "note":
             d["str_proof_note"] = value
                     
+            
+        elif key == "random_seed":
+            rnd = numpy.random.default_rng(value)
+            d["random"] = rnd
+
         elif key == "opt_singlepass":
             d["opt_learnrate"] = 0.04
             d["opt_num_iter"] = 800
@@ -864,6 +881,16 @@ class PsiOpts:
         else:
             PsiOpts.settings["proof"].copy_(value)
     
+    @staticmethod
+    def get_random():
+        rnd = PsiOpts.settings["random"]
+        if rnd is None:
+            # rnd = random.Random()
+            rnd = numpy.random.default_rng()
+            PsiOpts.settings["random"] = rnd
+        return rnd
+        
+
     @staticmethod
     def get_truth():
         return PsiOpts.settings["truth"]
@@ -999,7 +1026,7 @@ class iutil:
     """
     
     
-    solver_list = ["pulp.glpk", "pyomo.glpk", "pulp.cbc", "scipy", "z3"]
+    solver_list = ["ortools.GLOP", "pulp.glpk", "pyomo.glpk", "pulp.cbc", "scipy", "z3"]
     pulp_solver = None
     pulp_solvers = {}
     
@@ -1221,7 +1248,7 @@ class iutil:
         if isinstance(algtype, str):
             if algtype == "":
                 return 0
-            if algtype == "semigroup":
+            if algtype in ("semigroup", "monoid"):
                 return AlgType.SEMIGROUP
             if algtype == "group":
                 return AlgType.GROUP
@@ -1551,20 +1578,47 @@ class iutil:
 
     @staticmethod
     def get_solver(psolver = None):
-        csolver_list = [PsiOpts.settings["solver"]] + iutil.solver_list
+        csolver_list = [(x, False) for x in iutil.solver_list]
+
+        setting_solver = PsiOpts.settings["solver"]
+        if setting_solver is None:
+            setting_solver = ""
+        if isinstance(setting_solver, str):
+            setting_solver = [setting_solver]
+        csolver_list = [(x, True) for x in setting_solver if x != ""] + csolver_list
+
         if psolver is not None:
-            csolver_list = [psolver] + csolver_list
-        for s in csolver_list:
+            csolver_list = [(psolver, True)] + csolver_list
+
+        warn_list = []
+        for s, iswarn in csolver_list:
+            sel = False
             if s == "scipy" and (scipy is not None):
+                sel = True
+            elif s.startswith("pulp.") and (pulp is not None):
+                sel = True
+            elif s.startswith("pyomo.") and (pyo is not None):
+                sel = True
+            elif s.startswith("ortools.") and (ortools is not None):
+                sel = True
+            elif s == "z3" and (z3 is not None):
+                sel = True
+            
+            if sel:
+                if warn_list:
+                    warnings.warn("Solver " + ", ".join(warn_list) + " not found. Falling back to " + s + 
+                        ". Use PsiOpts.setting(solver=\"" + s + "\") to stop this warning.", RuntimeWarning)
                 return s
-            if s.startswith("pulp.") and (pulp is not None):
-                return s
-            if s.startswith("pyomo.") and (pyo is not None):
-                return s
-            if s == "z3" and (z3 is not None):
-                return s
+            else:
+                if iswarn:
+                    warn_list.append(s)
+
+        if warn_list:
+            warnings.warn("Solver " + ", ".join(warn_list) + " not found.", RuntimeWarning)
+
         return ""
     
+
     @staticmethod
     def pulp_get_solver(solver):
         coptions = PsiOpts.settings["pulp_options"]
@@ -1668,6 +1722,9 @@ class iutil:
                 raise ValueError("Cannot convert Comp to Expr.")
             return Expr.H(x)
 
+        if isinstance(x, ConcReal):
+            x = float(x)
+
         if isinstance(x, (bool, int, float)):
             return Expr.const(float(x))
 
@@ -1716,7 +1773,7 @@ class iutil:
             return x.get_region(vals = True)
         
         if isinstance(x, ProofObj):
-            return ensure_region(x.step_regions())
+            return iutil.ensure_region(x.step_regions())
 
         if isinstance(x, str):
             return Region.parse(x)
@@ -3031,6 +3088,10 @@ class IBaseObj:
     @property
     def reals(self):
         return self.allcomprealvar_exprlist()
+
+
+PsiOpts.setting(repr_latex = True)  # Latex display default on
+
 
 class IVar(IBaseObj):
     """Random variable or real variable
@@ -8614,7 +8675,7 @@ class ConcDist(IBaseObj):
         
         
     
-    def __init__(self, p = None, num_in = None, shape = None, shape_in = None, shape_out = None, isvar = False, randomize = False, isfcn = False):
+    def __init__(self, p = None, num_in = None, shape = None, shape_in = None, shape_out = None, isvar = False, randomize = False, isfcn = False, check_valid = False):
         self.force_float = True
         self.isvar = isvar
         self.iscache = False
@@ -8672,6 +8733,7 @@ class ConcDist(IBaseObj):
             if isinstance(p, list):
                 p = numpy.array(p)
             self.p = p
+            
             if num_in is None:
                 if shape_in is not None:
                     num_in = len(shape_in)
@@ -8684,6 +8746,9 @@ class ConcDist(IBaseObj):
             
             if self.isvar:
                 self.normalize()
+            else:
+                if check_valid and not self.isvalid():
+                    raise ValueError("Invalid probability distribution. Must contain nonnegative entries that sum to 1.")
         
         if isfcn:
             self.clamp_fcn()
@@ -8698,13 +8763,15 @@ class ConcDist(IBaseObj):
         return r
 
     def clamp_fcn(self, randomize = False):
+        rnd = PsiOpts.get_random()
+
         for xs in itertools.product(*[range(x) for x in self.shape_in]):
             mzs = None
             m = -1.0
             for zs in itertools.product(*[range(z) for z in self.shape_out]):
                 t = float(self.p[xs + zs])
                 if randomize:
-                    t /= numpy.random.exponential()
+                    t /= rnd.exponential()
                 self.p[xs + zs] = 0.0
                 if t > m:
                     m = t
@@ -8916,21 +8983,24 @@ class ConcDist(IBaseObj):
             self.normalize()
     
     def randomize(self):
-        self.p = numpy.random.exponential(size = self.shape)
+        rnd = PsiOpts.get_random()
+        self.p = rnd.exponential(size = self.shape)
         self.normalize()
     
     def hop(self, prob):
+        rnd = PsiOpts.get_random()
         if torch is not None and isinstance(self.p, torch.Tensor):
             self.p = self.p.detach().numpy()
             
         for xs in itertools.product(*[range(x) for x in self.shape_in]):
-            if numpy.random.uniform() >= prob:
+            if rnd.uniform() >= prob:
                 continue
             for zs in itertools.product(*[range(z) for z in self.shape_out]):
-                self.p[xs + zs] = numpy.random.exponential()
+                self.p[xs + zs] = rnd.exponential()
                 
         self.normalize()
     
+
     def get_p(self):
         return self.p
     
@@ -9307,7 +9377,9 @@ class ConcDist(IBaseObj):
         
     def det_fcn(fcncall, shape, isvar = False):
         shape_in, shape_out = ConcDist.convert_shape_pair(shape)
-        p = numpy.zeros(shape_in + shape_out)
+        shape_out = list(shape_out)
+
+        ys = []
         for xs in itertools.product(*[range(x) for x in shape_in]):
             
             t = fcncall(*xs)
@@ -9323,10 +9395,37 @@ class ConcDist(IBaseObj):
                 
             if isinstance(t, int):
                 t = (t,)
+            
+            for i in range(len(shape_out)):
+                if shape_out[i] is None or shape_out[i] < t[i] + 1:
+                    shape_out[i] = t[i] + 1
+
+            ys.append(t)
+
+        shape_out = tuple(shape_out)
+        
+        p = numpy.zeros(shape_in + shape_out)
+        for xs, t in zip(itertools.product(*[range(x) for x in shape_in]), ys):
             p[xs + t] = 1.0
             
         return ConcDist(p, num_in = len(shape_in), isvar = isvar)
         
+    
+    def isvalid(self):
+        """Whether this distribution is valid.
+        """
+        ceps = PsiOpts.settings["eps_check"]
+        for xs in itertools.product(*[range(x) for x in self.shape_in]):
+            csum = 0.0
+            for zs in itertools.product(*[range(z) for z in self.shape_out]):
+                c = float(self.p[xs + zs])
+                if c < -ceps:
+                    return False
+                csum += c
+            if abs(csum - 1.0) > ceps:
+                return False
+        return True
+
     
     def valid_region(self, skip_simplify = False):
         """For a symbolic distribution, returns the region where this is a
@@ -9393,6 +9492,15 @@ class ConcDist(IBaseObj):
         """Binary erasure channel."""
         return ConcDist.erasure_chan(2, er_prob, isvar = isvar)
         
+    def equal(shape_in, isvar = False):
+        """Transition probability for two equal random vectors."""
+        if isinstance(shape_in, int):
+            shape_in = (shape_in,)
+        p = numpy.zeros(shape_in + shape_in)
+        for xs in itertools.product(*[range(x) for x in shape_in]):
+            p[xs + xs] = 1.0
+        return ConcDist(p, num_in = len(shape_in), isvar = isvar)
+    
     def flat(shape_in, isvar = False):
         """Transition probability for flattening a random vector into one random variable."""
         if isinstance(shape_in, int):
@@ -9614,17 +9722,18 @@ class ConcReal(IBaseObj):
             self.v.copy_(torch.tensor(vt, dtype=torch.float64))
     
     def randomize(self):
+        rnd = PsiOpts.get_random()
         if self.lbound is None or self.ubound is None:
-            self.x = numpy.random.exponential() * self.scale
+            self.x = rnd.exponential() * self.scale
             if self.ubound is not None:
                 self.x = self.ubound - self.x
             elif self.lbound is not None:
                 self.x = self.lbound + self.x
             else:
-                if numpy.random.uniform() < 0.5:
+                if rnd.uniform() < 0.5:
                     self.x *= -1
         else:
-            self.x = numpy.random.uniform(self.lbound, self.ubound)
+            self.x = rnd.uniform(self.lbound, self.ubound)
             
         self.copy_torch()
         
@@ -9635,7 +9744,8 @@ class ConcReal(IBaseObj):
         self.copy_torch()
     
     def hop(self, prob):
-        if numpy.random.uniform() < prob:
+        rnd = PsiOpts.get_random()
+        if rnd.uniform() < prob:
             self.randomize()
     
     def get_x(self):
@@ -9853,9 +9963,15 @@ class ConcModel(IBaseObj):
             if mode == "flat":
                 shape_in, shape_out = self.convert_shape_pair(x)
                 self.set_prob(x, ConcDist.flat(shape_in, isvar = isvar))
+
+            elif mode == "equal":
+                shape_in, shape_out = self.convert_shape_pair(x)
+                self.set_prob(x, ConcDist.equal(shape_in, isvar = isvar))
+
             elif mode == "add":
                 shape_in, shape_out = self.convert_shape_pair(x)
                 self.set_prob(x, ConcDist.add(shape_in, isvar = isvar))
+
             else:
                 shape_in, shape_out = self.convert_shape_pair(x)
                 self.set_prob(x, ConcDist(shape_in = shape_in, shape_out = shape_out, 
@@ -9898,7 +10014,7 @@ class ConcModel(IBaseObj):
             self.card[(cin + cout)[j]] = shape[j]
         
         if not isinstance(p, ConcDist):
-            p = ConcDist(p, num_in = len(cin))
+            p = ConcDist(p, num_in = len(cin), check_valid = True)
         
         self.psmap[(cin, cout)] = p
         for k in cout:
@@ -10589,8 +10705,8 @@ class ConcModel(IBaseObj):
                             
                     elif isinstance(d, ConcReal):
                         if d.lbound is not None or d.ubound is not None:
-                            bds[c] = (-np.inf if d.lbound is None else d.lbound,
-                                      np.inf if d.ubound is None else d.ubound)
+                            bds[c] = (-numpy.inf if d.lbound is None else d.lbound,
+                                      numpy.inf if d.ubound is None else d.ubound)
                             
                     break
                     
@@ -10716,6 +10832,7 @@ class ConcModel(IBaseObj):
         if eps_tol is None:
             eps_tol = PsiOpts.settings["opt_eps_tol"]
             
+        rnd = PsiOpts.get_random()
             
         truth = PsiOpts.settings["truth"]
         
@@ -10967,6 +11084,10 @@ class ConcModel(IBaseObj):
                     if PsiOpts.is_timer_ended():
                         break
                     
+                    if verbose_step:
+                        print("Pass #" + str(cpass) + "/" + str(len(num_iter_list)) + 
+                            ", Point #" + str(ip) + "/" + str(cur_num_points) + ", Hop #" + str(ih) + "/" + str(cur_num_hop))
+
                     r_start = []
                     r_start_d = []
                     v_start = t
@@ -11004,6 +11125,13 @@ class ConcModel(IBaseObj):
                         res = None
                         resx = None
                         resfun = None
+
+
+                        #!!!!!!!!!!!!!!!!!!!!!!!!
+                        # print(ConcModel.tensor_list_to_array(varlist))
+                        # print(get_fcn(expr, -sgn, True, use_jac)(ConcModel.tensor_list_to_array(varlist)))
+                        # print()
+
                         if len(varlist):
                             with warnings.catch_warnings():
                                 
@@ -11032,6 +11160,7 @@ class ConcModel(IBaseObj):
                             resx = numpy.array([])
                             resfun = get_fcn(expr, -sgn, True, use_jac)(numpy.array([]))[0]
                             
+
                         ConcModel.tensor_list_from_array(varlist, resx)
                         
                         bad = False
@@ -11194,7 +11323,7 @@ class ConcModel(IBaseObj):
                         if verbose_step:
                             print("HOP #" + str(ih) + " from=" + str_tuple(v_start) 
                                   + " to=" + str_tuple(t) + " prob=" + iutil.tostr_verbose(accept_prob))
-                        if numpy.random.uniform() >= accept_prob:
+                        if rnd.uniform() >= accept_prob:
                             toreject = True
                             if verbose_step:
                                 print("HOP REJECT")
@@ -12394,6 +12523,108 @@ class LinearProg:
             self.solver_param["opt"] = opt
             self.solver_param["model"] = model
             
+
+        elif self.solver.startswith("ortools."):
+            solver_opt = self.solver[self.solver.index(".") + 1 :]
+
+            model = ortools.linear_solver.pywraplp.Solver.CreateSolver(solver_opt)
+            xvar = None
+
+            if not model:
+                raise RuntimeError("Fail to initialize solver " + self.solver)
+            
+            # if self.dual_enabled:
+            #     model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+            
+            if dual_form:
+                if self.dual_form_obj is not None:
+                    self.dual_form_ncons = len(self.Au.x) + len(self.Ae.x) * 2
+                    self.dual_form_weights = []
+                    # model.n = pyo.Param(default = self.dual_form_ncons)
+                    # model.x = pyo.Var(pyo.RangeSet(model.n), domain=pyo.Reals)
+                    n = self.dual_form_ncons
+                    xvar = [model.NumVar(0, model.infinity(), 'x' + str(i)) for i in range(n)]
+                    
+                    # model.c = pyo.ConstraintList()
+                    vexprs = [None] * (self.nxvar + 1)
+                    
+                    for i, (cx, cb, csn, cri) in enumerate(itertools.chain(((tx, tb, -1, tri) for tx, tb, tri in zip(self.Au.x, self.bu, self.Au.rowinfo)),
+                                                ((tx, tb, tsn, tri) for tx, tb, tri in zip(self.Ae.x, self.be, self.Ae.rowinfo) for tsn in [-1, 1]))):
+                        
+                        # model.Add(x[i] >= 0)
+                        
+                        cweight = 1.0 + i * 0.2 / self.dual_form_ncons
+                        if cri is not None:
+                            cweight += 0.2 * len(cri.allcomp())
+                        if cri is not None and cri.get_meta("dual_weight") is not None:
+                            cweight *= cri.get_meta("dual_weight")
+                        self.dual_form_weights.append(cweight)
+
+                        for (j, c) in cx:
+                            # print(str(i) + "  " + str(j) + "  " + str(c))
+                            if vexprs[j] is None:
+                                vexprs[j] = c * csn * xvar[i]
+                            else:
+                                vexprs[j] += c * csn * xvar[i]
+                        
+                        if abs(cb) > ceps:
+                            if vexprs[self.nxvar] is None:
+                                vexprs[self.nxvar] = cb * csn * xvar[i]
+                            else:
+                                vexprs[self.nxvar] += cb * csn * xvar[i]
+                    
+                    for j in range(self.nxvar):
+                        if vexprs[j] is None:
+                            if abs(self.dual_form_obj[j]) > ceps:
+                                self.dual_form_infeas = True
+                            continue
+                        model.Add(vexprs[j] == self.dual_form_obj[j])
+                    
+                    if vexprs[self.nxvar] is None:
+                        if -self.dual_form_cutoff > ceps:
+                            self.dual_form_infeas = True
+                    else:
+                        # print(vexprs[self.nxvar])
+                        # print(self.dual_form_cutoff)
+                        model.Add(vexprs[self.nxvar] >= -self.dual_form_cutoff)
+                    
+
+                
+            else:
+                # model.n = pyo.Param(default=self.nxvar)
+                # model.x = pyo.Var(pyo.RangeSet(model.n), domain=pyo.Reals)
+                
+                # model.c = pyo.ConstraintList()
+                
+                n = self.nxvar
+                xvar = [model.NumVar(-model.infinity(), model.infinity(), 'x' + str(i)) for i in range(n)]
+                
+                for i in range(len(self.Au.x)):
+                    cexpr = None
+                    for (j, c) in self.Au.x[i]:
+                        if cexpr is None:
+                            cexpr = c * xvar[j]
+                        else:
+                            cexpr += c * xvar[j]
+                    if cexpr is not None:
+                        model.Add(cexpr <= self.bu[i])
+                        
+                for i in range(len(self.Ae.x)):
+                    cexpr = None
+                    for (j, c) in self.Ae.x[i]:
+                        if cexpr is None:
+                            cexpr = c * xvar[j]
+                        else:
+                            cexpr += c * xvar[j]
+                    if cexpr is not None:
+                        model.Add(cexpr == self.be[i])
+            
+            
+            self.solver_param["model"] = model
+            self.solver_param["xvar"] = xvar
+            
+
+
     def id_toexpr(self):
         n = self.index.num_rv()
         
@@ -13526,6 +13757,39 @@ class LinearProg:
         
         
         
+        elif self.solver.startswith("ortools."):
+            model = self.solver_param["model"]
+            xvar = self.solver_param["xvar"]
+            
+            timelimit = PsiOpts.timer_left_sec()
+            if timelimit is not None:
+                model.set_time_limit(timelimit * 1000)
+            
+            cexpr = None
+            for i in range(len(c)):
+                if abs(c[i]) > PsiOpts.settings["eps"]:
+                    if cexpr is None:
+                        cexpr = c[i] * xvar[i]
+                    else:
+                        cexpr += c[i] * xvar[i]
+                        
+            if cexpr is not None:
+                model.Minimize(cexpr)
+                try:
+                    res = model.Solve()
+                except Exception as err:
+                    if verbose:
+                        warnings.warn(str(err), RuntimeWarning)
+                    res = 0
+                
+                if res == ortools.linear_solver.pywraplp.Solver.OPTIMAL:
+                    
+                    return (0.0 if zero_obj else model.Objective().Value(), [xvar[i].solution_value() for i in range(self.nxvar)])
+                
+            return (None, None)
+        
+        
+        
         
     def checkexpr_ge0(self, x, saved = False, optval = None):
         verbose = PsiOpts.settings.get("verbose_lp", False)
@@ -13911,6 +14175,115 @@ class LinearProg:
                     
             return False
         
+
+        elif self.solver.startswith("ortools."):
+            
+            if self.dual_form:
+                self.dual_form_obj = c
+                self.dual_form_cutoff = c1
+                self.calc_solver()
+                if self.dual_form_infeas:
+                    return False
+                
+            model = self.solver_param["model"]
+            xvar = self.solver_param["xvar"]
+            
+            timelimit = PsiOpts.timer_left_sec()
+            if timelimit is not None:
+                model.set_time_limit(timelimit * 1000)
+            
+            cexpr = None
+            
+            if self.dual_form:
+                for j in range(self.dual_form_ncons):
+                    tcoeff = self.dual_form_weights[j]
+                    if cexpr is None:
+                        cexpr = tcoeff * xvar[j]
+                    else:
+                        cexpr += tcoeff * xvar[j]
+
+            else:
+                for i in range(len(c)):
+                    if abs(c[i]) > PsiOpts.settings["eps"]:
+                        if cexpr is None:
+                            cexpr = c[i] * xvar[i]
+                        else:
+                            cexpr += c[i] * xvar[i]
+                        
+            if cexpr is not None:
+                model.Minimize(cexpr)
+                try:
+                    res = model.Solve()
+                except Exception as err:
+                    if verbose:
+                        warnings.warn(str(err), RuntimeWarning)
+                    res = 0
+                    
+                if verbose:
+                    print("  status=" + str(res) + " optval=" + str(model.Objective().Value()))
+                
+                if self.affine_present and self.lp_bounded and (res == ortools.linear_solver.pywraplp.Solver.INFEASIBLE):
+                    return True
+                #if pulp.LpStatus[res] == "Infeasible":
+                #    return True
+                if res == ortools.linear_solver.pywraplp.Solver.OPTIMAL:
+                    
+                    if self.dual_form:
+                        self.dual_u = [0.0] * len(self.Au.x)
+                        self.dual_e = [0.0] * len(self.Ae.x)
+                        for j in range(len(self.Au.x)):
+                            self.dual_u[j] = -xvar[j].solution_value()
+                        for j in range(len(self.Ae.x)):
+                            self.dual_e[j] = -xvar[j * 2 + len(self.Au.x)].solution_value() + xvar[j * 2 + len(self.Au.x) + 1].solution_value()
+                        
+                        if self.dual_pf:
+                            self.write_pf(x)
+                            
+                        return True
+                    
+                    self.optval = model.Objective().Value() + c1
+                    
+                    if optval is not None:
+                        optval.append(self.optval)
+                        
+                    # if self.dual_enabled:
+                    #     self.dual_u = [0.0] * len(self.Au.x)
+                    #     self.dual_e = [0.0] * len(self.Ae.x)
+                        
+                    #     for i, (name, c) in enumerate(prob.constraints.items()):
+                    #         #print(str(i) + "  " + name + "  " + str(c.pi))
+                    #         if c.pi is None:
+                    #             self.dual_u = None
+                    #             self.dual_e = None
+                    #             break
+                            
+                    #         if i < len(self.Au.x):
+                    #             self.dual_u[i] = c.pi
+                    #         else:
+                    #             self.dual_e[i - len(self.Au.x)] = c.pi
+                                    
+                    #     if self.dual_pf:
+                    #         self.write_pf(x)
+                    
+                    if self.val_enabled:
+                        self.val_x = [0.0] * self.nxvar
+                        for i in range(self.nxvar):
+                            self.val_x[i] = xvar[i].solution_value()
+                                
+                        
+                    if self.optval >= zero_cutoff:
+                        return True
+            
+                if res == ortools.linear_solver.pywraplp.Solver.OPTIMAL and self.save_res:
+                    self.saved_var.append(array.array("d", [xvar[i].solution_value() for i in range(len(c))]))
+                    if verbose:
+                        print("  added : " + str(len(self.saved_var)) + ", " + str(sum(self.saved_var[-1])))
+                    
+                return False
+            else:
+                return True
+            
+        
         else:
             if self.solver == "":
                 raise RuntimeError("No solver found. Please install a solver. See: "
@@ -14124,10 +14497,7 @@ class LinearProg:
                             " reached (current = " + str(round(numpy.exp(mat.col_size * 0.5 * numpy.log(mat.row_size)))) + "). Switching to randomized subset. Program will not terminate unless the block is enclosed by \"with PsiOpts(timelimit = ???):\" or \"with PsiOpts(stop_file = ???):\".", RuntimeWarning)
                     rnd_started = True
 
-                rnd = PsiOpts.settings["random"]
-                if rnd is None:
-                    rnd = random.Random()
-                    PsiOpts.settings["random"] = rnd
+                rnd = PsiOpts.get_random()
                 
                 if matP is None:
                     # tgt_num_point = rnd.randrange(1, mat.col_size + 1)
@@ -18976,13 +19346,16 @@ class Region(IBaseObj):
             cs = self.copy()
         
         if method == "c":
+            proof_kwargs = {key: val for key, val in kwargs.items() if key.startswith("proof_")}
+            other_kwargs = {key: val for key, val in kwargs.items() if not key.startswith("proof_")}
+
             cproof = None
             cont = PsiOpts()
             if proof:
-                cont = PsiOpts(proof_new = True)
+                cont = PsiOpts(proof_new = True, **proof_kwargs)
                 
             with cont:
-                r = cs.check_getaux(**kwargs)
+                r = cs.check_getaux(**other_kwargs)
                 if proof:
                     cproof = PsiOpts.get_proof()
 
@@ -19278,9 +19651,10 @@ class Region(IBaseObj):
             
         for ccard in card:
             P = ConcModel()
-            cont = PsiOpts()
+            cont = PsiOpts(opt_num_points_mul = PsiOpts.settings["example_opt_num_points_mul"])
             if ccard is not None:
-                cont = PsiOpts(opt_aux_card = ccard)
+                cont = PsiOpts(opt_num_points_mul = PsiOpts.settings["example_opt_num_points_mul"],
+                    opt_aux_card = ccard)
 
             with cont:
                 if not P[cs]:
@@ -28656,24 +29030,109 @@ class CellTable:
         #     if iutil.bin_to_gray(mask) & (1 << xi):
         #         r.append(mask)
         # return (ax, r)
+
+    @staticmethod
+    def get_color(x):
+        if x is None:
+            return None
+        if isinstance(x, str):
+            mode = None
+            x = x.lower().strip()
+            if x.startswith("l_"):
+                x = x[2:]
+                mode = "l"
+            elif x.startswith("d_"):
+                x = x[2:]
+                mode = "d"
+
+            colors = dict(matplotlib.colors.BASE_COLORS, **matplotlib.colors.CSS4_COLORS)
+            colors["r"] = (1.0, 0.0, 0.0)
+            colors["g"] = (0.0, 1.0, 0.0)
+            colors["b"] = (0.0, 0.0, 1.0)
+            colors["c"] = (0.0, 1.0, 1.0)
+            colors["m"] = (1.0, 0.0, 1.0)
+            colors["y"] = (1.0, 1.0, 0.0)
+            colors["k"] = (0.0, 0.0, 0.0)
+            colors["w"] = (1.0, 1.0, 1.0)
+
+            if x not in colors:
+                return None
+            r = colors[x]
+            if not isinstance(r, tuple):
+                r = tuple(matplotlib.colors.to_rgba(r)[:3])
+
+            if mode == "l":
+                return (r[0] * 0.5 + 0.5, r[1] * 0.5 + 0.5, r[2] * 0.5 + 0.5)
+            elif mode == "d":
+                return (r[0] * 0.5, r[1] * 0.5, r[2] * 0.5)
+            else:
+                return r
+        return x
     
+    @staticmethod
+    def color_blend(cols, style):
+        if len(cols) == 0:
+            return (0.0, 0.0, 0.0)
+        if len(cols) == 1:
+            return tuple(cols[0])
+
+        if style == "avghsv":
+            r = [CellTable.color_blend(cols, "hsv"), CellTable.color_blend(cols, "avg")]
+            return tuple([sum(c[i] for c in r) / len(r) for i in range(3)])
+
+        if style == "hsv":
+            hsv = [matplotlib.colors.rgb_to_hsv(c) for c in cols]
+            s = sum(t[1] for t in hsv) / len(hsv)
+            v = sum(t[2] for t in hsv) / len(hsv)
+            hvecs = [(math.cos((t[0] - 0.5) * 2 * math.pi) * t[1] * t[2], 
+                      math.sin((t[0] - 0.5) * 2 * math.pi) * t[1] * t[2]) for t in hsv]
+            hvec = [sum(t[i] for t in hvecs) / len(hvecs) for i in range(2)]
+            h = 0.0
+            if hvec[0]**2 + hvec[1]**2 > 0.03**2:
+                h = math.atan2(hvec[1], hvec[0]) / (2 * math.pi) + 0.5
+            else:
+                s = 0.0
+            return matplotlib.colors.hsv_to_rgb((h, s, v))
+
+        return tuple([sum(c[i] for c in cols) / len(cols) for i in range(3)])
+
+
     def get_expr_color(self, i, color_shift):
         r = None
         if i is not None:
-            r = self.exprs[i].get("color", None)
+            r = CellTable.get_color(self.exprs[i].get("color", None))
         if r is None:
             # return [(1, 0.5, 0.5), (0.5, 1, 0.5), (0.5, 0.5, 1), (1, 1, 0.2), (1, 0.3, 1), (0.3, 1, 1), 
             #         (1, 0.8, 0.3), (0.6, 0.6, 0.6)][i]
-            return [(1, 0.5, 0.5), (0.5, 0.5, 1), (0.5, 1, 0.5), (0.6, 0.6, 0.6), (1, 0.3, 1), (1, 1, 0.2), (0.3, 1, 1), 
-                    (1, 0.8, 0.3)][(0 if i is None else i) + color_shift]
+            # clist = [(1, 0.5, 0.5), (0.5, 0.5, 1), (0.5, 1, 0.5), (0.6, 0.6, 0.6), (1, 0.3, 1), (1, 1, 0.2), (0.3, 1, 1), 
+            #         (1, 0.8, 0.3)]
+            clist = [(1, 0.5, 0.5), (0.5, 0.5, 1), (0.5, 1, 0.5), (1, 1, 0.2), (1, 0.3, 1), (0.3, 1, 1), 
+                    (1, 0.8, 0.3), (0.6, 0.6, 0.6)]
+            clist += [tuple(max(t[i] - 0.3, 0.0) for i in range(3)) for t in clist]
+            cid = (0 if i is None else i) + color_shift
+            return clist[cid % len(clist)]
         return r
     
-    def plot(self, style = "hsplit", legend = True, use_latex = True):
+
+    def plot(self, style = "hsplit", legend = True, use_latex = True, figsize = None, color = None, cval_color = None):
         label_interval = 0.32
         label_width = 0.29
         fontsize = self.fontsize
         fontsize_in_mul = 1.0
         linewidth = self.linewidth
+
+        if figsize is None:
+            figsize = PsiOpts.settings["figsize"]
+        if figsize is None:
+            figsize = [10, 8]
+
+        if color is None:
+            color = []
+        elif isinstance(color, str):
+            color = color.split(",")
+            
+        color_list = [CellTable.get_color(c) for c in color]
+        # print(color_list)
         
         rcParams_orig = None
         if use_latex:
@@ -28682,14 +29141,14 @@ class CellTable:
                     "font.family": "sans-serif",
                     "font.sans-serif": ["Helvetica"]})
         
-        fig, ax = plt.subplots(figsize = [10, 8])
+        fig, ax = plt.subplots(figsize = figsize)
         # patches = []
         xlim = [0, 0]
         ylim = [0, 0]
         
         expr_hatch = [None] * len(self.exprs)
         mask_nexpr = [0] * (1 << len(self.x))
-        hatches = ['//', '\\\\', '||', '--', '+', 'x', 'o', 'O', '.', '*']
+        hatches = ['//', '\\\\', '||', '--', 'o', 'O', '.', '*', '+', 'x']
         
         cval_present = False
         cval_min = 0.0 # 1e20
@@ -28708,10 +29167,12 @@ class CellTable:
         val_outline = None
         neg_hatch = None
         is_blend = None
+        blend_style = "avghsv"
         is_venn = False
         is_venn_overlap = False
         text_sub_draw = True
         neg_hatch_style = "//"
+        hatch_all = True
         color_shift = 0
         numdp = 4
         cval_color_enabled = True
@@ -28777,6 +29238,15 @@ class CellTable:
                 numdp = 9
             elif cstyle == "venn":
                 is_venn = True
+            elif cstyle == "blend_hsv":
+                style = "blend"
+                blend_style = "hsv"
+            elif cstyle == "blend_avg":
+                style = "blend"
+                blend_style = "avg"
+            elif cstyle == "blend_avghsv":
+                style = "blend"
+                blend_style = "avghsv"
             else:
                 style = cstyle
         
@@ -28786,13 +29256,16 @@ class CellTable:
         if cval_ignore:
             cval_present = False
         
-        cval_color = None
+        
         if cval_min >= cval_max:
             cval_color_enabled = False
         if cval_present:
             if cval_color_enabled:
-                cval_color = self.get_expr_color(None, color_shift)
-                color_shift += 1
+                if cval_color is None:
+                    cval_color = self.get_expr_color(None, color_shift)
+                    color_shift += 1
+                else:
+                    cval_color = CellTable.get_color(cval_color)
         else:
             cval_color_enabled = False
         
@@ -28824,10 +29297,14 @@ class CellTable:
                         expr_hatch[ei] = True
                     
         if style == "hatch":
+            if hatch_all or cval_color_enabled:
+                for ei in range(len(self.exprs)):
+                    expr_hatch[ei] = True
+
             nover = 0
             for ei in range(len(self.exprs)):
                 if expr_hatch[ei]:
-                    expr_hatch[ei] = hatches[nover]
+                    expr_hatch[ei] = hatches[nover % len(hatches)]
                     nover += 1
                 
         
@@ -28988,6 +29465,8 @@ class CellTable:
                     snexpr = mask_nexpr[mask]
                     colsum = [0.0, 0.0, 0.0]
                     colsumsol = [0.0, 0.0, 0.0]
+                    collist = []
+                    collistsol = []
                     nsol = 0
                     
                     if cval is not None:
@@ -29018,7 +29497,12 @@ class CellTable:
                         else:
                             ctext = iutil.float_tostr(v, bracket = False)
                             
-                        ccolor = self.get_expr_color(ei, color_shift)
+                        ccolor = None
+                        if ei < len(color_list):
+                            ccolor = color_list[ei]
+                        else:
+                            ccolor = self.get_expr_color(ei, color_shift)
+
                         chatch = expr_hatch[ei]
                         hatch_invert = False
                         if chatch is not None:
@@ -29045,10 +29529,12 @@ class CellTable:
                             colsum[0] += ccolor[0]
                             colsum[1] += ccolor[1]
                             colsum[2] += ccolor[2]
+                            collist.append(ccolor)
                             if not (neg_hatch and v < 0):
                                 colsumsol[0] += ccolor[0]
                                 colsumsol[1] += ccolor[1]
                                 colsumsol[2] += ccolor[2]
+                                collistsol.append(ccolor)
                                 nsol += 1
                                 
                         
@@ -29057,9 +29543,12 @@ class CellTable:
                             if rect_draw and (not is_blend or cnexpr == snexpr - 1):
                                 hatch_col = (1.0, 1.0, 1.0)
                                 if is_blend and cnexpr == snexpr - 1:
-                                    ccolor = (colsum[0] / snexpr, colsum[1] / snexpr, colsum[2] / snexpr)
+                                    # ccolor = (colsum[0] / snexpr, colsum[1] / snexpr, colsum[2] / snexpr)
+                                    ccolor = CellTable.color_blend(collist, blend_style)
                                     if nsol > 0:
-                                        hatch_col = (colsumsol[0] / nsol, colsumsol[1] / nsol, colsumsol[2] / nsol)
+                                        # hatch_col = (colsumsol[0] / nsol, colsumsol[1] / nsol, colsumsol[2] / nsol)
+                                        hatch_col = CellTable.color_blend(collistsol, blend_style)
+
                                     if abs(ccolor[0] - hatch_col[0]) + abs(ccolor[1] - hatch_col[1]) + abs(ccolor[2] - hatch_col[2]) <= 0.001:
                                         chatch = None
                                     else:
@@ -29126,7 +29615,13 @@ class CellTable:
         if legend and len(self.exprs):
             legends = []
             for ei in range(len(self.exprs)):
-                ccolor = self.get_expr_color(ei, color_shift)
+
+                ccolor = None
+                if ei < len(color_list):
+                    ccolor = color_list[ei]
+                else:
+                    ccolor = self.get_expr_color(ei, color_shift)
+                    
                 clabel = ""
                 cexpr = self.exprs[ei].get("expr")
                 if cexpr is not None:
@@ -29165,7 +29660,7 @@ class CellTable:
         plt.xlim([xlim[0] - 0.011, xlim[1] + 0.011])
         plt.ylim([ylim[0] - 0.011, ylim[1] + 0.011])
         plt.show()
-        plt.tight_layout()
+        fig.tight_layout()
         
         if use_latex:
             plt.rcParams = rcParams_orig.copy()
@@ -32469,6 +32964,7 @@ class CommModel(IBaseObj):
         return r
         
     
+
     def get_inner(self, subcodebook = True, rate_split = False, shuffle = False, 
                   convexify = False, convexify_diag = False,
                   skip_simplify = False, skip_simplify_iter = False):
@@ -34407,33 +34903,33 @@ def ent_vector_lex(*args):
     return H(comp_vector_lex(*args))
 
 
-def mi_vector(*args, minsize = 1):
+def mi_vector(*args, minsize = 1, maxsize = 1000):
     """Mutual information vector.
     """
     r = ExprArray.empty()
-    for xs in igen.subset([1 << x for x in range(len(args))], minsize = minsize):
+    for xs in igen.subset([1 << x for x in range(len(args))], minsize = minsize, maxsize = maxsize):
         r.append(I(alland(args[x] for x in range(len(args)) if xs & (1 << x))))
     return r
 
-def ent_cells(*args, minsize = 1):
+def ent_cells(*args, minsize = 1, maxsize = 1000):
     """Cells of the I-measure.
     Z. Zhang and R. W. Yeung, "On characterization of entropy function via information inequalities,"
     IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
     """
     allrv = sum(args)
     r = ExprArray.empty()
-    for xs in igen.subset([1 << x for x in range(len(args))], minsize = minsize):
+    for xs in igen.subset([1 << x for x in range(len(args))], minsize = minsize, maxsize = maxsize):
         r.append(I(alland(args[x] for x in range(len(args)) if xs & (1 << x)) 
                  | sum(args[x] for x in range(len(args)) if not (xs & (1 << x)))))
     return r
 
 
-def mi_cells(*args, minsize = 2):
+def mi_cells(*args, minsize = 2, maxsize = 1000):
     """Cells of the I-measure, excluding conditional entropies.
     Z. Zhang and R. W. Yeung, "On characterization of entropy function via information inequalities,"
     IEEE Trans. Inform. Theory, vol. 44, pp. 1440-1452, Jul 1998.
     """
-    return ent_cells(*args, minsize = minsize)
+    return ent_cells(*args, minsize = minsize, maxsize = maxsize)
 
 
 def ent_region(n, real_name = "R", var_name = "X", name_subset = True, st = 0):
