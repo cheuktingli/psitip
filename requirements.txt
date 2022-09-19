@@ -6,4 +6,4 @@ lark-parser
 pycddlib
 graphviz
 torch
-psitip
+psitip == 1.1.6
