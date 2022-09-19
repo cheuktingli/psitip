@@ -13,13 +13,13 @@
 <g id="node1" class="node"><title>M_1@@4@@M_1</title>
 <text text-anchor="middle" x="27" y="-68.3" font-family="Times New Roman,serif" font-size="14.00">M_1</text>
 </g>
-<!-- enc_M_1+M_2_X -->
-<g id="node8" class="node"><title>enc_M_1+M_2_X</title>
+<!-- enc_M_1,M_2_X -->
+<g id="node8" class="node"><title>enc_M_1,M_2_X</title>
 <polygon fill="none" stroke="black" points="144,-63 90,-63 90,-27 144,-27 144,-63"/>
 <text text-anchor="middle" x="117" y="-41.3" font-family="Times New Roman,serif" font-size="14.00">Enc</text>
 </g>
-<!-- M_1@@4@@M_1&#45;&gt;enc_M_1+M_2_X -->
-<g id="edge1" class="edge"><title>M_1@@4@@M_1&#45;&gt;enc_M_1+M_2_X</title>
+<!-- M_1@@4@@M_1&#45;&gt;enc_M_1,M_2_X -->
+<g id="edge1" class="edge"><title>M_1@@4@@M_1&#45;&gt;enc_M_1,M_2_X</title>
 <path fill="none" stroke="black" d="M54.4029,-63.8991C62.481,-61.4206 71.5067,-58.6514 80.1046,-56.0134"/>
 <polygon fill="black" stroke="black" points="81.3855,-59.2815 89.919,-53.0021 79.3322,-52.5894 81.3855,-59.2815"/>
 </g>
@@ -27,8 +27,8 @@
 <g id="node2" class="node"><title>M_2@@4@@M_2</title>
 <text text-anchor="middle" x="27" y="-14.3" font-family="Times New Roman,serif" font-size="14.00">M_2</text>
 </g>
-<!-- M_2@@4@@M_2&#45;&gt;enc_M_1+M_2_X -->
-<g id="edge2" class="edge"><title>M_2@@4@@M_2&#45;&gt;enc_M_1+M_2_X</title>
+<!-- M_2@@4@@M_2&#45;&gt;enc_M_1,M_2_X -->
+<g id="edge2" class="edge"><title>M_2@@4@@M_2&#45;&gt;enc_M_1,M_2_X</title>
 <path fill="none" stroke="black" d="M54.4029,-26.1009C62.481,-28.5794 71.5067,-31.3486 80.1046,-33.9866"/>
 <polygon fill="black" stroke="black" points="79.3322,-37.4106 89.919,-36.9979 81.3855,-30.7185 79.3322,-37.4106"/>
 </g>
@@ -82,8 +82,8 @@
 <g id="node7" class="node"><title>M_2?@@4@@M_2?[Z]</title>
 <text text-anchor="middle" x="567" y="-68.3" font-family="Times New Roman,serif" font-size="14.00">M_2</text>
 </g>
-<!-- enc_M_1+M_2_X&#45;&gt;X -->
-<g id="edge3" class="edge"><title>enc_M_1+M_2_X&#45;&gt;X</title>
+<!-- enc_M_1,M_2_X&#45;&gt;X -->
+<g id="edge3" class="edge"><title>enc_M_1,M_2_X&#45;&gt;X</title>
 <path fill="none" stroke="black" d="M144.403,-45C152.393,-45 161.311,-45 169.824,-45"/>
 <polygon fill="black" stroke="black" points="169.919,-48.5001 179.919,-45 169.919,-41.5001 169.919,-48.5001"/>
 </g>

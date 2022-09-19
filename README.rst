@@ -3,7 +3,13 @@ PSITIP
 
 Python Symbolic Information Theoretic Inequality Prover
 
-**Click here for the** `Installation Guide`_
+Click one of the following to run PSITIP on the browser:
+
+**>>** `Learn Information Theory with PSITIP (Jupyter Binder) <https://mybinder.org/v2/gh/cheuktingli/psitip/master?labpath=examples/table_of_contents.ipynb>`_ **<<** 
+
+**>>** `Learn Information Theory with PSITIP (Google Colab) <https://colab.research.google.com/github/cheuktingli/psitip/blob/master/examples/table_of_contents.ipynb>`_ **<<** 
+
+**Click here for the** `Installation Guide`_ **for local installation**
 
 PSITIP is a computer algebra system for information theory written in Python. Random variables, expressions and regions are objects in Python that can be manipulated easily. Moreover, it implements a versatile deduction system for automated theorem proving. PSITIP supports features such as:
 
@@ -47,13 +53,15 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 .. code:: python
 
+    %matplotlib inline
     from psitip import *
-    PsiOpts.setting(solver = "pyomo.glpk")     # Set linear programming solver
-    PsiOpts.setting(repr_latex = True)         # Jupyter Notebook LaTeX display
-    PsiOpts.setting(venn_latex = True)         # LaTeX in diagrams
-    PsiOpts.setting(proof_note_color = "blue") # Reasons in proofs are blue
-    PsiOpts.setting(solve_display_reg = True)  # Display claims in solve commands
-    numpy.random.seed(1)  # Random search of examples uses numpy.random
+    PsiOpts.setting(
+        solver = "ortools.GLOP",    # Set linear programming solver
+        str_style = "std",          # Conventional notations in output
+        proof_note_color = "blue",  # Reasons in proofs are blue
+        solve_display_reg = True,   # Display claims in solve commands
+        random_seed = 4321          # Random seed for example searching
+    )
     
     X, Y, Z, W, U, V, M, S = rv("X, Y, Z, W, U, V, M, S") # Declare random variables
 
@@ -106,15 +114,6 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 .. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/demo_readme_5_0.png
 
 
-
-.. parsed-literal::
-
-    <Figure size 432x288 with 0 Axes>
-
-
-
---------------
-
 .. code:: python
 
     # Disprove an implication by a counterexample
@@ -123,7 +122,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block16.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block15.svg
 
 --------------
 
@@ -136,7 +135,7 @@ Examples with Jupyter Notebook `(ipynb file) <https://github.com/cheuktingli/psi
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block18.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block17.svg
 
 --------------
 
@@ -153,7 +152,7 @@ Additive combinatorics
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block22.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block21.svg
 
 --------------
 
@@ -165,7 +164,7 @@ Additive combinatorics
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block24.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block23.svg
 
 --------------
 
@@ -190,7 +189,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block29.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block28.svg
 
 --------------
 
@@ -201,7 +200,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block31.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block30.svg
 
 --------------
 
@@ -212,7 +211,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block33.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block32.svg
 
 --------------
 
@@ -223,7 +222,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block35.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block34.svg
 
 --------------
 
@@ -235,7 +234,7 @@ User-defined information quantities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block37.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block36.svg
 
 --------------
 
@@ -276,7 +275,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block44.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block43.svg
 
 --------------
 
@@ -288,7 +287,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block46.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block45.svg
 
 --------------
 
@@ -300,7 +299,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block48.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block47.svg
 
 --------------
 
@@ -312,7 +311,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block50.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block49.svg
 
 --------------
 
@@ -323,7 +322,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block52.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block51.svg
 
 --------------
 
@@ -334,7 +333,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block54.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block53.svg
 
 --------------
 
@@ -345,7 +344,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block56.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block55.svg
 
 --------------
 
@@ -358,7 +357,7 @@ Automatic inner/outer bound for degraded broadcast channel
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block58.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block57.svg
 
 --------------
 
@@ -373,7 +372,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block62.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block61.svg
 
 --------------
 
@@ -388,7 +387,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block64.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block63.svg
 
 --------------
 
@@ -403,7 +402,7 @@ Non-Shannon-type Inequalities
 
 
 
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block66.svg
+.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/block65.svg
 
 
 
@@ -439,10 +438,25 @@ This program comes with ABSOLUTELY NO WARRANTY. This program is a work in progre
 Installation Guide
 ~~~~~~~~~~~~~~~~~~
 
+To install `PSITIP <https://pypi.org/project/psitip/>`_ with its dependencies, use one of the following three options:
 
-Running :code:`pip install psitip` will install PSITIP without the necessary solvers (which may not work correctly), and is not recommended. To install PSITIP with its dependencies, use one of the following two options:
+A. Default installation
+-----------------------
 
-A. Installation with conda (recommended)
+Run (you might need to use :code:`python -m pip` or :code:`py -m pip` instead of :code:`pip`):
+
+    .. code:: text
+
+        pip install psitip
+
+
+If you encounter an error when building pycddlib on Linux, refer to https://pycddlib.readthedocs.io/en/latest/quickstart.html#installation .
+
+This will install PSITIP with default dependencies. The default solver is ortools.GLOP. If you want to choose which dependencies to install, or if you encounter an error, use one of the following two options instead.
+
+
+
+B. Installation with conda (recommended)
 ----------------------------------------
 
 1. Install Python via Anaconda (https://www.anaconda.com/).
@@ -455,37 +469,45 @@ A. Installation with conda (recommended)
         conda install -c conda-forge pulp
         conda install -c conda-forge pyomo
         conda install -c conda-forge lark-parser
+        pip install ortools
         pip install pycddlib
         pip install --no-deps psitip
 
-3. (Optional) Graphviz (https://graphviz.org/) is required for drawing Bayesian networks and communication network model. It can be installed via :code:`conda install -c conda-forge python-graphviz`
+3. If you encounter an error when building pycddlib on Linux, refer to https://pycddlib.readthedocs.io/en/latest/quickstart.html#installation .
 
-4. (Optional) If numerical optimization is needed, also install PyTorch (https://pytorch.org/).
+4. (Optional) Graphviz (https://graphviz.org/) is required for drawing Bayesian networks and communication network model. It can be installed via :code:`conda install -c conda-forge python-graphviz`
+
+5. (Optional) If numerical optimization is needed, also install PyTorch (https://pytorch.org/).
 
 
-B. Installation with pip
+C. Installation with pip
 ------------------------
 
 1. Install Python (https://www.python.org/downloads/).
 
-2. Run (you might need to use :code:`python3 -m pip` or :code:`py -m pip` instead of :code:`pip`):
+2. Run (you might need to use :code:`python -m pip` or :code:`py -m pip` instead of :code:`pip`):
 
     .. code:: text
 
         pip install numpy
         pip install scipy
         pip install matplotlib
+        pip install ortools
         pip install pulp
         pip install pyomo
         pip install lark-parser
         pip install pycddlib
-        pip install psitip
+        pip install --no-deps psitip
 
-3. A linear programming solver supported by `Pyomo <https://github.com/Pyomo/pyomo>`_ or `PuLP <https://github.com/coin-or/pulp>`_ is required. We recommend GLPK, which can be installed on https://www.gnu.org/software/glpk/ or via conda.
+3. If you encounter an error when building pycddlib on Linux, refer to https://pycddlib.readthedocs.io/en/latest/quickstart.html#installation .
 
-4. (Optional) Graphviz (https://graphviz.org/) is required for drawing Bayesian networks and communication network model. A Python binding can be installed via :code:`pip install graphviz`
+4. (Optional) The GLPK LP solver can be installed on https://www.gnu.org/software/glpk/ or via conda.
 
-5. (Optional) If numerical optimization is needed, also install PyTorch (https://pytorch.org/).
+5. (Optional) Graphviz (https://graphviz.org/) is required for drawing Bayesian networks and communication network model. A Python binding can be installed via :code:`pip install graphviz`
+
+6. (Optional) If numerical optimization is needed, also install PyTorch (https://pytorch.org/).
+
+
 
 
 Dependencies
@@ -496,7 +518,8 @@ The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/t
 
 Python 3 and numpy are required to run psitip. It also requires at least one of the following for sparse linear programming:
 
-- **Pyomo** (https://github.com/Pyomo/pyomo). Recommended. Requires GLPK (installed separately) or another solver.
+- **OR-Tools** (https://developers.google.com/optimization/install). Recommended. Can use GLOP (installed with OR-Tools) or other solvers.
+- **Pyomo** (https://github.com/Pyomo/pyomo). Requires GLPK (installed separately) or another solver.
 - **PuLP** (https://github.com/coin-or/pulp). Can use GLPK (installed separately), CBC (https://github.com/coin-or/Cbc , provided with PuLP, not recommended) or another solver.
 - **GLPK** (https://www.gnu.org/software/glpk/). Recommended. An external solver to be used with PuLP or Pyomo. Can be installed using Conda (see https://anaconda.org/conda-forge/glpk ).
 - **SciPy** (https://www.scipy.org/). Not recommended for problems with more than 8 random variables.
@@ -520,11 +543,13 @@ Other optional dependencies:
 Solver
 ~~~~~~
 
-The default solver is Scipy, though it is highly recommended to switch to another solver, e.g.:
+The default solver is ortools.GLOP. You may switch to another solver via:
 
 .. code-block:: python
 
     from psitip import *
+    PsiOpts.setting(solver = "ortools.GLOP")
+    PsiOpts.setting(solver = "scipy") # Not recommended
     PsiOpts.setting(solver = "pulp.glpk")
     PsiOpts.setting(solver = "pyomo.glpk")
     PsiOpts.setting(solver = "pulp.cbc") # Not recommended
@@ -1812,7 +1837,7 @@ Some of the options are:
 
 - :code:`truth_add` : Add another assumption (:code:`Region` object) to :code:`truth`.
 
-- :code:`solver` : The solver used (e.g. :code:`"pulp.glpk"`, :code:`"pyomo.glpk"`, :code:`"pulp.cbc"`, :code:`"scipy"`).
+- :code:`solver` : The solver used (e.g. :code:`"ortools.GLOP"`, :code:`"pulp.glpk"`, :code:`"pyomo.glpk"`, :code:`"pulp.cbc"`, :code:`"scipy"`).
 
 - :code:`pyomo_options` : Dictionary of options for Pyomo solver (see https://pyomo.readthedocs.io/en/stable/working_models.html#sending-options-to-the-solver ).
 
