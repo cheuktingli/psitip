@@ -411,7 +411,7 @@ Non-Shannon-type Inequalities
 |
 |
 
-**>>** `More examples (Jupyter Binder) <https://mybinder.org/v2/gh/cheuktingli/psitip/master?labpath=examples/table_of_contents.ipynb>`_ `(Google Colab) <https://colab.research.google.com/github/cheuktingli/psitip/blob/master/examples/table_of_contents.ipynb>`_ **<<** 
+**>>>>** `Click here for more examples <https://nbviewer.org/github/cheuktingli/psitip/blob/master/examples/table_of_contents.ipynb>`_ `(Jupyter Binder) <https://mybinder.org/v2/gh/cheuktingli/psitip/master?labpath=examples/table_of_contents.ipynb>`_ `(Google Colab) <https://colab.research.google.com/github/cheuktingli/psitip/blob/master/examples/table_of_contents.ipynb>`_ **<<<<** 
 
 |
 |
@@ -428,6 +428,9 @@ The working principle of PSITIP (existential information inequalities) is descri
 - \C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," arXiv preprint, available: https://arxiv.org/pdf/2101.12370.pdf , 2021.
 
 If you find PSITIP useful in your research, please consider citing the above article.
+
+|
+|
 
 WARNING
 ~~~~~~~
