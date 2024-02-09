@@ -509,68 +509,6 @@ C. Installation with pip
 
 
 
-
-Dependencies
-------------
-
-
-The file `test.py <https://raw.githubusercontent.com/cheuktingli/psitip/master/test.py>`_ and the `Jupyter Notebook examples <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_ contain examples of usages of PSITIP. Use :code:`from psitip import *` in your code to import all functions in psitip.
-
-Python 3 and numpy are required to run psitip. It also requires at least one of the following for sparse linear programming:
-
-- **OR-Tools** (https://developers.google.com/optimization/install). Recommended. Can use GLOP (installed with OR-Tools) or other solvers.
-- **Pyomo** (https://github.com/Pyomo/pyomo). Requires GLPK (installed separately) or another solver.
-- **PuLP** (https://github.com/coin-or/pulp). Can use GLPK (installed separately), CBC (https://github.com/coin-or/Cbc , provided with PuLP, not recommended) or another solver.
-- **GLPK** (https://www.gnu.org/software/glpk/). Recommended. An external solver to be used with PuLP or Pyomo. Can be installed using Conda (see https://anaconda.org/conda-forge/glpk ).
-- **SciPy** (https://www.scipy.org/). Not recommended for problems with more than 8 random variables.
-
-See the Solver section for details.
-
-
-Other optional dependencies:
-
-- **Pycddlib** (https://github.com/mcmtroffaes/pycddlib/), a Python wrapper for Komei Fukuda's cddlib (https://people.inf.ethz.ch/fukudak/cdd_home/). Needed only for the convex hull method for polyhedron projection (`Discover inequalities`_).
-- **PyTorch** (https://pytorch.org/). Needed only for `Numerical optimization`_ over probability distributions.
-- **Matplotlib** (https://matplotlib.org/). Required for drawing `Information diagrams`_.
-- **Graphviz** (https://graphviz.org/). A Python binding of Graphviz is required for drawing Bayesian networks and communication network model.
-- **Lark** (https://github.com/lark-parser/lark). A parsing toolkit. Required for `Interactive mode and Parsing LaTeX code`_.
-
-
-|
-|
-
-
-Solver
-~~~~~~
-
-The default solver is ortools.GLOP. You may switch to another solver via:
-
-.. code-block:: python
-
-    from psitip import *
-    PsiOpts.setting(solver = "ortools.GLOP")
-    PsiOpts.setting(solver = "scipy") # Not recommended
-    PsiOpts.setting(solver = "pulp.glpk")
-    PsiOpts.setting(solver = "pyomo.glpk")
-    PsiOpts.setting(solver = "pulp.cbc") # Not recommended
-
-PuLP supports a wide range of solvers (see https://coin-or.github.io/pulp/technical/solvers.html ). Use the following line to set the solver to any supported solver (replace ??? with the desired solver):
-
-.. code-block:: python
-
-    PsiOpts.setting(solver = "pulp.???")
-    PsiOpts.setting(pulp_solver = pulp.solvers.GLPK(msg = 0)) # If the above does not work
-
-For Pyomo (see https://pyomo.readthedocs.io/en/stable/solving_pyomo_models.html#supported-solvers ), use the following line (replace ??? with the desired solver):
-
-.. code-block:: python
-
-    PsiOpts.setting(solver = "pyomo.???")
-
-See `Options`_ for options for the solver.
-
-WARNING: It is possible for inaccuracies in the solver to result in wrong output in PSITIP. Try switching to another solver if a problem is encountered.
-
 |
 |
 
