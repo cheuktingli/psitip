@@ -408,7 +408,10 @@ Non-Shannon-type Inequalities
 
 --------------
 
+|
+|
 
+**>>** `More examples (Jupyter Binder) <https://mybinder.org/v2/gh/cheuktingli/psitip/master?labpath=examples/table_of_contents.ipynb>`_ `(Google Colab) <https://colab.research.google.com/github/cheuktingli/psitip/blob/master/examples/table_of_contents.ipynb>`_ **<<** 
 
 |
 |
