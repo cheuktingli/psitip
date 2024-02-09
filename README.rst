@@ -425,7 +425,7 @@ Author: Cheuk Ting Li ( https://www.ie.cuhk.edu.hk/people/ctli.shtml ). The sour
 
 The working principle of PSITIP (existential information inequalities) is described in the following article:
 
-- \C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," arXiv preprint, available: https://arxiv.org/pdf/2101.12370.pdf , 2021.
+- \C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," in IEEE Transactions on Information Theory, vol. 69, no. 11, pp. 6857-6877, Nov. 2023, doi: 10.1109/TIT.2023.3296597. `(Paper) <https://ieeexplore.ieee.org/abstract/document/10185937>`_ `(Preprint) <https://arxiv.org/pdf/2101.12370.pdf>`_
 
 If you find PSITIP useful in your research, please consider citing the above article.
 
