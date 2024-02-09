@@ -891,62 +891,6 @@ Interactive mode can be entered by calling the main function of the PSITIP packa
 |
 |
 
-Information diagrams
-~~~~~~~~~~~~~~~~~~~~
-
-The :code:`venn` method of :code:`Comp`, :code:`Expr`, :code:`Region` and :code:`ConcModel` draws the information diagram of that object. The :code:`venn` method takes any number of arguments (:code:`Comp`, :code:`Expr`, :code:`Region` or :code:`ConcModel`) which are drawn together. For :code:`Region.venn`, only the nonzero cells of the region will be drawn (the others are in black). The ordering of the random variables is decided by the first :code:`Comp` argument (or automatically if no :code:`Comp` argument is supplied). To draw a Karnaugh map instead of a Venn diagram, use :code:`table` instead of :code:`venn`. The methods :code:`venn` and :code:`table` take a :code:`style` argument, which is a string with the following options (multiple options are separated by ","):
-
-- :code:`blend`: Blend the colors in overlapping areas. Default for :code:`venn`.
-
-- :code:`hatch`: Use hatch instead of fill.
-
-- :code:`pm`: Use +/- instead of numbers.
-
-- :code:`notext`: Hide the numbers.
-
-- :code:`nosign`: Hide the signs of each cell (+/-) on the bottom of each cell.
-
-- :code:`nolegend`: Hide the legends.
-
-- Add the line :code:`PsiOpts.setting(venn_latex = True)` at the beginning to turn on LaTeX in the diagram.
-
-
-Examples:
-
-.. code-block:: python
-
-    from psitip import *
-    X, Y, Z, W, U = rv("X", "Y", "Z", "W", "U")
-    (X+Y+Z).venn(H(X), H(Y) - H(Z))
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/Figure_1.png
-
-|
-|
-
-.. code-block:: python
-
-    (markov(X, Y, Z, W) & (H(W | Z) == 0)).venn(H(X), I(Y & W), style = "hatch,pm")
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/Figure_2.png
-
-
-|
-|
-
-.. code-block:: python
-
-    # Entropy, total correlation [Watanabe 1960] and dual total correlation [Han 1978]
-    # use Branko Grunbaum's Venn diagram for 5 variables
-    (X+Y+Z+W+U).venn(H(X+Y+Z+W+U), total_corr(X&Y&Z&W&U), 
-                    dual_total_corr(X&Y&Z&W&U), style = "nolegend")
-
-.. image:: https://raw.githubusercontent.com/cheuktingli/psitip/master/doc/img/Figure_3.png
-
-
-|
-|
-
 Numerical optimization
 ~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1325,163 +1269,6 @@ After a setting is specified, call:
 
 `Jupyter Notebook examples... <https://nbviewer.jupyter.org/github/cheuktingli/psitip/tree/master/examples/>`_
 
-More examples:
-
-
-Example 1: Degraded broadcast channel
--------------------------------------
-
-.. code-block:: python
-
-    # ********** Degraded broadcast channel **********
-
-    import numpy
-    import scipy
-    import torch
-    import matplotlib.pyplot as plt
-    from psitip import *
-    PsiOpts.setting(solver = "pyomo.glpk")
-
-    X, Y, Z, M1, M2 = rv("X", "Y", "Z", "M1", "M2")
-    R1, R2 = real("R1", "R2")
-
-    model = CodingModel()
-    model.set_rate(M1, R1)    # Rate of M1 is R1
-    model.set_rate(M2, R2)    # Rate of M2 is R2
-    model.add_node(M1+M2, X)  # Encoder maps M1,M2 to X
-    model.add_edge(X, Y)      # Channel X -> Y -> Z
-    model.add_edge(Y, Z)
-    model.add_node(Y, M1)     # Decoder1 maps Y to M1
-    model.add_node(Z, M2)     # Decoder2 maps Z to M2
-    # display(model.graph())  # Draw the model
-
-    r = model.get_inner()     # Get inner bound, recovers superposition region 
-    print(r)                  # [Bergmans 1973], [Gallager 1974]
-    # display(r.graph())      # Draw Bayesian network of RVs
-
-    r_out = model.get_outer() # Get outer bound
-
-    # Check outer bound implies inner bound and output auxiliaries for proof
-    print((r_out >> r).solve())
-
-
-    # *** Plot capacity region for Z-channel ***
-
-    PsiOpts.setting(istorch = True)   # Enable pytorch
-    PsiOpts.setting(opt_aux_card = 3) # Default cardinality for auxiliary
-    X.set_card(2)                     # X,Y,Z have cardinality 2
-    Y.set_card(2)
-    Z.set_card(2)
-    P = ConcModel()
-    P[X] = "var"                      # Optimize over P(X)
-    P[R1] = "var"                     # Optimize over R1,R2
-    P[R2] = "var"
-    P[Y|X] = [[1.0, 0.0], [0.2, 0.8]] # X->Y is a Z-channel
-    P[Z|Y] = [[0.8, 0.2], [0.0, 1.0]] # Y->Z is a Z-channel
-
-    lams = numpy.linspace(0.5, 1, 10)
-    R1s = []
-    R2s = []
-    for lam in lams:
-        # Maximize lambda sum-rate over P(X),R1,R2 subject to inner bound
-        P.maximize(R1*(1-lam) + R2*lam, [P[X], R1, R2], r)
-        R1s.append(float(P[R1]))
-        R2s.append(float(P[R2]))
-        
-    plt.figure()
-    plt.plot(R1s, R2s)  # Plot capacity region
-    plt.show()
-
-
-Example 2: Less noisy and more capable broadcast channel
---------------------------------------------------------
-
-.. code-block:: python
-
-    # ********** Less noisy and more capable broadcast channel **********
-
-    from psitip import *
-    PsiOpts.setting(solver = "pyomo.glpk")
-
-    X, Y, Z, M1, M2 = rv("X", "Y", "Z", "M1", "M2")
-    U, V = rv("U", "V")
-    R1, R2 = real("R1", "R2")
-
-    model = CodingModel()
-    model.set_rate(M1, R1)    # Rate of M1 is R1
-    model.set_rate(M2, R2)    # Rate of M2 is R2
-    model.add_node(M1+M2, X)  # Encoder maps M1,M2 to X
-    model.add_edge(X, Y)      # Channel X -> Y
-    model.add_edge(X, Z)      # Channel X -> Z
-    model.add_node(Y, M1)     # Decoder1 maps Y to M1
-    model.add_node(Z, M2)     # Decoder2 maps Z to M2
-    # display(model.graph())  # Draw the model
-
-    # More capable BC [Körner-Marton 1975], [El Gamal 1979]
-    model &= (markov(V, X, Y+Z) >> (I(X & Y | V) >= I(X & Z | V))).forall(V)
-
-    # Less noisy BC [Körner-Marton 1975]
-    # model &= (markov(U+V, X, Y+Z) >> (I(U & Y | V) >= I(U & Z | V))).forall(U+V)
-
-    r = model.get_inner()     # Get inner bound, recovers superposition region 
-    print(r)                  # [Bergmans 1973], [Gallager 1974]
-    # display(r.graph())      # Draw Bayesian network of RVs
-
-    # If none of more capable/less noisy is added, will recover the union of
-    # 2-auxiliary Marton's inner bound [Marton 1979] and superposition region.
-    # To recover the 3-auxiliary Marton's inner bound [Liang-Kramer 2007],
-    # a common message must be included explicitly.
-
-    r_out = model.get_outer() # Get outer bound
-
-    # Check outer bound implies inner bound and output auxiliaries for proof
-    print((r_out >> r).solve())
-
-
-Example 3: Lossy source coding with side information at decoder
----------------------------------------------------------------
-
-.. code-block:: python
-
-    # ********** Wyner-Ziv theorem [Wyner-Ziv 1976] **********
-
-    from psitip import *
-    PsiOpts.setting(solver = "pyomo.glpk")
-
-    X, Y, Z, M = rv("X", "Y", "Z", "M")
-    R = real("R")
-
-    model = CodingModel()
-    model.set_rate(M, R)      # The rate of M is R
-    model.add_edge(X, Y)      # X and Y are correlated
-    model.add_node(X, M)      # Encoder observes X, produces M
-    model.add_node(M+Y, Z)    # Decoder observes M,Y, produces Z
-    # model.add_node(M+Y, Z, rv_in_causal = Y) # Use this instead if 
-                                              # Y observed causally
-
-    r = model.get_inner()     # Get inner bound, recovers Wyner-Ziv
-    print(r)
-    r_out = model.get_outer() # Get outer bound
-
-    with PsiOpts(proof_new = True):        # Record human-readable proof
-        print((r_out >> r).solve()) # Tightness, output auxiliaries
-        print(PsiOpts.get_proof())         # Print tightness proof
-
-
-|
-|
-
-Integration with Jupyter Notebook and LaTeX output
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-PSITIP can be used within Jupyter Notebook.
-
-- Add the line :code:`PsiOpts.setting(repr_latex = True)` at the beginning to turn on LaTeX output.
-
-- Alternatively, use :code:`x.display()` to display an object (:code:`Comp`, :code:`Expr` or :code:`Region`) using LaTeX. For the LaTeX code, use use :code:`x.latex()`.
-
-- For a region :code:`x`, use :code:`x.display_bool()` to display both the region and its truth value.
-
 
 |
 |
@@ -1501,8 +1288,7 @@ The :code:`exists` method of :code:`Region` with real variable arguments perform
     R0, R1, R2, R10, R20, Rs = real("R0", "R1", "R2", "R10", "R20", "Rs")
     U0, U1, U2, X, Y1, Y2 = rv("U0", "U1", "U2", "X", "Y1", "Y2")
 
-    # alland([r1, r2]) is a shorthand for r1 & r2
-    r = alland([
+    r = region(
             R0 >= 0,
             R1 >= 0,
             R2 >= 0,
@@ -1518,7 +1304,7 @@ The :code:`exists` method of :code:`Region` with real variable arguments perform
             R2 - R20 - Rs <= I(U2 & Y2 | U0) - I(U1 & U2 | U0),
             R2 - R20 <= I(U2 & Y2 | U0),
             markov(U0+U1+U2, X, Y1+Y2)
-        ]).exists(U0+U1+U2)
+        ).exists(U0+U1+U2)
 
     r = r.exists(R10+R20+Rs)  # Eliminate R10, R20, Rs
     print(r)
