@@ -3,7 +3,7 @@ scipy
 matplotlib
 ortools
 lark-parser
-pycddlib
+pycddlib < 3.0.0
 graphviz
 torch
 psitip == 1.1.6
