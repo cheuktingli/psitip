@@ -6,4 +6,5 @@ lark-parser
 pycddlib
 graphviz
 torch
-psitip == 1.1.6
+pylatexenc
+psitip == 1.1.7

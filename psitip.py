@@ -16,8 +16,15 @@
 
 """
 Python Symbolic Information Theoretic Inequality Prover
-Version 1.1.6
+Version 1.1.7
 Copyright (C) 2020  Cheuk Ting Li
+
+The working principle of PSITIP (existential information inequalities) is described in the following article:
+
+C. T. Li, "An Automated Theorem Proving Framework for Information-Theoretic Results," 
+in IEEE Transactions on Information Theory, vol. 69, no. 11, pp. 6857-6877, Nov. 2023. 
+Link: https://ieeexplore.ieee.org/document/10185937
+Preprint: https://arxiv.org/pdf/2101.12370.pdf
 
 Based on the general method of using linear programming for proving information 
 theoretic inequalities described in the following work:
@@ -96,6 +103,7 @@ try:
 except ImportError:
     os = None
 
+
 try:
     import numpy
     import numpy.linalg
@@ -138,11 +146,95 @@ try:
 except ImportError:
     ortools = None
 
+
+cddver = None
 try:
     import cdd
+    try:
+        cdd.Matrix([[1]], number_type="float")
+        cddver = "2"
+    except:
+        cddver = "3"
 except ImportError:
     cdd = None
 
+
+def cdd_matrix_from_array(a, lin_set=None, number_type="float", rep_type=None):
+    if cdd is None:
+        return None
+    
+    if rep_type is None:
+        rep_type = cdd.RepType.GENERATOR
+
+    if lin_set is None:
+        lin_set = set()
+
+    try:
+        r = cdd.matrix_from_array(a, lin_set = lin_set, rep_type=rep_type)
+    except AttributeError:
+        r = cdd.Matrix(a, number_type=number_type)
+        r.rep_type = rep_type
+        r.lin_set = lin_set
+
+    return r
+
+    # if cddver == "2":
+    #     r = cdd.Matrix(a, number_type=number_type)
+    #     r.rep_type = rep_type
+    #     r.lin_set = lin_set
+    #     return r
+    # else:
+    #     return cdd.matrix_from_array(a, lin_set = lin_set, rep_type=rep_type)
+
+def cdd_convert(mat):
+    if cdd is None:
+        return None
+    
+    try:
+        poly = cdd.polyhedron_from_matrix(mat)
+        mat2 = cdd.copy_output(poly)
+        return (list(mat2.array), set(mat2.lin_set))
+    except AttributeError:
+        poly = cdd.Polyhedron(mat)
+        ineqs = poly.get_inequalities()
+        lset = set(ineqs.lin_set)
+        return (list(ineqs), lset)
+
+    # if cddver == "2":
+    #     poly = cdd.Polyhedron(mat)
+    #     ineqs = poly.get_inequalities()
+    #     lset = set(ineqs.lin_set)
+    #     return (list(ineqs), lset)
+    # else:
+    #     poly = cdd.polyhedron_from_matrix(mat)
+    #     mat2 = cdd.copy_output(poly)
+    #     return (list(mat2.array), set(mat2.lin_set))
+
+def cdd_col_size(mat):
+    try:
+        if len(mat.array) == 0:
+            return 0
+        return len(mat.array[0])
+    except AttributeError:
+        return mat.col_size
+
+def cdd_row_size(mat):
+    try:
+        return len(mat.array)
+    except AttributeError:
+        return mat.row_size
+
+def cdd_mat_array(mat):
+    try:
+        return mat.array
+    except AttributeError:
+        return mat
+
+def cdd_extend(mat, line):
+    try:
+        cdd.matrix_append_to(mat, cdd_matrix_from_array(line))
+    except AttributeError:
+        mat.extend(line)
 
 try:
     import z3
@@ -165,6 +257,15 @@ try:
 except ImportError:
     matplotlib = None
     plt = None
+
+
+try:
+    import plotly
+    import plotly.offline
+    import plotly.graph_objects
+except ImportError:
+    plotly = None
+
 
 try:
     import torch
@@ -194,6 +295,12 @@ except ImportError:
     lark_v_args = lambda inline: (lambda x: x)
     lark_Transformer = object
 
+try:
+    import pylatexenc
+    from pylatexenc.latex2text import LatexNodes2Text
+except ImportError:
+    pylatexenc = None
+    LatexNodes2Text = None
 
 # try:
 #     import sympy
@@ -252,12 +359,17 @@ class PsiOpts:
     STR_STYLE_LATEX_QUANTAFTER = 1 << 7
     STR_STYLE_MARKOV = 1 << 8
     STR_STYLE_REM_SYMBOLS = 1 << 9
+    STR_STYLE_GRAPHVIZ = 1 << 10
 
     SFRL_LEVEL_SINGLE = 1
     SFRL_LEVEL_MULTIPLE = 2
     
 
     global_index = None
+
+    stats = {
+        "numlp": 0
+    }
 
     settings = {
         "ent_coeff": 1.0 / math.log(2.0),
@@ -296,6 +408,8 @@ class PsiOpts:
         "rename_char": "_",
         "fcn_suffix": "@@32768@@#fcn",
 
+        "lhsvar": "real",
+
         "meta_subs_criteria": False,
         
         "truth": None,
@@ -325,8 +439,10 @@ class PsiOpts:
         "lp_cond_maximize": True,
         "lp_dual_form": False,
         "lp_dual_form_if_proof": True,
+        "lp_dual_form_discover": False,
         "lp_bnet_reverse": False,
         "lp_bnet_hc": True,
+        "lp_save_enabled": True,
         "fcn_mode": 1,
         "solver_scipy_maxsize": -1,
         "pulp_options": None,
@@ -336,6 +452,7 @@ class PsiOpts:
         "simplify_enabled": True,
         "simplify_quick": False,
         "simplify_reduce_coeff": True,
+        "simplify_balance": False,
         "simplify_remove_missing_aux": True,
         "simplify_aux": True,
         "simplify_aux_combine": True,
@@ -418,6 +535,7 @@ class PsiOpts:
         "alg_group_nit": 10,
         "alg_normalize": True,
 
+
         "bayesnet_semigraphoid_iter": 1000,
         
         "proof_enabled": False,
@@ -447,8 +565,20 @@ class PsiOpts:
         "repr_check": False,
         "repr_latex": False,
         
-        "venn_latex": False,
+        "venn_latex": "mathregular",
+        "venn_style": "",
+        "plot_lib": None,
+
+        "graph_group_color": "transparent",
+        "graph_group_fillcolor": "grey93",
+
+        "codingmodel_node_shape": "rect",
+        "codingmodel_node_fillcolor": "grey93",
+        "codingmodel_channel_shape": "rect",
+        "codingmodel_channel_fillcolor": "white",
         
+        "discover_hull_facet_enumerate": False,
+        "discover_hull_facet_enumerate_numyield": 300,
         "discover_hull_frac_enabled": True,
         "discover_hull_frac_denom": 1000,
         "discover_max_facet": None, # 1000000,
@@ -462,6 +592,9 @@ class PsiOpts:
         "str_float_dp": 5,
 
         "solve_display_reg": None,
+
+        "use_pylatexenc": True,
+        "graphviz_text_convert": True,
         
         "latex_H": "H",
         "latex_I": "I",
@@ -486,7 +619,7 @@ class PsiOpts:
         "latex_prob": "\\mathbf{P}",
         "latex_rv_empty": "\\emptyset",
         "latex_region_universe": "\\top",
-        "latex_region_empty": "\\emptyset",
+        "latex_region_empty": "\\bot",
         "latex_tautology": "\\top",
         "latex_contradiction": "\\bot",
         "latex_unknown": "?",
@@ -528,6 +661,7 @@ class PsiOpts:
         "verbose_semigraphoid": False,
         "verbose_proof": False,
         "verbose_discover": False,
+        "verbose_discover_ineq": False,
         "verbose_discover_detail": False,
         "verbose_discover_outer": False,
         "verbose_discover_terms": False,
@@ -541,6 +675,7 @@ class PsiOpts:
         "verbose_codingmodel": False,
         "verbose_proof_step": False,
         "verbose_aux_reduced": False,
+        "verbose_partialorder": False,
         
         "sfrl_level": 0,
         "sfrl_maxsize": 1,
@@ -810,6 +945,9 @@ class PsiOpts:
             d["str_proof_note"] = value
                     
             
+        elif key == "stats_reset":
+            PsiOpts.stats["numlp"] = 0
+
         elif key == "random_seed":
             rnd = numpy.random.default_rng(value)
             d["random"] = rnd
@@ -881,6 +1019,18 @@ class PsiOpts:
         else:
             PsiOpts.settings["proof"].copy_(value)
     
+    @staticmethod
+    def get_plotlib(lib = None):
+        if lib is None:
+            lib = PsiOpts.settings["plot_lib"]
+        
+        if plotly is not None and (lib is None or lib == "plotly"):
+            return "plotly"
+        elif plt is not None and (lib is None or lib == "matplotlib"):
+            return "matplotlib"
+        
+        return None
+
     @staticmethod
     def get_random():
         rnd = PsiOpts.settings["random"]
@@ -1052,9 +1202,9 @@ class iutil:
         if x == numpy.inf or x == -numpy.inf or numpy.isnan(x):
             if style & PsiOpts.STR_STYLE_LATEX:
                 if x == numpy.inf:
-                    return "\infty"
+                    return r"\infty"
                 elif x == -numpy.inf:
-                    return "-\infty"
+                    return r"-\infty"
                 else:
                     return "?"
             else:
@@ -1160,6 +1310,34 @@ class iutil:
             return z3.Q(frac.numerator, frac.denominator)
 
     @staticmethod
+    def latex_to_text(s, style=""):
+        if style == "graphviz" and PsiOpts.settings["graphviz_text_convert"] and pylatexenc:
+            # Reference: https://github.com/phfaist/pylatexenc/issues/36
+            cwalker = pylatexenc.latexwalker.get_default_latex_context_db()
+            cwalker.add_context_category("super_and_sub", specials=[
+                pylatexenc.macrospec.SpecialsSpec("^", args_parser=pylatexenc.macrospec.MacroStandardArgsParser("{")),
+                pylatexenc.macrospec.SpecialsSpec("_", args_parser=pylatexenc.macrospec.MacroStandardArgsParser("{")),
+            ])
+            ctotext = pylatexenc.latex2text.get_default_latex_context_db()
+            ctotext.add_context_category("super_and_sub", specials=[
+                pylatexenc.latex2text.SpecialsTextSpec("^", simplify_repl="<FONT POINT-SIZE='12'><SUP>%s</SUP></FONT>"),
+                pylatexenc.latex2text.SpecialsTextSpec("_", simplify_repl="<FONT POINT-SIZE='12'><SUB>%s</SUB></FONT>"),
+            ])
+
+            s = pylatexenc.latex2text.LatexNodes2Text(latex_context=ctotext).nodelist_to_text(
+                pylatexenc.latexwalker.LatexWalker(s, latex_context=cwalker).get_latex_nodes()[0])
+
+            if "<SUP>" in s or "<SUB>" in s:
+                s = "<" + s + ">"
+            return s
+
+        if PsiOpts.settings["use_pylatexenc"] and LatexNodes2Text:
+            s = LatexNodes2Text().latex_to_text(s)
+
+        return s
+
+
+    @staticmethod
     def num_open_brackets(s):
         return s.count("(") + s.count("[") + s.count("{") - (
             s.count("}") + s.count("]") + s.count(")"))
@@ -1235,6 +1413,44 @@ class iutil:
         return (a // iutil.gcd(a, b)) * b
     
     @staticmethod
+    def distance_frommat(m, n0, n1):
+        if n0 == 0 and n1 == 0:
+            return 0.0
+
+        vis0 = [False] * n0
+        vis1 = [False] * n1
+        r = 0.0
+
+        for it in range(min(n0, n1)):
+            cmin = None
+            cmin0 = -1
+            cmin1 = -1
+            for i0 in range(n0):
+                if vis0[i0]:
+                    continue
+                for i1 in range(n1):
+                    if vis1[i1]:
+                        continue
+                    if cmin is None or cmin > m[i0][i1]:
+                        cmin = m[i0][i1]
+                        cmin0 = i0
+                        cmin1 = i1
+            
+            r += cmin
+            vis0[cmin0] = True
+            vis1[cmin1] = True
+        
+        return (r + (n0 + n1 - min(n0, n1) * 2)) / (n0 + n1 - min(n0, n1))
+
+
+    @staticmethod
+    def distance(a, b):
+        n0 = len(a)
+        n1 = len(b)
+        m = [[x.distance(y) for y in b] for x in a]
+        return iutil.distance_frommat(m, n0, n1)
+
+    @staticmethod
     def hasinstance(a, t):
         if isinstance(a, t):
             return True
@@ -1277,6 +1493,11 @@ class iutil:
             return PsiOpts.settings["str_style_latex"] | PsiOpts.STR_STYLE_LATEX_ARRAY | PsiOpts.STR_STYLE_LATEX_FRAC
         elif style == "latex_noarray":
             return PsiOpts.settings["str_style_latex"] | PsiOpts.STR_STYLE_LATEX_FRAC
+        elif style == "graphviz":
+            if PsiOpts.settings["graphviz_text_convert"]:
+                return iutil.convert_str_style("latex") | PsiOpts.STR_STYLE_GRAPHVIZ
+            else:
+                return iutil.convert_str_style("std")
         else:
             return style
         
@@ -1305,9 +1526,9 @@ class iutil:
             
         if style & PsiOpts.STR_STYLE_LATEX:
             if eqnstr == "<=":
-                return "\\le"
+                return "\\leq"
             elif eqnstr == ">=":
-                return "\\ge"
+                return "\\geq"
             elif eqnstr == "==":
                 return "="
             elif eqnstr == "!=":
@@ -1663,7 +1884,7 @@ class iutil:
         
     
     @staticmethod
-    def ensure_comp(x, strict = True):
+    def ensure_comp(x, strict = True, copy = False, ref = None):
         if x is None:
             return None
             
@@ -1671,9 +1892,17 @@ class iutil:
             x = x.get_region()
 
         if isinstance(x, Comp):
-            return x
+            if copy:
+                return x.copy()
+            else:
+                return x
         
         if isinstance(x, str):
+            if ref is not None:
+                r = ref.find(x)
+                if isinstance(r, Comp):
+                    return r.copy()
+
             return Comp.rv(x)
 
         if isinstance(x, int):
@@ -1687,19 +1916,22 @@ class iutil:
             
         r = Comp.empty()
         for y in x:
-            t = iutil.ensure_comp(y, strict = strict)
+            t = iutil.ensure_comp(y, strict=strict, copy=True)
             if t is not None:
                 r += t
         return r
     
     
     @staticmethod
-    def ensure_expr(x, strict = True):
+    def ensure_expr(x, strict = True, copy = False, ref = None):
         if x is None:
             return None
             
         if isinstance(x, Expr):
-            return x
+            if copy:
+                return x.copy()
+            else:
+                return x
         if isinstance(x, Term):
             return Expr.fromterm(x)
             
@@ -1735,6 +1967,11 @@ class iutil:
             return Expr.const(float(x))
         
         if isinstance(x, str):
+            if ref is not None:
+                r = ref.find(x)
+                if isinstance(r, Expr):
+                    return r.copy()
+                
             return Expr.parse(x)
             
         if strict:
@@ -1742,18 +1979,21 @@ class iutil:
             
         r = Expr.zero()
         for y in x:
-            t = iutil.ensure_expr(y, strict = strict)
+            t = iutil.ensure_expr(y, strict=strict, copy=True)
             if t is not None:
                 r += t
         return r
     
     @staticmethod
-    def ensure_region(x, strict = True):
+    def ensure_region(x, strict = True, copy = False):
         if x is None:
             return None
 
         if isinstance(x, Region):
-            return x
+            if copy:
+                return x.copy()
+            else:
+                return x
         if isinstance(x, Comp):
             raise ValueError("Cannot convert Comp to Region.")
             # return Region.universe()
@@ -1767,13 +2007,13 @@ class iutil:
             else:
                 return Region.empty()
 
-        if isinstance(x, (BayesNet, FcnRelation)):
+        if isinstance(x, (BayesNet, FcnRelation, PartialOrder)):
             return x.get_region()
         if isinstance(x, ConcModel):
             return x.get_region(vals = True)
         
         if isinstance(x, ProofObj):
-            return iutil.ensure_region(x.step_regions())
+            return iutil.ensure_region(x.step_regions(), strict=strict, copy=copy)
 
         if isinstance(x, str):
             return Region.parse(x)
@@ -1789,7 +2029,7 @@ class iutil:
 
         r = Region.universe()
         for y in x:
-            t = iutil.ensure_region(y, strict = strict)
+            t = iutil.ensure_region(y, strict=strict, copy=True)
             if t is not None:
                 r &= t
         return r
@@ -2076,6 +2316,59 @@ class iutil:
         return r
     
     @staticmethod
+    def text_operation(s, ops, style = None, ensure_latex = True):
+        t = s.split("@@")
+        if ensure_latex and len(t) >= 1 and ("@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@") not in s:
+            return iutil.text_operation(s + "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@" + t[0], ops, style = style, ensure_latex = False)
+            
+        if len(t) >= 2:
+            for i in range(0, len(t), 2):
+                t[i] = iutil.text_operation(t[i], ops, style = None if i == 0 else int(t[i - 1]), ensure_latex = False)
+            return "@@".join(t)
+    
+        if isinstance(ops, tuple):
+            ops = [ops]
+            
+        for op in ops:
+            if isinstance(op, tuple):
+                if op[0] == "set_sub":
+                    s = iutil.latex_subsuperscript_convert(s, f_sub = lambda t: op[1])
+                elif op[0] == "set_super":
+                    s = iutil.latex_subsuperscript_convert(s, f_super = lambda t: op[1])
+
+                elif op[0] in ("append_sub", "append_super"):
+                    def f(t):
+                        if len(t) == 0:
+                            return op[1]
+                        else:
+                            return t + "," + op[1]
+                    if op[0] == "append_sub":
+                        s = iutil.latex_subsuperscript_convert(s, f_sub = f)
+                    else:
+                        s = iutil.latex_subsuperscript_convert(s, f_super = f)
+
+                elif op[0] in ("add_sub", "add_super"):
+                    def f(t):
+                        if len(t) == 0:
+                            return str(op[1])
+                        elif t.isdigit():
+                            return str(int(t) + int(op[1]))
+                        else:
+                            return t + "," + str(op[1])
+                    if op[0] == "add_sub":
+                        s = iutil.latex_subsuperscript_convert(s, f_sub = f)
+                    else:
+                        s = iutil.latex_subsuperscript_convert(s, f_super = f)
+
+                elif op[0] == "append":
+                    s += op[1]
+        
+        return s
+                    
+
+
+
+    @staticmethod
     def set_suffix_num(s, k, schar, replace_mode = "set", style = None, ensure_latex = True):
         t = s.split("@@")
         if ensure_latex and len(t) >= 1 and ("@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@") not in s:
@@ -2088,22 +2381,37 @@ class iutil:
             
         if replace_mode != "suffix":
 
-            s, v0 = iutil.break_subscript_latex(s)
-            if replace_mode == "append":
-                v0 += str(k)
-            elif replace_mode == "set":
-                v0 = str(k)
-            elif replace_mode == "add":
-                if v0.isdigit():
-                    v0 = str(int(v0) + k)
-                else:
+            def f_sub(v0):
+                if replace_mode == "append":
                     v0 += str(k)
-
-            if len(v0) > 1 and style == PsiOpts.STR_STYLE_LATEX:
-                return s + "_{" + v0 + "}"
-            else:
-                return s + "_" + v0
+                elif replace_mode == "set":
+                    v0 = str(k)
+                elif replace_mode == "add":
+                    if v0.isdigit():
+                        v0 = str(int(v0) + k)
+                    else:
+                        v0 += str(k)
+                return v0
             
+            return iutil.latex_subsuperscript_convert(s, f_sub=f_sub)
+
+            # s, v0 = iutil.break_subscript_latex(s)
+            # if replace_mode == "append":
+            #     v0 += str(k)
+            # elif replace_mode == "set":
+            #     v0 = str(k)
+            # elif replace_mode == "add":
+            #     if v0.isdigit():
+            #         v0 = str(int(v0) + k)
+            #     else:
+            #         v0 += str(k)
+
+            # if len(v0) > 1 and style == PsiOpts.STR_STYLE_LATEX:
+            #     return s + "_{" + v0 + "}"
+            # else:
+            #     return s + "_" + v0
+            
+
             # i = s.rfind(schar)
             # if i >= 0:
             #     if replace_mode == "append":
@@ -2151,6 +2459,67 @@ class iutil:
             return t[0], v[1:-1]
         return t[0], v
     
+    @staticmethod
+    def latex_break_last_group(s):
+        if len(s) == 0:
+            return "", ""
+        if s[-1] != "}":
+            return s[:-1], s[-1]
+        i = len(s)
+        lv = 0
+        while i > 0:
+            i -= 1
+            if s[i] == "{":
+                lv += 1
+            elif s[i] == "}":
+                lv -= 1
+            if lv == 0:
+                return s[:i], s[i+1:-1]
+    
+        return "", s
+
+    @staticmethod
+    def latex_subsuperscript_convert(s, f_sub=None, f_super=None, f_body=None, insert_sub=True, insert_super=True):
+        r = ""
+        n_sub = 0
+        n_super = 0
+        while len(s):
+            t0, t1 = iutil.latex_break_last_group(s)
+            if n_sub == 0 and t0.endswith("_"):
+                if f_sub is not None:
+                    t1 = f_sub(t1)
+                    n_sub += 1
+            elif n_super == 0 and t0.endswith("^"):
+                if f_super is not None:
+                    t1 = f_super(t1)
+                    n_super += 1
+            else:
+                break
+            if t1 is not None:
+                if len(iutil.latex_break_last_group(t1)[0]):
+                    t1 = "{" + t1 + "}"
+                r = t0[-1] + t1 + r
+            s = t0[:-1]
+
+        if f_body is not None:
+            s = f_body(s)
+
+        s = s + r
+        if insert_sub and n_sub == 0 and f_sub is not None:
+            t1 = f_sub("")
+            if t1 is not None:
+                if len(iutil.latex_break_last_group(t1)[0]):
+                    t1 = "{" + t1 + "}"
+                s += "_" + t1
+        if insert_super and n_super == 0 and f_super is not None:
+            t1 = f_super("")
+            if t1 is not None:
+                if len(iutil.latex_break_last_group(t1)[0]):
+                    t1 = "{" + t1 + "}"
+                s += "^" + t1
+        return s
+
+
     @staticmethod
     def is_single_term(x):
         if isinstance(x, (int, float, tuple, list, IVar)):
@@ -2280,16 +2649,24 @@ class iutil:
     
     @staticmethod
     def add_subscript_latex(s, v):
-        s, v0 = iutil.break_subscript_latex(s)
-        if len(v0):
-            v0 += "," + str(v)
-        else:
-            v0 = str(v)
+        def f_sub(t):
+            if len(t):
+                return t + "," + str(v)
+            else:
+                return str(v)
+            
+        return iutil.latex_subsuperscript_convert(s, f_sub=f_sub)
+
+        # s, v0 = iutil.break_subscript_latex(s)
+        # if len(v0):
+        #     v0 += "," + str(v)
+        # else:
+        #     v0 = str(v)
         
-        if len(v0) > 1:
-            return s + "_{" + v0 + "}"
-        else:
-            return s + "_" + v0
+        # if len(v0) > 1:
+        #     return s + "_{" + v0 + "}"
+        # else:
+        #     return s + "_" + v0
     
     @staticmethod
     def copy(x):
@@ -2317,6 +2694,8 @@ class iutil:
     def allcomprv(x):
         if x is None or isinstance(x, (int, float, bool)):
             return Comp.empty()
+        if isinstance(x, dict):
+            x = list(x.items())
         if isinstance(x, (list, tuple, set)):
             r = Comp.empty()
             for a in x:
@@ -2329,6 +2708,8 @@ class iutil:
     def allcomprealvar_exprlist(x):
         if x is None or isinstance(x, (int, float, bool)):
             return ExprArray.make([])
+        if isinstance(x, dict):
+            x = list(x.items())
         if isinstance(x, (list, tuple, set)):
             r = ExprArray.make([])
             for a in x:
@@ -2341,6 +2722,8 @@ class iutil:
     def allcompreal_exprlist(x):
         if x is None or isinstance(x, (int, float, bool)):
             return ExprArray.make([])
+        if isinstance(x, dict):
+            x = list(x.items())
         if isinstance(x, (list, tuple, set)):
             r = ExprArray.make([])
             for a in x:
@@ -2603,6 +2986,165 @@ class iutil:
             
         return r
     
+    
+    @staticmethod
+    def is_in_conic_hull(pts, x):
+        ceps = PsiOpts.settings["eps_lp"]
+        n, k = pts.shape
+        if numpy.linalg.norm(x) <= ceps:
+            return True
+        if n == 0:
+            return False
+
+        model = ortools.linear_solver.pywraplp.Solver.CreateSolver("GLOP")
+        v = [model.NumVar(0, model.infinity(), "v" + str(i)) for i in range(n)]
+        for i in range(k):
+            model.Add(sum(v[j] * float(pts[j, i]) for j in range(n)) == float(x[i]))
+        model.Minimize(0)
+        status = model.Solve()
+        return status == ortools.linear_solver.pywraplp.Solver.OPTIMAL
+
+    
+    @staticmethod
+    def is_in_conic_hull_interior(pts, c, rank=None):
+        if rank is None:
+            rank = numpy.linalg.matrix_rank(pts)
+        ceps = PsiOpts.settings["eps_lp"]
+        ubound = PsiOpts.settings["lp_ubound"]
+        n, k = pts.shape
+
+
+        # print("CONE", c)
+
+        # if sum(c[i] > ceps for i in range(n)) >= rank:
+        #     return True
+
+        # orank = numpy.linalg.matrix_rank(pts[[i for i in range(n) if c[i] > ceps],:])
+        # orank = sum(c[i] > ceps for i in range(n))
+        # if orank >= rank:
+        #     return True
+
+        ns = scipy.linalg.null_space(pts[[i for i in range(n) if c[i] > ceps],:])
+        is_out = [numpy.linalg.norm(pts[i,:].dot(ns)) > ceps for i in range(n)]
+
+        x = sum([pts[i,:] * c[i] for i in range(n)], numpy.zeros(k))
+
+        model = ortools.linear_solver.pywraplp.Solver.CreateSolver("GLOP")
+        # v = [model.NumVar(0, model.infinity(), "v" + str(i)) for i in range(n)]
+        v = [model.NumVar(0, ubound, "v" + str(i)) for i in range(n)]
+        for i in range(k):
+            model.Add(sum(v[j] * float(pts[j, i]) for j in range(n)) == float(x[i]))
+        # model.Minimize(sum(v[i] * c[i] for i in range(n)))
+        model.Maximize(sum(v[i] for i in range(n) if is_out[i]))
+        status = model.Solve()
+        # print(status)
+        # print([v[i].solution_value() for i in range(n)])
+        if status != ortools.linear_solver.pywraplp.Solver.OPTIMAL:
+            return False
+        # if all(abs(v[i].solution_value() - c[i]) <= ceps for i in range(n)):
+        #     return False
+
+        # if numpy.linalg.matrix_rank(pts[[i for i in range(n) if c[i] + v[i].solution_value() > ceps],:]) > orank:
+        #     return True
+
+        if any(is_out[i] and v[i].solution_value() > ceps for i in range(n)):
+            return True
+
+        return False
+    
+        # print("INT", [(v[i].solution_value(), c[i]) for i in range(n)])
+        # return True
+
+
+    @staticmethod
+    def conic_hull_facets(pts, numyield=None, mode=None):
+        ceps = PsiOpts.settings["eps_lp"]
+        rnd = PsiOpts.get_random()
+        pts = numpy.array(pts)
+        for i in range(pts.shape[0] - 1, -1, -1):
+            if iutil.is_in_conic_hull(numpy.delete(pts, i, axis=0), pts[i,:]):
+                pts = numpy.delete(pts, i, axis=0)
+
+        # with numpy.printoptions(precision = 1):
+        #     print(repr(pts))
+
+        rnd.shuffle(pts)
+        
+        n, k = pts.shape
+        rank = numpy.linalg.matrix_rank(pts)
+        check_intermediate = True
+        n0 = n
+
+        # print(n, k, rank)
+
+        if rank <= 1:
+            return
+        
+        avg = numpy.sum(pts, axis=0) / n
+
+        if mode == "two_connected":
+            pts2 = numpy.array(pts)
+            for i in range(pts.shape[0] - 1, 0, -1):
+                if iutil.is_in_conic_hull_interior(pts, [i2 == 0 or i2 == i for i2 in range(n)], rank):
+                    pts2 = numpy.delete(pts2, i, axis=0)
+            pts = pts2
+            n, k = pts.shape
+            check_intermediate = False
+            # print(n0, n, k, rank)
+
+
+        sel = [False] * n
+        cur_numyield = [0]
+
+        def recur(i):
+            # print(i, [i2 for i2 in range(n) if sel[i2]])
+
+            if numyield is not None and cur_numyield[0] >= numyield:
+                return
+            sumsel = sum(sel)
+            if i >= n or sumsel + n - i < rank - 1 or sumsel > rank - 1:
+                return
+
+            if PsiOpts.is_timer_ended():
+                return
+
+            yield from recur(i + 1)
+
+            sel[i] = True
+            sumsel += 1
+            if sumsel == rank - 1:
+                ns = scipy.linalg.null_space(numpy.vstack(tuple(pts[i2,:] for i2 in range(n) if sel[i2])))
+                mw = None
+                mws = ceps
+                for j in range(ns.shape[1]):
+                    w = ns[:,j]
+                    ws = w.dot(avg)
+                    if ws < 0:
+                        ws = -ws
+                        w = -w
+                    if ws > mws:
+                        mws = ws
+                        mw = w
+                
+                if mw is not None:
+                    if all(mw.dot(pts[i2,:]) >= -ceps for i2 in range(n) if not sel[i2]):
+                        yield mw
+                        cur_numyield[0] += 1
+
+            elif sumsel == 1 or (sumsel < rank - 1 and not check_intermediate) or not iutil.is_in_conic_hull_interior(pts, sel, rank):
+                yield from recur(i + 1)
+
+            sel[i] = False
+
+        if mode == "two_connected":
+            sel[0] = True
+            yield from recur(1)
+
+        else:
+            yield from recur(0)
+
+
+
 class MHashList:
     def __init__(self, x = None, ha = None):
         if x is None:
@@ -2931,6 +3473,13 @@ class IBaseObj:
             return
         print(self)
     
+    def graphviz_text(self, **kwargs):
+        if PsiOpts.settings["graphviz_text_convert"]:
+            r = self.latex()
+            r = iutil.latex_to_text(r, style="graphviz")
+            return r
+        return str(self)
+    
     def display_bool(self, s = "{region} \\;\\mathrm{{is}}\\;\\mathrm{{{truth}}}", skip_simplify = True):
         """IPython display, show bool
         """
@@ -2992,6 +3541,11 @@ class IBaseObj:
         """Alias of definition
         """
         return self.definition(*args, **kwargs)
+        
+    def sim(self, *args, **kwargs):
+        """Alias of simplified
+        """
+        return self.simplified(*args, **kwargs)
     
     def __copy__(x):
         return x.copy()
@@ -3071,6 +3625,9 @@ class IBaseObj:
         t = self.allcomprealvar()
         return ExprArray.make([Expr.real(v) for v in t])
 
+    def find(self, *args):
+        return self.allcomp().find(*args)
+    
     def simplify_regterm(self, reg = None):
         regterms = {}
         self.regtermmap(regterms, False)
@@ -3159,6 +3716,15 @@ class IVar(IBaseObj):
             if shift > 0:
                 r += "+"
             r += str(shift)
+
+        if style & PsiOpts.STR_STYLE_LATEX and not style & PsiOpts.STR_STYLE_GRAPHVIZ:
+            col = self.get_marker_key("color")
+            if col is not None:
+                r = "{\\color{" + str(col) + "}{" + r + "}}"
+
+        if style & PsiOpts.STR_STYLE_LATEX and style & PsiOpts.STR_STYLE_GRAPHVIZ:
+            r = iutil.latex_to_text(r, style="graphviz")
+            
         return r
             
     
@@ -3572,6 +4138,7 @@ class Comp(IBaseObj):
         numreal = 0
 
         for carg0 in args:
+            carg0 = str(carg0)
             cmaxa0 = None
             for carg in carg0.split("+"):
                 cmax = 0
@@ -3629,6 +4196,18 @@ class Comp(IBaseObj):
         s = str(self)
         return (s[0] if len(s) >= 1 else "", self.sorting_priority(), s)
 
+
+    def distance(self, other):
+        if len(self) == 0 and len(other) == 0:
+            return 0.0
+        t = len(self.inter(other))
+        return (len(self) + len(other) - t * 2) / (len(self) + len(other) - t)
+
+    def make_similar(self, other):
+        r = other.inter(self) + (self - other)
+        self.varlist = r.varlist
+        return self
+
     def subsets(self, minsize = 0, maxsize = 100000, size = None, reverse = False):
         """Subsets of this random variable, as a generator
         """
@@ -3639,7 +4218,7 @@ class Comp(IBaseObj):
         """Parse a string, e.g. "X+Y, Z W"
         """
         r = RegionParser.parse_default("H(" + s + ")")
-        return r.allcomp()
+        return iutil.ensure_comp(r)
 
     def swapped_id(self, i, j):
         if i >= len(self.varlist) or j >= len(self.varlist):
@@ -3882,6 +4461,12 @@ class Comp(IBaseObj):
             r += other
         return r
         
+    # def attach(self, other, rv_add = None):
+    #     t = self.copy()
+    #     if rv_add is not None:
+    #         t += rv_add
+    #     return Region.universe().attach(other, rv_add = t)
+
     def __isub__(self, other):
         if isinstance(other, int):
             self += -other
@@ -4224,6 +4809,11 @@ class Comp(IBaseObj):
         
         return r
     
+    def name_operation(self, ops):
+        r = self.copy()
+        for a in r.varlist:
+            a.name = iutil.text_operation(a.name, ops)
+        return r
     
     def __str__(self):
         
@@ -4412,6 +5002,41 @@ class Comp(IBaseObj):
         """
         return universe().venn(self, *args, **kwargs)
     
+    def series(self, vdir):
+        """Get past or future sequence.
+        Parameters:
+            vdir  : Direction, 1: future non-strict, 2: future strict,
+                    -1: past non-strict, -2: past strict
+        """
+        return CompArray(list(self)).series(vdir)
+        
+    def past_ns(self):
+        return CompArray(list(self)).past_ns()
+        
+    def past(self):
+        return CompArray(list(self)).past()
+    
+    def future_ns(self):
+        return CompArray(list(self)).future_ns()
+    
+    def future(self):
+        return CompArray(list(self)).future()
+    
+    @property
+    def PN(self):
+        return CompArray(list(self)).PN
+        
+    @property
+    def P(self):
+        return CompArray(list(self)).P
+    
+    @property
+    def FN(self):
+        return CompArray(list(self)).FN
+    
+    @property
+    def F(self):
+        return CompArray(list(self)).F
     
 class IVarIndex:
     """Store index of variables
@@ -4734,6 +5359,48 @@ class Term(IBaseObj):
             return TermType.REAL
         return TermType.IC
         
+        
+    def distance(self, other):
+        if self.get_type() != other.get_type():
+            return 1.0
+        
+        if self.get_type() == TermType.REAL:
+            return self.x[0].distance(other.x[0])
+
+        if self.get_type() == TermType.IC:
+            r = iutil.distance(self.x, other.x)
+            return (r * len(self.x) + self.z.distance(other.z)) / (len(self.x) + 1)
+        
+        return 1.0
+
+
+    def make_similar(self, other):
+        if self.get_type() != other.get_type():
+            return self
+        
+        if self.get_type() == TermType.IC:
+            self.z.make_similar(other.z)
+            if len(self.x) > 1 and len(other.x) > 1:
+                ts = [[] for i in range(len(other.x))]
+                for a in self.x:
+                    mind = None
+                    mini = -1
+                    for i in range(len(other.x)):
+                        t = a.distance(other.x[i])
+                        if mind is None or mind > t:
+                            mind = t
+                            mini = i
+
+                    a.make_similar(other.x[mini])
+                    ts[mini].append(a)
+                
+                self.x = [t for t0 in ts for t in t0]
+                
+            return self
+
+        return self
+
+
     def iseps(self):
         if self.get_type() != TermType.REAL:
             return False
@@ -5381,6 +6048,25 @@ class Term(IBaseObj):
 #            return False
         return True
         
+    def rv_weight(self):
+        r = 0.0
+        if self.get_type() == TermType.IC:
+            index = IVarIndex()
+            self.record_to(index)
+            k = len(self.x)
+            for t in range(1 << k):
+                csgn = -1
+                mask = index.get_mask(self.z)
+                for i in range(k):
+                    if (t & (1 << i)) != 0:
+                        csgn = -csgn
+                        mask |= index.get_mask(self.x[i])
+                # r += csgn * math.sqrt(iutil.bitcount(mask))
+                maskn = iutil.bitcount(mask)
+                r += csgn * (1.0 - 1.0 / (maskn + 1))
+        return r
+
+
 
     def try_remove(self, x, sn):
         if not self.ispresent(x):
@@ -5843,7 +6529,7 @@ class Expr(IBaseObj):
     def parse(s):
         """Parse a string, e.g. I(X;Y,Z|W) + 2H(X Z)
         """
-        return RegionParser.parse_default(s)
+        return iutil.ensure_expr(RegionParser.parse_default(s))
 
     @staticmethod
     def fromcomp(x):
@@ -6228,6 +6914,38 @@ class Expr(IBaseObj):
             return Expr.zero()
         return Expr([(Term([Comp([IVar.one()])], Comp.empty()), float(c))])
     
+        
+    def distance(self, other):
+        n0 = len(self.terms)
+        n1 = len(other.terms)
+        def term_distance(a, b):
+            return a[0].distance(b[0]) * 0.8 + (abs(a[1] - b[1]) / (max(abs(a[1]), abs(b[1])) * 2)) * 0.2
+        m = [[term_distance(x, y) for y in other.terms] for x in self.terms]
+        return iutil.distance_frommat(m, n0, n1)
+
+
+    def make_similar(self, other):
+        if len(self.terms) > 1 and len(other.terms) > 1:
+            def term_distance(a, b):
+                return a[0].distance(b[0]) * 0.8 + (abs(a[1] - b[1]) / (max(abs(a[1]), abs(b[1])) * 2)) * 0.2
+
+            ts = [[] for i in range(len(other.terms))]
+            for a in self.terms:
+                mind = None
+                mini = -1
+                for i in range(len(other.terms)):
+                    t = term_distance(a, other.terms[i])
+                    if mind is None or mind > t:
+                        mind = t
+                        mini = i
+                a[0].make_similar(other.terms[mini][0])
+                ts[mini].append(a)
+            
+            self.terms = [t for t0 in ts for t in t0]
+            self.mhash = None
+            
+        return self
+
     
     def commonpart_coeff(self, v, forbid_h = True):
         r = 0.0
@@ -6522,6 +7240,12 @@ class Expr(IBaseObj):
             if a.get_type() == TermType.REAL:
                 return True
         return False
+
+    def rv_weight(self):
+        r = 0.0
+        for (a, c) in self.terms:
+            r += a.rv_weight() * c
+        return r
 
     def complexity(self):
         max_denom = PsiOpts.settings["max_denom"]
@@ -6881,6 +7605,25 @@ class Expr(IBaseObj):
         self.terms = [(a, c) for (a, c) in self.terms if abs(c) > ceps and not a.iszero()]
 
 
+    def simplify_balance(self, reg = None, bnet = None, quick = False, term_allow = None):
+        v = self.allcomprv_shallow()
+
+        ceps = PsiOpts.settings["eps"]
+        for x in v:
+            if abs(self.get_coeff(x)) > ceps:
+                continue
+            for i in range(len(self.terms)):
+                a, c = self.terms[i]
+                if a.ishc() and (a.x[0] - a.z).super_of(x):
+                    # H(X,Y|Z) = H(Y|X,Z) + H(X|Z) = H(Y|X,Z) - I(X;Z) + H(X)
+                    if not a.z.isempty():
+                        self.terms.append((Term.I(x, a.z).copy(), -c))
+                    a.x[0] -= x
+                    a.z += x
+
+        self.terms = [(a, c) for (a, c) in self.terms if abs(c) > ceps and not a.iszero()]
+
+
     def simplify(self, reg = None, bnet = None, quick = False, term_allow = None):
         """Simplify the expression in place"""
         ceps = PsiOpts.settings["eps"]
@@ -6895,6 +7638,9 @@ class Expr(IBaseObj):
             a.simplify(reg, bnet)
             
         self.mi_disjoint()
+
+        if PsiOpts.settings.get("simplify_balance", False):
+            self.simplify_balance(reg, bnet, quick, term_allow)
 
         did = True
         while did:
@@ -7221,7 +7967,7 @@ class Expr(IBaseObj):
                 else:
                     return Expr.fromterm(Term(Comp.real(
                         iutil.fcn_name_maker("/", [self, other], lname = "/", infix = True)
-                        ), reg = Region.universe(), fcncall = "*", fcnargs = [self, other]))
+                        ), reg = Region.universe(), fcncall = "/", fcnargs = [self, other]))
             other = t
         return Expr([(a.copy(), c / other) for (a, c) in self.terms])
 
@@ -7369,6 +8115,8 @@ class Expr(IBaseObj):
         return eabs(self)
         #return emax(self, -self)
     
+    def type_only(self, t):
+        return Expr([(a, c) for a, c in self.terms if a.get_type() == t])
     
     def value(self, method = "", num_iter = 30, prog = None):
         r = 0.0
@@ -7491,6 +8239,9 @@ class Expr(IBaseObj):
     def tostring_eqn(self, eqnstr, style = 0, tosort = False, lhsvar = None, prefer_ge = None, line_len = None, pf_note = None):
         if pf_note is None:
             pf_note = PsiOpts.settings["str_proof_note"]
+
+        if lhsvar is None:
+            lhsvar = PsiOpts.settings["lhsvar"]
 
         style = iutil.convert_str_style(style)
 
@@ -7643,6 +8394,363 @@ class FcnRelation(IBaseObj):
     def __bool__(self):
         return bool(self.get_region())
         
+        
+        
+class PartialOrder(IBaseObj):
+    """Partial ordering"""
+    
+    def __init__(self, comparator = None, terms = None):
+        self.comparator = comparator
+        self.terms = []
+        self.table = []
+        if terms is not None:
+            for x in terms:
+                self.add(x)
+    
+    def copy(self):
+        r = PartialOrder()
+        r.comparator = iutil.copy(self.comparator)
+        r.terms = iutil.copy(self.terms)
+        r.table = [list(x) for x in self.table]
+        return r
+    
+    def get_ancestors_id(self, x, descendant = False, invert = False):
+        n = len(self.terms)
+        if descendant:
+            for i in range(n):
+                if invert ^ self.table[i][x]:
+                    yield i
+        else:
+            for i in range(n):
+                if invert ^ self.table[x][i]:
+                    yield i
+
+
+    # def get_ancestors_id(self, x, descendant = False, include_self = True, invert = False):
+    #     n = len(self.terms)
+    #     vis = [False] * n
+    #     i = x
+    #     vis[i] = include_self
+    #     cstack = [i]
+    #     r = []
+    #     while len(cstack):
+    #         x = cstack.pop()
+    #         if vis[x]:
+    #             r.append(x)
+    #         for y in (self.child[x] if descendant else self.parent[x]):
+    #             if not vis[y]:
+    #                 vis[y] = True
+    #                 cstack.append(y)
+    #     if invert:
+    #         return [i for i in range(n) if not vis[i]]
+    #     return r
+        
+    # def get_descendants_id(self, x, **kwargs):
+    #     return self.get_ancestors_id(x, descendant = True, **kwargs)
+    
+    def compare(self, x, y):
+        if isinstance(x, tuple):
+            x = x[1]
+        if isinstance(y, tuple):
+            y = y[1]
+        if self.comparator is None:
+            return x <= y
+        if isinstance(self.comparator, Region):
+            return (self.comparator >> (x <= y))
+        return self.comparator(x, y)
+    
+    def get_leader_id(self):
+        n = len(self.terms)
+        vis = [False] * n
+        r = [-1] * n
+
+        for i in range(n):
+            if vis[i]:
+                continue
+
+            minc = None
+            minj = -1
+            for j in range(i, n):
+                if self.table[i][j] and self.table[j][i]:
+                    vis[j] = True
+                    c = 0
+                    t = self.terms[j]
+                    if isinstance(t, tuple):
+                        t = t[1]
+                    if isinstance(t, (Expr, Region)):
+                        c = t.complexity()
+                    if minc is None or c < minc:
+                        minc = c
+                        minj = j
+            
+            for j in range(i, n):
+                if self.table[i][j] and self.table[j][i]:
+                    if j == minj:
+                        r[j] = -1
+                    else:
+                        r[j] = minj
+        
+        return r
+
+    def unique(self):
+        """Unique entries in this partial ordering.
+        """
+        n = len(self.terms)
+        leaders = self.get_leader_id()
+        return [self.terms[i] for i in range(n) if leaders[i] < 0]
+
+    def minimal(self, unique = True, flipped = False):
+        """Minimal entries in this partial ordering.
+        """
+        n = len(self.terms)
+        leaders = None
+        if unique:
+            leaders = self.get_leader_id()
+        r = []
+        for i in range(n):
+            if unique and leaders[i] >= 0:
+                continue
+            if flipped:
+                if any(self.table[i][j] and not self.table[j][i] for j in range(n)):
+                    continue
+            else:
+                if any(self.table[j][i] and not self.table[i][j] for j in range(n)):
+                    continue
+            r.append(self.terms[i])
+        return r
+
+    def maximal(self, unique = True, flipped = False):
+        """Maximal entries in this partial ordering.
+        """
+        return self.minimal(unique, not flipped)
+
+    def add(self, x):
+        verbose = PsiOpts.settings.get("verbose_partialorder", False)
+
+        n = len(self.terms)
+        pos = [[None, None] for i in range(n)]
+        leaders = self.get_leader_id()
+
+        def add_compare(i, sgn, val):
+            r = [list(t) for t in pos]
+            if val:
+                for j in self.get_ancestors_id(i, sgn == 0):
+                    r[j][sgn] = True
+                for j in self.get_ancestors_id(i, sgn == 1, invert = True):
+                    r[j][1 - sgn] = False
+            else:
+                for j in self.get_ancestors_id(i, sgn == 1):
+                    r[j][sgn] = False
+            return r
+
+        def num_uncertain(cpos):
+            return sum(int(cpos[i][s] is None) for i in range(n) for s in range(2) if leaders[i] < 0)
+        
+        if verbose:
+            print(", ".join(str(t) for t in self.terms))
+            print("ADD " + str(x))
+            print()
+
+        while True:
+            min_i = None
+            min_s = None
+            min_nu = None
+            min_pos0 = None
+            min_pos1 = None
+
+            for i in range(n):
+                if leaders[i] >= 0:
+                    continue
+                for s in range(2):
+                    if pos[i][s] is not None:
+                        continue
+
+                    tpos1 = add_compare(i, s, True)
+                    tnu1 = num_uncertain(tpos1)
+                    tpos0 = add_compare(i, s, False)
+                    tnu0 = num_uncertain(tpos0)
+
+                    if min_i is None or max(tnu0, tnu1) < min_nu:
+                        min_i = i
+                        min_s = s
+                        min_nu = max(tnu0, tnu1)
+                        min_pos0 = tpos0
+                        min_pos1 = tpos1
+            
+            if min_i is None:
+                break
+
+            res = None
+            if min_s == 0:
+                if verbose:
+                    print(str(self.terms[min_i]) + " <= " + str(x) + " ?")
+                res = self.compare(self.terms[min_i], x)
+            else:
+                if verbose:
+                    print(str(x) + " <= " + str(self.terms[min_i]) + " ?")
+                res = self.compare(x, self.terms[min_i])
+            
+            if res:
+                pos = [list(t) for t in min_pos1]
+            else:
+                pos = [list(t) for t in min_pos0]
+            
+            if verbose:
+                for i in range(n + 1):
+                    st = ""
+                    for j in range(n + 1):
+                        c = None
+                        if i == n:
+                            if j == n:
+                                c = True
+                            else:
+                                c = pos[j][1]
+                        else:
+                            if j < n:
+                                c = self.table[i][j]
+                            else:
+                                c = pos[i][0]
+                        st += " " +("?" if c is None else "1" if c else "0")
+                    print(st)
+                print()
+
+
+            
+        self.terms.append(x)
+        for i in range(n):
+            self.table[i].append(pos[i][0])
+        self.table.append([pos[i][1] for i in range(n)] + [True])
+
+
+    def hasse(self):
+        n = len(self.terms)
+        eq = [-1] * n
+
+        for i in range(n):
+            for j in range(i):
+                if self.table[i][j] and self.table[j][i]:
+                    eq[i] = j
+                    break
+
+        ch = [[] for i in range(n)]
+        for i in range(n):
+            if eq[i] >= 0:
+                continue
+            for j in range(n):
+                if i == j or eq[j] >= 0 or not self.table[i][j]:
+                    continue
+                for k in range(n):
+                    if k == i or k == j or eq[k] >= 0:
+                        continue
+                    if self.table[i][k] and self.table[k][j]:
+                        break
+                else:
+                    ch[i].append(j)
+        
+        return (eq, ch)
+
+    def get_region(self):
+        eq, ch = self.hasse()
+        n = len(self.terms)
+        r = Region.universe()
+        for i in range(n):
+            if eq[i] >= 0:
+                r &= self.terms[eq[i]] == self.terms[i]
+            for j in ch[i]:
+                r &= self.terms[i] <= self.terms[j]
+        return r
+
+    def _latex_(self):
+        r = ""
+        with PsiOpts(repr_simplify = False):
+            r = self.get_region()._latex_()
+        return r
+
+    def tostring_term(self, i, style=None):
+        x = self.terms[i]
+        if isinstance(x, tuple):
+            x = x[0]
+        if style is not None and style == "graphviz":
+            return x.graphviz_text()
+        return str(x)
+
+    def tostring(self, style=None):
+        eq, ch = self.hasse()
+        n = len(self.terms)
+        r = ""
+        for i in range(n):
+            r += self.tostring_term(i, style=style)
+            if eq[i] >= 0:
+                r += " = " + self.tostring_term(eq[i], style=style)
+            elif ch[i]:
+                r += " <= " + ", ".join(self.tostring_term(j, style=style) for j in ch[i])
+            r += "\n"
+        
+        return r
+        
+    def __str__(self):
+        return self.tostring()
+    
+    def __repr__(self):
+        return self.tostring()
+
+
+    def _repr_svg_(self):
+        if graphviz is None:
+            return None
+        try:
+            return self.graph()._repr_svg_()
+        except Exception as err:
+            return self.graph().build_dot()._repr_svg_()
+        
+    def graph(self, shape = "plaintext", lr = False, ortho = False, arrowhead = "none", leaders_only = False, reverse = False, **kwargs):
+        """Return the graphviz digraph of the Hasse diagram.
+        """
+        if graphviz is None:
+            raise RuntimeError("Requires graphviz. Please install it first.")
+        
+        eq, ch = self.hasse()
+        n = len(self.terms)
+        leaders = [-1] * n
+        if leaders_only:
+            leaders = self.get_leader_id()
+
+        r = graphviz.Digraph()
+        if lr:
+            r.graph_attr["rankdir"] = "LR"
+        if ortho:
+            r.graph_attr["splines"] = "ortho"
+
+        for key, value in kwargs.items():
+            r.graph_attr[key] = str(value)
+
+        names = ["" for i in range(n)]
+        for i in range(n):
+            if eq[i] >= 0:
+                continue
+            t = ""
+            for j in [i] + [k for k in range(n) if eq[k] == i]:
+                if leaders[j] < 0:
+                    if t != "":
+                        t += " = "
+                    t += self.tostring_term(j, style="graphviz")
+            names[i] = t
+
+        for i in range(n):
+            r.node(names[i], names[i], shape = shape)
+        
+        for i in range(n):
+            for j in ch[i]:
+                if reverse:
+                    r.edge(names[i], names[j], arrowhead=arrowhead)
+                else:
+                    r.edge(names[j], names[i], arrowhead=arrowhead)
+        
+        return r
+    
+
+
+
 class BayesNet(IBaseObj):
     """Bayesian network"""
     
@@ -7952,6 +9060,43 @@ class BayesNet(IBaseObj):
         
         r = BayesNet()
         
+        for i in range(n):
+            cnparent[i] = len(self.parent[i])
+            if cnparent[i] == 0:
+                heapq.heappush(cstack, i)
+                
+        while len(cstack) > 0:
+            i = heapq.heappop(cstack)
+            r.record(self.index.comprv[i])
+            nrec += 1
+            for j in self.child[i]:
+                if cnparent[j] > 0:
+                    cnparent[j] -= 1
+                    if cnparent[j] == 0:
+                        heapq.heappush(cstack, j)
+                        
+        if nrec < n:
+            return None
+        
+        for i in range(n):
+            for j in self.parent[i]:
+                r.add_edge(self.index.comprv[j], self.index.comprv[i])
+        
+        for i in range(n):
+            if self.fcn[i]:
+                r.set_fcn(self.index.comprv[i])
+                
+        return r
+    
+
+    def tsorted_stack(self):
+        n = self.index.comprv.size()
+        cstack = []
+        cnparent = [0] * n
+        nrec = 0
+        
+        r = BayesNet()
+        
         for i in range(n - 1, -1, -1):
             cnparent[i] = len(self.parent[i])
             if cnparent[i] == 0:
@@ -8003,7 +9148,10 @@ class BayesNet(IBaseObj):
         return self.tsorted() is None
 
     def contracted_node(self, x):
-        self = self.tsorted()
+        self_tsorted = self.tsorted()
+        if self_tsorted is not None:
+            self = self_tsorted
+        # self = self.tsorted()
         k = self.index.get_index(x)
         if k < 0:
             return self.copy()
@@ -8257,8 +9405,10 @@ class BayesNet(IBaseObj):
         ics = [(x0, x1 if x1 >= 0 else (1 << n) - 1 - x0 - z, z) for x0, x1, z in ics]
         
         numcond = [0] * n
-        for x0, x1, z in ics:
-            for i in range(n):
+        for i in range(n):
+            if add_var is not None and add_var.ispresent(self.index.comprv[i]):
+                continue
+            for x0, x1, z in ics:
                 if z & (1 << i):
                     numcond[i] += 1
         
@@ -8485,8 +9635,13 @@ class BayesNet(IBaseObj):
             r += self.get_ic_exhaust()
         else:
             r += self.get_ic()
-        return r == 0
+        reg = (r == 0)
+        reg.meta = dict()
+        reg.meta["rv_order"] = self.index.comprv.copy()
+        return reg
         
+    def example_bsc(self, **kwargs):
+        return Region.universe().example_bsc(bnet = self, **kwargs)
 
     def assume(self):
         """Assume this Bayesian network is true in the current context.
@@ -8524,7 +9679,11 @@ class BayesNet(IBaseObj):
     def _repr_svg_(self):
         if graphviz is None:
             return None
-        return self.graph()._repr_svg_()
+        try:
+            return self.graph()._repr_svg_()
+        except Exception as err:
+            return self.graph().build_dot()._repr_svg_()
+
 
     def _repr_latex_(self):
         if graphviz is not None:
@@ -8583,14 +9742,14 @@ class BayesNet(IBaseObj):
     def __hash__(self):
         return hash(self.tostring())
         
-    def graph(self, tsort = True, shape = "plaintext", lr = True, groups = None, ortho = False, **kwargs):
+    def graph(self, tsort = True, shape = "plaintext", lr = True, groups = None, group_color = None, group_fillcolor = None, ortho = False, **kwargs):
         """Return the graphviz digraph of the network that can be displayed in the console.
         """
         if graphviz is None:
             raise RuntimeError("Requires graphviz. Please install it first.")
 
         if tsort:
-            return self.tsorted().graph(tsort = False, shape = shape, lr = lr, groups = groups)
+            return self.tsorted().graph(tsort = False, shape = shape, lr = lr, groups = groups, group_color = group_color, group_fillcolor = group_fillcolor, ortho = ortho, **kwargs)
         
         n = self.index.comprv.size()
         r = graphviz.Digraph()
@@ -8599,30 +9758,49 @@ class BayesNet(IBaseObj):
         if ortho:
             r.graph_attr["splines"] = "ortho"
 
+        if group_color is None:
+            group_color = PsiOpts.settings.get("graph_group_color")
+        if group_fillcolor is None:
+            group_fillcolor = PsiOpts.settings.get("graph_group_fillcolor")
+
         for key, value in kwargs.items():
             r.graph_attr[key] = str(value)
 
         if groups is None:
             groups = []
         
+        # r.graph_attr["rank"] = "same"
+
         remrv = self.index.comprv.copy()
         for gi, g in enumerate(groups):
-            with r.subgraph(name = "cluster_" + str(gi)) as rs:
-                rs.attr(color = "blue")
-                for c in g:
-                    if not remrv.ispresent(c):
-                        continue
-                    remrv -= c
-                    i = self.index.get_index(c)
-                    rs.node(self.index.comprv[i].get_name(), str(self.index.comprv[i])
-                           + ("*" if self.fcn[i] else ""), shape = shape)
+            g = iutil.ensure_comp(g, ref=self)
+            with r.subgraph(name = "cluster_" + str(gi)) as rcs:
+                if group_color is not None:
+                    rcs.attr(color = group_color)
+                if group_fillcolor is not None:
+                    rcs.attr(style = "filled")
+                    rcs.attr(fillcolor = group_fillcolor)
+                with rcs.subgraph(name = "graphcluster_" + str(gi)) as rs:
+                    rs.attr(rank = "same")
+                    # rs.attr(rankdir = "TB")
+                    for c in g:
+                        if not remrv.ispresent(c):
+                            continue
+                        remrv -= c
+                        i = self.index.get_index(c)
+                        rv_text = self.index.comprv[i]
+                        if self.fcn[i]:
+                            rv_text = rv_text.name_operation(("append", "*"))
+                        rs.node(self.index.comprv[i].get_name(), rv_text.graphviz_text(), shape = shape)
                 
             
         for i in range(n):
             if not remrv.ispresent(self.index.comprv[i]):
                 continue
-            r.node(self.index.comprv[i].get_name(), str(self.index.comprv[i])
-                   + ("*" if self.fcn[i] else ""), shape = shape)
+            rv_text = self.index.comprv[i]
+            if self.fcn[i]:
+                rv_text = rv_text.name_operation(("append", "*"))
+            r.node(self.index.comprv[i].get_name(), rv_text.graphviz_text(), shape = shape)
         
         for i in range(n):
             for j in self.parent[i]:
@@ -9817,7 +10995,126 @@ class RealRV(IBaseObj):
     def x(self):
         return self.comp
     
+
+class SharedRVModel(IBaseObj):
+    def __init__(self, reg = None, addrv = None):
+        self.index_rv = IVarIndex()
+        self.rvvals = []
+
+        self.index_real = IVarIndex()
+        self.realvals = []
+
+        if reg is not None:
+            self.init_reg(reg, addrv)
+
+    def copy(self):
+        r = SharedRVModel()
+        r.index_rv = iutil.copy(self.index_rv)
+        r.rvvals = iutil.copy(self.rvvals)
+        r.index_real = iutil.copy(self.index_real)
+        r.realvals = iutil.copy(self.realvals)
+        return r
+
+    def init_reg(self, reg, addrv = None):
+        reg.record_to(self.index_rv)
+        if addrv is not None:
+            addrv.record_to(self.index_rv)
+        n = len(self.index_rv.comprv)
+        self.rvvals = [0.0] * (1 << n)
+        ics = reg.get_ic(include_ic = True, include_hc = True)
+        for xmask in range(1, 1 << n):
+            for a, c in ics.terms:
+                if all(self.index_rv.get_mask(x) & xmask for x in a.x) and not self.index_rv.get_mask(a.z) & xmask:
+                    self.rvvals[xmask] = None
+                    break
+        maskcount = sum(int(self.rvvals[xmask] is not None) for xmask in range(1, 1 << n))
+        for xmask in range(1, 1 << n):
+            if self.rvvals[xmask] is None:
+                self.rvvals[xmask] = 0.0
+            else:
+                self.rvvals[xmask] = 1.0 / maskcount
+            
+
+
+    def set_real(self, x, v):
+        if isinstance(x, Expr):
+            x = x.allcomp()
+        x.record_to(self.index_real)
+        i = self.index_real.get_index(x)
+        
+        while len(self.realvals) < len(self.index_real.compreal):
+            self.realvals.append(0.0)
+        self.realvals[i] = v
+        
+    def get_real(self, x):
+        if isinstance(x, Expr):
+            x = x.allcomp()
+        i = self.index_real.get_index(x)
+        if i < 0:
+            return None
+        return self.realvals[i]
+        
+    def get_H_mask(self, mask):
+        n = len(self.index_rv.comprv)
+        r = 0.0
+        for xmask in range(1, 1 << n):
+            if mask & xmask != 0:
+                r += self.rvvals[xmask]
+        return r
+
+
+    def get_val(self, expr):
+        
+        r = 0.0
+        for (a, c) in expr.terms:
+            
+            termType = a.get_type()
+            if termType == TermType.IC:
+                k = len(a.x)
+                for t in range(1 << k):
+                    csgn = -1
+                    mask = self.index_rv.get_mask(a.z)
+                    for i in range(k):
+                        if (t & (1 << i)) != 0:
+                            csgn = -csgn
+                            mask |= self.index_rv.get_mask(a.x[i])
+                    if mask != 0:
+                        r += self.get_H_mask(mask) * csgn * c
+            elif termType == TermType.REAL or termType == TermType.REGION:
+                if a.isone():
+                    r += c
+                else:
+                    t = self.get_real(a.x[0])
+                    r += t * c
+        
+        return r
+        
+    def __getitem__(self, x):
+        if isinstance(x, Expr):
+            return self.get_val(x)
+        if isinstance(x, Region):
+            return x.evalcheck(self)
+        return None
+
+    def __setitem__(self, key, value):
+        if isinstance(key, Expr):
+            self.set_real(key.allcomp(), value)
+
+    def __call__(self, x):
+        return self[x]
     
+    def table(self, *args, **kwargs):
+        """Plot the information diagram as a Karnaugh map.
+        """
+        return Region.universe().table(*args, self, **kwargs)
+        
+    def venn(self, *args, **kwargs):
+        """Plot the information diagram as a Venn diagram.
+        Can handle up to 5 random variables (uses Branko Grunbaum's Venn diagram for n=5).
+        """
+        return Region.universe().venn(*args, self, **kwargs)
+
+
 class ConcModel(IBaseObj):
     """Concrete distributions of random variables and values of real variables."""
     
@@ -9960,6 +11257,8 @@ class ConcModel(IBaseObj):
                 else:
                     mode = copt
             
+            mode = mode.lower()
+
             if mode == "flat":
                 shape_in, shape_out = self.convert_shape_pair(x)
                 self.set_prob(x, ConcDist.flat(shape_in, isvar = isvar))
@@ -9972,6 +11271,40 @@ class ConcModel(IBaseObj):
                 shape_in, shape_out = self.convert_shape_pair(x)
                 self.set_prob(x, ConcDist.add(shape_in, isvar = isvar))
 
+            elif mode == "present" or mode == "c":
+                shape_in, shape_out = self.convert_shape_pair(x)
+                shape_in_max = max(shape_in[1:])
+                dist = ConcDist.det_fcn((lambda *a: a[a[0] + 1]), (shape_in, shape_in_max))
+                self.set_prob(x, dist)
+
+            elif mode == "past" or mode == "p":
+                shape_in, shape_out = self.convert_shape_pair(x)
+                shape_array = shape_in[1:]
+                n = len(shape_array)
+                sizes = [iutil.product(shape_array[:i]) for i in range(n)]
+                shifts = [sum(sizes[:i]) for i in range(n + 1)]
+                def toindex(q, *xs):
+                    t = 0
+                    for a, b in zip(xs[:q], shape_array[:q]):
+                        t = t * b + a
+                    return t + shifts[q]
+                dist = ConcDist.det_fcn(toindex, (shape_in, shifts[n]))
+                self.set_prob(x, dist)
+
+            elif mode == "future" or mode == "f":
+                shape_in, shape_out = self.convert_shape_pair(x)
+                shape_array = shape_in[1:]
+                n = len(shape_array)
+                sizes = [iutil.product(shape_array[i + 1 :]) for i in range(n)]
+                shifts = [sum(sizes[:i]) for i in range(n + 1)]
+                def toindex(q, *xs):
+                    t = 0
+                    for a, b in zip(xs[q + 1:], shape_array[q + 1:]):
+                        t = t * b + a
+                    return t + shifts[q]
+                dist = ConcDist.det_fcn(toindex, (shape_in, shifts[n]))
+                self.set_prob(x, dist)
+
             else:
                 shape_in, shape_out = self.convert_shape_pair(x)
                 self.set_prob(x, ConcDist(shape_in = shape_in, shape_out = shape_out, 
@@ -9979,7 +11312,7 @@ class ConcModel(IBaseObj):
             return
         
         
-        if isinstance(p, collections.Callable) and not isinstance(p, (ConcDist, list, ExprArray)):
+        if callable(p) and not isinstance(p, (ConcDist, list, ExprArray)):
             dist = ConcDist.det_fcn(p, self.convert_shape_pair(x))
             self.set_prob(x, dist)
             return
@@ -10021,6 +11354,18 @@ class ConcModel(IBaseObj):
             self.psv[k] = (cin, cout)
         self.clear_cache()
         
+
+    def set_series(self, x, q, y):
+        if isinstance(y, CompArray):
+            y = y.get_sum()
+
+        if len(x) > 0:
+            self[x[0] | q+y] = "present"
+        if len(x) > 1:
+            self[x[1] | q+y] = "past"
+        if len(x) > 2:
+            self[x[2] | q+y] = "future"
+
     def calc_dist(self, p):
         if p is None:
             return
@@ -11449,7 +12794,13 @@ class ConcModel(IBaseObj):
         for i, x in enumerate(self.index_real.compreal):
             r += x.tostring(style)
             r += " = "
-            r += self.realvars[i].tostring(style)
+            v = self.realvars[i]
+            if isinstance(v, (int, fractions.Fraction)):
+                r += str(v)
+            elif isinstance(v, float):
+                r += iutil.float_tostr(v)
+            else:
+                r += v.tostring(style)
             r += nlstr
 
 
@@ -11712,6 +13063,10 @@ class LinearProg:
         self.constmap = {}
 
         
+        save_enabled = PsiOpts.settings.get("lp_save_enabled", False)
+        if not save_enabled:
+            save_res = False
+
         self.quantum = PsiOpts.settings.get("quantum", False)
         self.hge0 = PsiOpts.settings.get("hge0", False)
         self.hcge0 = PsiOpts.settings.get("hcge0", False)
@@ -11725,12 +13080,22 @@ class LinearProg:
             self.dual_form = PsiOpts.settings["lp_dual_form"] or (PsiOpts.settings["lp_dual_form_if_proof"] and PsiOpts.settings["proof_enabled"])
         else:
             self.dual_form = dual_form
+        
         self.dual_form_ncons = 0
         self.dual_form_obj = None
         self.dual_form_cutoff = 0.0
         self.dual_form_infeas = False
         self.dual_form_weights = None
-        
+        self.dual_discover_exprs = []
+        self.dual_discover_init_model = None
+        self.dual_discover_l1 = False
+        self.vdiscover = []
+        self.vdiscover_bounds = []
+        self.vdiscover_disabled = set()
+
+        if PsiOpts.settings["lp_dual_form_discover"]:
+            self.dual_form_obj = "discover"
+
         self.cond_maximize = PsiOpts.settings["lp_cond_maximize"]
 
         if lp_bounded is None:
@@ -12315,7 +13680,53 @@ class LinearProg:
             self.calc_solver()
 
         
+    def apply_discover_bounds(self):
+        if self.solver.startswith("ortools."):
+            model = self.solver_param["model"]
+            xvar = self.solver_param["xvar"]
+            sum_bound_cons = self.solver_param["sum_bound_cons"]
+
+            if sum_bound_cons is not None:
+                if -1 in self.vdiscover_disabled:
+                    sum_bound_cons.SetBounds(-model.infinity(), model.infinity())
+                else:
+                    sum_bound_cons.SetBounds(-1, model.infinity())
+
+            for i, (j, b) in enumerate(zip(self.vdiscover, self.vdiscover_bounds)):
+                if i in self.vdiscover_disabled:
+                    xvar[j].SetBounds(-model.infinity(), model.infinity())
+                else:
+                    xvar[j].SetBounds(b[0], b[1])
+        else:
+            raise RuntimeError("Requires ortools solver")
+
+    def active_discover_bounds(self, v):
+        r = set()
+        if v is None:
+            return r
+
+        tol_coeff = 0.95
+        # ceps = PsiOpts.settings["eps_lp"]
+
+        if -1 not in self.vdiscover_disabled:
+            sum_bound_weights = self.solver_param["sum_bound_weights"]
+            cv = sum(v[j] * c for (j, c) in zip(self.vdiscover, sum_bound_weights))
+            if cv <= -tol_coeff:
+                r.add(-1)
+
+        for i, (j, b) in enumerate(zip(self.vdiscover, self.vdiscover_bounds)):
+            if i not in self.vdiscover_disabled:
+                if isinstance(b[0], (float, int)) and v[j] <= b[0] * tol_coeff:
+                    r.add(i)
+                elif isinstance(b[1], (float, int)) and v[j] >= b[1] * tol_coeff:
+                    r.add(i)
+                # print(v[j], b[0], b[1])
+        
+        return r
+
     def calc_solver(self):
+        verbose_discover = PsiOpts.settings.get("verbose_discover", False)
+
         ceps = PsiOpts.settings["eps"]
         dual_form = self.dual_form
         self.dual_form_infeas = False
@@ -12538,25 +13949,53 @@ class LinearProg:
             
             if dual_form:
                 if self.dual_form_obj is not None:
-                    self.dual_form_ncons = len(self.Au.x) + len(self.Ae.x) * 2
-                    self.dual_form_weights = []
-                    # model.n = pyo.Param(default = self.dual_form_ncons)
-                    # model.x = pyo.Var(pyo.RangeSet(model.n), domain=pyo.Reals)
-                    n = self.dual_form_ncons
-                    xvar = [model.NumVar(0, model.infinity(), 'x' + str(i)) for i in range(n)]
+                    is_dual_discover = (isinstance(self.dual_form_obj, str) and self.dual_form_obj == "discover")
+
+                    if is_dual_discover:
+                        n_dual_discover_exprs = len(self.dual_discover_exprs)
+                        if self.dual_discover_l1:
+                            n_dual_discover_exprs *= 2
+                        self.dual_form_ncons = len(self.Au.x) + len(self.Ae.x) + n_dual_discover_exprs
+                        self.dual_form_weights = []
+                        n = self.dual_form_ncons
+                        if self.dual_discover_l1:
+                            xvar = [model.NumVar(0, model.infinity(), 'x' + str(i)) for i in range(n)]
+                        else:
+                            xvar = [model.NumVar(0, model.infinity(), 'x' + str(i)) if i < len(self.Au.x)
+                                    else model.NumVar(-model.infinity(), model.infinity(), 'x' + str(i)) for i in range(n)]
+                        Aesigns = [-1]
+                    else:
+                        self.dual_form_ncons = len(self.Au.x) + len(self.Ae.x) * 2
+                        self.dual_form_weights = []
+                        n = self.dual_form_ncons
+                        xvar = [model.NumVar(0, model.infinity(), 'x' + str(i)) for i in range(n)]
+                        Aesigns = [-1, 1]
                     
                     # model.c = pyo.ConstraintList()
                     vexprs = [None] * (self.nxvar + 1)
                     
+                    self.vdiscover = []
+                    self.vdiscover_bounds = []
+
+                    dual_discover_list = []
+                    if is_dual_discover:
+                        for expr in self.dual_discover_exprs:
+                            t, t2 = self.get_vec(expr, sparse = True)
+                            dual_discover_list.append((t.x[0], t2, 1, False))
+                            if self.dual_discover_l1:
+                                dual_discover_list.append(([(j, -c) for j, c in t.x[0]], -t2, 1, False))
+                            # print("T " + str(t.x[0]))
+
                     for i, (cx, cb, csn, cri) in enumerate(itertools.chain(((tx, tb, -1, tri) for tx, tb, tri in zip(self.Au.x, self.bu, self.Au.rowinfo)),
-                                                ((tx, tb, tsn, tri) for tx, tb, tri in zip(self.Ae.x, self.be, self.Ae.rowinfo) for tsn in [-1, 1]))):
+                                                ((tx, tb, tsn, tri) for tx, tb, tri in zip(self.Ae.x, self.be, self.Ae.rowinfo) for tsn in Aesigns),
+                                                dual_discover_list)):
                         
                         # model.Add(x[i] >= 0)
                         
                         cweight = 1.0 + i * 0.2 / self.dual_form_ncons
-                        if cri is not None:
+                        if cri is not None and cri is not False:
                             cweight += 0.2 * len(cri.allcomp())
-                        if cri is not None and cri.get_meta("dual_weight") is not None:
+                        if cri is not None and cri is not False and cri.get_meta("dual_weight") is not None:
                             cweight *= cri.get_meta("dual_weight")
                         self.dual_form_weights.append(cweight)
 
@@ -12572,21 +14011,119 @@ class LinearProg:
                                 vexprs[self.nxvar] = cb * csn * xvar[i]
                             else:
                                 vexprs[self.nxvar] += cb * csn * xvar[i]
-                    
-                    for j in range(self.nxvar):
-                        if vexprs[j] is None:
-                            if abs(self.dual_form_obj[j]) > ceps:
-                                self.dual_form_infeas = True
-                            continue
-                        model.Add(vexprs[j] == self.dual_form_obj[j])
-                    
-                    if vexprs[self.nxvar] is None:
-                        if -self.dual_form_cutoff > ceps:
-                            self.dual_form_infeas = True
+
+                        if cri is False:
+                            self.vdiscover.append(i)
+                            self.vdiscover_bounds.append([-model.infinity(), model.infinity()])
+
+                        # discover_i = cri.get_meta("dual_discover")
+                        # if discover_i is not None:
+                        #     while len(self.vdiscover) <= discover_i:
+                        #         self.vdiscover.append(-1)
+                        #     self.vdiscover[discover_i] = i
+                        
+
+                    if is_dual_discover:
+                        
+
+                        for j in range(self.nxvar + 1):
+                            if vexprs[j] is not None:
+                                model.Add(vexprs[j] == 0)
+                        if self.vdiscover:
+
+                            sum_bound = None
+                            default_bound = 10000
+
+                            sum_bound_weights = []
+
+                            if self.dual_discover_l1:
+                                for x2 in self.vdiscover:
+                                    if sum_bound is None:
+                                        sum_bound = xvar[x2] * -1
+                                    else:
+                                        sum_bound += xvar[x2] * -1
+                            else:
+                                for i2, (x2, expr) in enumerate(zip(self.vdiscover, self.dual_discover_exprs)):
+                                    cw = 0.0
+                                    if self.dual_discover_init_model is not None:
+                                        cw = float(self.dual_discover_init_model[expr])
+                                    else:
+                                        cw = expr.rv_weight()
+
+                                    if verbose_discover:
+                                        print("BOUND " + str(expr) + " : " + str(cw))
+                                    # print(expr)
+                                    # print(cw)
+                                    # print()
+
+                                    sum_bound_weights.append(cw)
+                                    if cw != 0:
+                                        if sum_bound is None:
+                                            sum_bound = xvar[x2] * cw
+                                        else:
+                                            sum_bound += xvar[x2] * cw
+                                    
+                                    if cw >= 0:
+                                        self.vdiscover_bounds[i2][1] = default_bound
+                                        # model.Add(xvar[x2] <= default_bound)
+                                    if cw <= 0:
+                                        self.vdiscover_bounds[i2][0] = -default_bound
+                                        # model.Add(xvar[x2] >= -default_bound)
+
+                                    # if cw <= 0:
+                                    #     model.Add(xvar[x2] >= -default_bound)
+                                    #     model.Add(xvar[x2] <= default_bound)
+                                    # else:
+                                    #     # model.Add(xvar[x2] >= -default_bound)
+                                    #     model.Add(xvar[x2] <= default_bound)
+                                    #     if sum_bound is None:
+                                    #         sum_bound = xvar[x2] * cw
+                                    #     else:
+                                    #         sum_bound += xvar[x2] * cw
+                                    # cw = 4.0 ** len(expr.allcomprv())
+                                    # model.Add(xvar[x2] >= -cw)
+                                    # model.Add(xvar[x2] <= cw)
+
+                            self.solver_param["model"] = model
+                            self.solver_param["xvar"] = xvar
+                            self.solver_param["sum_bound_weights"] = sum_bound_weights
+                            self.solver_param["sum_bound_cons"] = None
+
+                            if sum_bound is not None:
+                                # sum_bound_cons = model.Add(sum_bound >= -1)
+                                # self.solver_param["sum_bound_cons"] = sum_bound_cons
+
+                                sum_bound_cons = model.Constraint(-100, model.infinity())
+                                for x2, cw in zip(self.vdiscover, sum_bound_weights):
+                                    if cw != 0:
+                                        sum_bound_cons.SetCoefficient(xvar[x2], cw)
+                                self.solver_param["sum_bound_cons"] = sum_bound_cons
+
+                            self.apply_discover_bounds()
+                            
+                            # model.Add(sum(xvar[x2] for x2 in self.vdiscover) <= 1)
+                            # model.Add(sum(xvar[x2] for x2 in self.vdiscover) >= -1)
+
+                            # for x2 in self.vdiscover:
+                            #     model.Add(xvar[x2] >= -1)
+                            # model.Add(sum(xvar[x2] for x2 in self.vdiscover) <= 1)
+
+
                     else:
-                        # print(vexprs[self.nxvar])
-                        # print(self.dual_form_cutoff)
-                        model.Add(vexprs[self.nxvar] >= -self.dual_form_cutoff)
+                        for j in range(self.nxvar):
+                            if vexprs[j] is None:
+                                if abs(self.dual_form_obj[j]) > ceps:
+                                    self.dual_form_infeas = True
+                                continue
+                            model.Add(vexprs[j] == self.dual_form_obj[j])
+                        
+                        if vexprs[self.nxvar] is None:
+                            if -self.dual_form_cutoff > ceps:
+                                self.dual_form_infeas = True
+                        else:
+                            # print(vexprs[self.nxvar])
+                            # print(self.dual_form_cutoff)
+                            model.Add(vexprs[self.nxvar] >= -self.dual_form_cutoff)
                     
 
                 
@@ -12913,7 +14450,8 @@ class LinearProg:
                 curtype = ""
                 rii = ri.get_meta("pf_note")
                 if isinstance(rii, list):
-                    curtype = str(rii[0])
+                    if len(rii):
+                        curtype = str(rii[0])
                 elif (ri * d).isnonneg():
                     curtype = "#TRI"
                 elif (ri * d).isnonpos():
@@ -12997,7 +14535,6 @@ class LinearProg:
             while did:
                 did = False
                 for i in range(len(r) - 1, -1, -1):
-                    # for j in range(i - 1, -1, -1):
                     for j in range(i):
                         if abs(abs(r[i][2]) - abs(r[j][2])) > ceps:
                             continue
@@ -13013,7 +14550,7 @@ class LinearProg:
                             if r[i][4] != "#TRI":
                                 continue
                         else:
-                            if r[i][4] != r[j][4]:
+                            if r[i][4] == "" or r[j][4] == "" or r[i][4] != r[j][4]:
                                 continue
 
                         rii = r[i][1].get_meta("pf_note")
@@ -13271,6 +14808,8 @@ class LinearProg:
 
                 i += 1
 
+        for i in range(len(r1) - 1):
+            r1[i + 1].make_similar(r1[i])
 
         return (r0, r1, riseq, sn)
 
@@ -13662,11 +15201,12 @@ class LinearProg:
         verbose = PsiOpts.settings.get("verbose_lp", False)
         
         ceps = PsiOpts.settings["eps"]
+        nx = self.dual_form_ncons if self.dual_form else self.nxvar
 
         zero_obj = False
         if all(abs(x) <= ceps for x in c):
             if not self.affine_present:
-                return (0.0, [0.0 for i in range(self.nxvar)])
+                return (0.0, [0.0 for i in range(nx)])
             
             c = [0.0] * len(c)
             c[0] = 1.0
@@ -13679,12 +15219,13 @@ class LinearProg:
         if self.solver == "scipy":
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
+                PsiOpts.stats["numlp"] += 1
                 res = scipy.optimize.linprog(c, self.solver_param["Aus"], self.bu, self.solver_param["Aes"], self.be, 
                                          bounds = (None, None), method = "interior-point", options={'sparse': True})
             
             
             if res.status == 0:
-                return (0.0 if zero_obj else float(res.fun), [float(res.x[i]) for i in range(self.nxvar)])
+                return (0.0 if zero_obj else float(res.fun), [float(res.x[i]) for i in range(nx)])
             return (None, None)
             
             
@@ -13703,6 +15244,7 @@ class LinearProg:
             if cexpr is not None:
                 prob.setObjective(cexpr)
                 try:
+                    PsiOpts.stats["numlp"] += 1
                     res = prob.solve(iutil.pulp_get_solver(self.solver))
                 except Exception as err:
                     if verbose:
@@ -13711,7 +15253,7 @@ class LinearProg:
                 
                 if pulp.LpStatus[res] == "Optimal":
                     
-                    return (0.0 if zero_obj else prob.objective.value(), [xvar[str(i)].value() for i in range(self.nxvar)])
+                    return (0.0 if zero_obj else prob.objective.value(), [xvar[str(i)].value() for i in range(nx)])
                 
             return (None, None)
             
@@ -13740,6 +15282,7 @@ class LinearProg:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 try:
+                    PsiOpts.stats["numlp"] += 1
                     res = opt.solve(model, options = coptions, tee = PsiOpts.settings["verbose_solver"])
                 except Exception as err:
                     if verbose:
@@ -13751,7 +15294,7 @@ class LinearProg:
             if (res is not None and res.solver.status == pyo.SolverStatus.ok 
                 and res.solver.termination_condition == pyo.TerminationCondition.optimal):
                     
-                return (0.0 if zero_obj else model.o(), [model.x[i + 1]() for i in range(self.nxvar)])
+                return (0.0 if zero_obj else model.o(), [model.x[i + 1]() for i in range(nx)])
             
             return (None, None)
         
@@ -13776,6 +15319,7 @@ class LinearProg:
             if cexpr is not None:
                 model.Minimize(cexpr)
                 try:
+                    PsiOpts.stats["numlp"] += 1
                     res = model.Solve()
                 except Exception as err:
                     if verbose:
@@ -13783,8 +15327,7 @@ class LinearProg:
                     res = 0
                 
                 if res == ortools.linear_solver.pywraplp.Solver.OPTIMAL:
-                    
-                    return (0.0 if zero_obj else model.Objective().Value(), [xvar[i].solution_value() for i in range(self.nxvar)])
+                    return (0.0 if zero_obj else model.Objective().Value(), [xvar[i].solution_value() for i in range(nx)])
                 
             return (None, None)
         
@@ -13793,6 +15336,9 @@ class LinearProg:
         
     def checkexpr_ge0(self, x, saved = False, optval = None):
         verbose = PsiOpts.settings.get("verbose_lp", False)
+        save_enabled = PsiOpts.settings.get("lp_save_enabled", False)
+        if not save_enabled:
+            saved = False
         
         if self.pinfeas:
             return True
@@ -13941,6 +15487,7 @@ class LinearProg:
             
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
+                PsiOpts.stats["numlp"] += 1
                 res = scipy.optimize.linprog(c, self.solver_param["Aus"], self.bu, self.solver_param["Aes"], self.be, 
                                          bounds = (None, None), method = "interior-point", options={'sparse': True})
                     
@@ -14004,6 +15551,7 @@ class LinearProg:
             if cexpr is not None:
                 prob.setObjective(cexpr)
                 try:
+                    PsiOpts.stats["numlp"] += 1
                     res = prob.solve(iutil.pulp_get_solver(self.solver))
                 except Exception as err:
                     if verbose:
@@ -14110,6 +15658,7 @@ class LinearProg:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 try:
+                    PsiOpts.stats["numlp"] += 1
                     res = opt.solve(model, options = coptions, tee = PsiOpts.settings["verbose_solver"])
                 except Exception as err:
                     if verbose:
@@ -14213,6 +15762,7 @@ class LinearProg:
             if cexpr is not None:
                 model.Minimize(cexpr)
                 try:
+                    PsiOpts.stats["numlp"] += 1
                     res = model.Solve()
                 except Exception as err:
                     if verbose:
@@ -14376,7 +15926,7 @@ class LinearProg:
             return r
     
     
-    def proj_hull(prog, n, init_pt = None, toexpr = None, iscone = False, isfrac = None, max_facet = None, num_simplex = None, init_pts_outer = None, pts_outer = None):
+    def proj_hull(prog, n, init_pt = None, toexpr = None, iscone = False, isfrac = None, max_facet = None, num_simplex = None, init_pts_outer = None, pts_outer = None, is_dual_discover = False):
         """Convex hull method for polyhedron projection.
         C. Lassez and J.-L. Lassez, Quantifier elimination for conjunctions of linear constraints via a
         convex hull algorithm, IBM Research Report, T.J. Watson Research Center, RC 16779 (1991)
@@ -14386,6 +15936,7 @@ class LinearProg:
             raise RuntimeError("Convex hull method requires pycddlib. Please install it first.")
         
         verbose = PsiOpts.settings.get("verbose_discover", False)
+        verbose_ineq = PsiOpts.settings.get("verbose_discover_ineq", False)
         verbose_outer = PsiOpts.settings.get("verbose_discover_outer", False)
         verbose_detail = PsiOpts.settings.get("verbose_discover_detail", False)
         verbose_terms = PsiOpts.settings.get("verbose_discover_terms", False)
@@ -14393,6 +15944,9 @@ class LinearProg:
         verbose_terms_outer = PsiOpts.settings.get("verbose_discover_terms_outer", False)
         verbose_aux_reduce = PsiOpts.settings.get("verbose_aux_reduce", False)
         #max_denom = PsiOpts.settings.get("max_denom", 1000)
+        
+        facet_enumerate = PsiOpts.settings.get("discover_hull_facet_enumerate", False)
+        facet_enumerate_numyield = PsiOpts.settings.get("discover_hull_facet_enumerate_numyield", 20)
         
         if isfrac is None:
             isfrac = PsiOpts.settings.get("discover_hull_frac_enabled", False)
@@ -14405,6 +15959,8 @@ class LinearProg:
             num_simplex = PsiOpts.settings.get("discover_num_simplex", 1)
         
         ceps = PsiOpts.settings["eps_lp"]
+
+        linear_facet_only = iscone
 
         rnd_started = False
         
@@ -14435,7 +15991,8 @@ class LinearProg:
                     print("discover fails to shrink")
                 return None
 
-            mat = cdd.Matrix([[1] + p for p in init_pts], number_type=("fraction" if isfrac else "float"))
+            # mat = cdd.Matrix([[1] + p for p in init_pts], number_type=("fraction" if isfrac else "float"))
+            mat = cdd_matrix_from_array([[1] + p for p in init_pts], number_type=("fraction" if isfrac else "float"), rep_type = cdd.RepType.GENERATOR)
 
                 
         else:
@@ -14450,18 +16007,21 @@ class LinearProg:
             
             if pts_outer is not None:
                 pts_outer.append(init_pt)
-            mat = cdd.Matrix([[1] + init_pt], number_type=("fraction" if isfrac else "float"))
+            # mat = cdd.Matrix([[1] + init_pt], number_type=("fraction" if isfrac else "float"))
+            mat = cdd_matrix_from_array([[1] + init_pt], number_type=("fraction" if isfrac else "float"), rep_type = cdd.RepType.GENERATOR)
 
-        mat.rep_type = cdd.RepType.GENERATOR
+        # mat.rep_type = cdd.RepType.GENERATOR
         
         ineqs_tight = []
         ineqs_tried = []
+        pts_tight = []
         
         matP = None
         matP_avg = None
         matQ = None
         matQ_null = None
         
+        poly = None
         did = True
         while did:
             
@@ -14469,43 +16029,67 @@ class LinearProg:
                 break
             
             if verbose:
-                print("NUMPOINT = " + str(mat.row_size) + "  NUMDIM = " + str(mat.col_size), flush = True)
+                print("NUMPOINT = " + str(cdd_row_size(mat)) + "  NUMDIM = " + str(cdd_col_size(mat)), flush = True)
 
             did = False
 
-            tgt_num_point = mat.col_size + num_simplex
-            isfull = max_facet is None or (max_facet > 0 and mat.col_size * 0.5 * numpy.log(mat.row_size) <= numpy.log(max_facet)) # or tgt_num_point >= mat.row_size
+            tgt_num_point = cdd_col_size(mat) + num_simplex
+            isfull = max_facet is None or (max_facet > 0 and cdd_col_size(mat) * 0.5 * numpy.log(cdd_row_size(mat)) <= numpy.log(max_facet)) # or tgt_num_point >= cdd_row_size(mat)
             poly = None
 
             ineqs = []
             lset = set()
             ineqs_row_size = 0
 
+            ineqs_gen = None
+            ineqs_isgen = False
+
             if isfull:
-                poly = cdd.Polyhedron(mat)
-                # print("MAT:")
-                # print(mat)
-                ineqs = poly.get_inequalities()
-                # print("INEQ:")
-                # print(ineqs)
-                lset = ineqs.lin_set
-                ineqs_row_size = ineqs.row_size
+                ineqs, lset = cdd_convert(mat)
+                ineqs_row_size = len(ineqs)
+
+                # poly = cdd.Polyhedron(mat)
+                # # print("MAT:")
+                # # print(mat)
+                # ineqs = poly.get_inequalities()
+                # # print("INEQ:")
+                # # print(ineqs)
+                # lset = ineqs.lin_set
+                # ineqs_row_size = ineqs.row_size
+            
+            elif facet_enumerate and iscone and ortools is not None:
+                if not rnd_started:
+                    if not PsiOpts.has_timer():
+                        warnings.warn("Convex hull method: Max number of facets discover_max_facet = " + str(max_facet) + 
+                            " reached (current = " + str(round(numpy.exp(cdd_col_size(mat) * 0.5 * numpy.log(cdd_row_size(mat))))) + "). Switching to randomized facet enumeration. Program will not terminate unless the block is enclosed by \"with PsiOpts(timelimit = ???):\" or \"with PsiOpts(stop_file = ???):\".", RuntimeWarning)
+                    rnd_started = True
+
+                if verbose:
+                    print("FACET ENUMERATE")
+                matP2 = numpy.array([[float(cdd_mat_array(mat)[i][j]) for j in range(1, cdd_col_size(mat))] for i in range(cdd_row_size(mat))], ndmin = 2)
+                def tgen():
+                    for x in iutil.conic_hull_facets(matP2, numyield = facet_enumerate_numyield, mode = "two_connected"):
+                        yield numpy.array([0.0] + list(x))
+                ineqs_gen = tgen()
+                ineqs_isgen = True
+                did = True
+
             else:
                 if not rnd_started:
                     if not PsiOpts.has_timer():
                         warnings.warn("Convex hull method: Max number of facets discover_max_facet = " + str(max_facet) + 
-                            " reached (current = " + str(round(numpy.exp(mat.col_size * 0.5 * numpy.log(mat.row_size)))) + "). Switching to randomized subset. Program will not terminate unless the block is enclosed by \"with PsiOpts(timelimit = ???):\" or \"with PsiOpts(stop_file = ???):\".", RuntimeWarning)
+                            " reached (current = " + str(round(numpy.exp(cdd_col_size(mat) * 0.5 * numpy.log(cdd_row_size(mat))))) + "). Switching to randomized subset. Program will not terminate unless the block is enclosed by \"with PsiOpts(timelimit = ???):\" or \"with PsiOpts(stop_file = ???):\".", RuntimeWarning)
                     rnd_started = True
 
                 rnd = PsiOpts.get_random()
                 
                 if matP is None:
-                    # tgt_num_point = rnd.randrange(1, mat.col_size + 1)
-                    matP = numpy.array([[float(mat[i][j]) for j in range(1, mat.col_size)] for i in range(mat.row_size)], ndmin = 2)
+                    # tgt_num_point = rnd.randrange(1, cdd_col_size(mat) + 1)
+                    matP = numpy.array([[float(cdd_mat_array(mat)[i][j]) for j in range(1, cdd_col_size(mat))] for i in range(cdd_row_size(mat))], ndmin = 2)
                     # print(matP, flush = True)
                     matP_avg = numpy.mean(matP, 0)
                     # print(matP_avg, flush = True)
-                    matQ = numpy.array([matP[i,:] - matP_avg for i in range(mat.row_size)])
+                    matQ = numpy.array([matP[i,:] - matP_avg for i in range(cdd_row_size(mat))])
                     matQ_null = scipy.linalg.null_space(matQ)
                     # print(matQ_null, flush = True)
                     # currank = numpy.linalg.matrix_rank(matQ)
@@ -14518,7 +16102,7 @@ class LinearProg:
 
                 if verbose:
                     print("RANDOM SUBSET NUMPOINT = " + str(tgt_num_point), flush = True)
-                cid = list(range(mat.row_size))
+                cid = list(range(cdd_row_size(mat)))
                 rnd.shuffle(cid)
 
                 if iscone:
@@ -14537,7 +16121,7 @@ class LinearProg:
                 ineqs_row_size = len(ineqs)
 
                 if False:
-                    cmat = cdd.Matrix([mat[cid[i]] for i in range(tgt_num_point)], number_type=("fraction" if isfrac else "float"))
+                    cmat = cdd.Matrix([cdd_mat_array(mat)[cid[i]] for i in range(tgt_num_point)], number_type=("fraction" if isfrac else "float"))
                     poly = cdd.Polyhedron(cmat)
                     ineqs = poly.get_inequalities()
                     lset = ineqs.lin_set
@@ -14548,17 +16132,33 @@ class LinearProg:
             if verbose:
                 print("HULL FINISHED", flush = True)
 
+            if ineqs_gen is None:
+                def tgen():
+                    for i in range(ineqs_row_size):
+                        yield ineqs[i]
+                ineqs_gen = tgen()
+
             if verbose_terms or verbose_terms_inner:
-                print("INNER:", flush = True)
-                for i in range(ineqs_row_size):
-                    y = ineqs[i]
-                    print("  " + str(toexpr(y[1:n+1])) + (" == " if i in lset else " >= ") + iutil.float_tostr(-y[0]), flush = True)
+                if is_dual_discover:
+                    pass
+                else:
+                    print("INNER:", flush = True)
+                    if not ineqs_isgen:
+                        for i in range(ineqs_row_size):
+                            y = ineqs[i]
+                            print("  " + str(toexpr(y[1:n+1])) + (" == " if i in lset else " >= ") + iutil.float_tostr(-y[0]), flush = True)
                     
-            for i in range(ineqs_row_size):
+            for i, tx2 in enumerate(ineqs_gen):
                     
                 if PsiOpts.is_timer_ended():
                     break
                 
+                if linear_facet_only and abs(tx2[0]) > ceps:
+                    if verbose_detail:
+                        x = tx2
+                        print("SKIP AFFINE " + str(toexpr(x[1:n+1])) + " + " + str(x[0]) + " >= 0", flush = True)
+                    continue
+
                 for sgn in ([1, -1] if i in lset else [1]):
                     
                     if PsiOpts.is_timer_ended():
@@ -14566,7 +16166,7 @@ class LinearProg:
                     
 
                     #print("IROWSIZE " + str(ineqs_row_size))
-                    x = [a * sgn for a in ineqs[i]]
+                    x = [a * sgn for a in tx2]
                     xnorm = sum(abs(a) for a in x)
                     if xnorm <= ceps:
                         continue
@@ -14574,14 +16174,17 @@ class LinearProg:
 
                     if not isfull:
                         isbad = False
-                        for i2 in range(mat.row_size):
-                            y = mat[i2]
+                        for i2 in range(cdd_row_size(mat)):
+                            y = cdd_mat_array(mat)[i2]
                             if sum(yt * xt for (yt, xt) in zip(y, x)) < -ceps:
                                 isbad = True
                                 break
                         if isbad:
                             if verbose_detail:
-                                print("NOT EXTREMAL " + str(toexpr(x[1:n+1])) + " + " + str(x[0]) + " >= 0", flush = True)
+                                if is_dual_discover:
+                                    pass
+                                else:
+                                    print("NOT EXTREMAL " + str(toexpr(x[1:n+1])) + " + " + str(x[0]) + " >= 0", flush = True)
                             continue
 
 
@@ -14596,7 +16199,7 @@ class LinearProg:
                         isshortcut = False
                         opt = None
                         v = None
-                        if toexpr is not None and abs(x[0]) <= ceps:
+                        if not is_dual_discover and toexpr is not None and abs(x[0]) <= ceps:
                             if toexpr(x[1:n+1]).simplified_quick().isnonneg():
                                 opt = 0.0
                                 isshortcut = True
@@ -14620,20 +16223,26 @@ class LinearProg:
 
                             if ctoadd:
                                 ineqs_tight.append(list(x))
-                            if verbose or verbose_terms_outer:
+                            if verbose or verbose_terms_outer or verbose_ineq:
                                 if verbose and opt is None:
                                     print("NONE", flush = True)
                                     # print(x)
-                                if verbose_terms_outer or verbose_outer or abs(x[0]) <= 100:
+                                if verbose_terms_outer or verbose_outer or verbose_ineq or abs(x[0]) <= 100:
                                     if ctoadd:
-                                        if verbose:
-                                            print("ADD " + str(toexpr(x[1:n+1])) + " >= " + iutil.float_tostr(-x[0]) + (" SHORTCUT" if isshortcut else ""), flush = True)
-                                        if verbose_terms or verbose_terms_outer:
-                                            print("OUTER:", flush = True)
-                                            print(alland([toexpr(y[1:n+1]) + y[0] >= 0 for y in ineqs_tight]), flush = True)
-                                            print()
-                                            # for y in ineqs_tight:
-                                            #     print("  " + str(toexpr(y[1:n+1])) + " >= " + iutil.float_tostr(-y[0]))
+                                        if is_dual_discover:
+                                            if verbose_detail:
+                                                print("DPT " + str(x), flush = True)
+                                        else:
+                                            if verbose_ineq:
+                                                print(str(toexpr(x[1:n+1])) + " >= " + iutil.float_tostr(-x[0]), flush = True)
+                                            if verbose:
+                                                print("ADD " + str(toexpr(x[1:n+1])) + " >= " + iutil.float_tostr(-x[0]) + (" SHORTCUT" if isshortcut else ""), flush = True)
+                                            if verbose_terms or verbose_terms_outer:
+                                                print("OUTER:", flush = True)
+                                                print(alland([toexpr(y[1:n+1]) + y[0] >= 0 for y in ineqs_tight]), flush = True)
+                                                print()
+                                                # for y in ineqs_tight:
+                                                #     print("  " + str(toexpr(y[1:n+1])) + " >= " + iutil.float_tostr(-y[0]))
                             #print("TIGHT " + str(list(x)))
                             continue
                         
@@ -14650,21 +16259,39 @@ class LinearProg:
                             v = [0] + v
                         else:
                             v = [1] + v
-                        for i2 in range(mat.row_size):
-                            y = mat[i2]
+                        for i2 in range(cdd_row_size(mat)):
+                            y = cdd_mat_array(mat)[i2]
                             if sum(abs(a - b) for a, b in zip(v, y)) <= ceps:
                                 break
                         else:
-                            if verbose_detail:
-                                print("PT " + str(v), flush = True)
+                            if is_dual_discover:
+                                if verbose_ineq:
+                                    print(str(-toexpr(v[1:n+1])) + " >= " + iutil.float_tostr(v[0]), flush = True)
+                                if verbose:
+                                    print("DADD " + str(-toexpr(v[1:n+1])) + " >= " + iutil.float_tostr(v[0]), flush = True)
+                            else:
+                                if verbose_detail:
+                                    print("PT " + str(v), flush = True)
                                 
                             if pts_outer is not None:
                                 pts_outer.append(vo)
-                            mat.extend([v])
+                            cdd_extend(mat, [v])
+
+                            if is_dual_discover:
+                                pts_tight.append([-a for a in v])
+
                             matP = None
                             did = True
         
-        return ineqs_tight
+        # if pts_outer is not None:
+        #     gens = poly.get_generators()
+        #     pts_outer[:] = [[float(z) for z in y[1:]] for y in gens]
+
+
+        if is_dual_discover:
+            return pts_tight
+        else:
+            return ineqs_tight
     
     
     def discover_hull(self, A, iscone = False, init_pts_outer = None, pts_outer = None):
@@ -14732,21 +16359,49 @@ class LinearProg:
         
         mat = None
         
+        mat_array = None
+        lset = set()
+        clen = 0
         if len(self.Au.x):
             ma = numpy.hstack([numpy.array([self.bu]).T, -self.Au.tonumpyarray()])
-            if mat is None:
-                mat = cdd.Matrix(ma, number_type=("fraction" if isfrac else "float"))
-                mat.rep_type = cdd.RepType.INEQUALITY
+            if mat_array is None:
+                mat_array = ma
             else:
-                mat.extend(ma)
-        
+                mat_array = numpy.vstack([mat_array, ma])
+            clen += len(self.Au.x)
+
         if len(self.Ae.x):
             ma = numpy.hstack([numpy.array([self.be]).T, -self.Ae.tonumpyarray()])
-            if mat is None:
-                mat = cdd.Matrix(ma, linear = True, number_type=("fraction" if isfrac else "float"))
-                mat.rep_type = cdd.RepType.INEQUALITY
+            if mat_array is None:
+                mat_array = ma
             else:
-                mat.extend(ma, linear = True)
+                mat_array = numpy.vstack([mat_array, ma])
+            for i in range(clen, clen + len(self.Ae.x)):
+                lset.add(i)
+            clen += len(self.Ae.x)
+
+        if mat_array is None:
+            return None
+        
+        mat = cdd_matrix_from_array(ma, lin_set=lset, number_type=("fraction" if isfrac else "float"), rep_type = cdd.RepType.INEQUALITY)
+
+        # if len(self.Au.x):
+        #     ma = numpy.hstack([numpy.array([self.bu]).T, -self.Au.tonumpyarray()])
+        #     if mat is None:
+        #         # mat = cdd.Matrix(ma, number_type=("fraction" if isfrac else "float"))
+        #         # mat.rep_type = cdd.RepType.INEQUALITY
+        #         mat = cdd_matrix_from_array(ma, number_type=("fraction" if isfrac else "float"), rep_type = cdd.RepType.INEQUALITY)
+        #     else:
+        #         mat.extend(ma)
+        
+        # if len(self.Ae.x):
+        #     ma = numpy.hstack([numpy.array([self.be]).T, -self.Ae.tonumpyarray()])
+        #     if mat is None:
+        #         # mat = cdd.Matrix(ma, linear = True, number_type=("fraction" if isfrac else "float"))
+        #         # mat.rep_type = cdd.RepType.INEQUALITY
+        #         mat = cdd_matrix_from_array(ma, linear = True, number_type=("fraction" if isfrac else "float"), rep_type = cdd.RepType.INEQUALITY)
+        #     else:
+        #         mat.extend(ma, linear = True)
         
         if mat is None:
             return None
@@ -14945,11 +16600,11 @@ class Level(IBaseObj):
     def _latex_(self):
         r = ""
         if self.quant == 0:
-            r += "\Delta"
+            r += r"\Delta"
         elif self.quant > 0:
-            r += "\Sigma"
+            r += r"\Sigma"
         else:
-            r += "\Pi"
+            r += r"\Pi"
         r += "_"
         t = str(self.n)
         if len(t) > 1:
@@ -15196,9 +16851,9 @@ class Region(IBaseObj):
     
     @staticmethod
     def parse(s):
-        """Parse a string, e.g. I(X;Y,Z|W) + 2H(X Z) \le 3
+        """Parse a string, e.g. I(X;Y,Z|W) + 2H(X Z) le 3
         """
-        return RegionParser.parse_default(s)
+        return iutil.ensure_region(RegionParser.parse_default(s))
 
     def setuniverse(self):
         self.exprs_ge = []
@@ -15886,6 +17541,21 @@ class Region(IBaseObj):
         
         return self
         
+    def combine_meta(self, other):
+        if other.meta is None:
+            return
+        if self.meta is None:
+            self.meta = iutil.copy(other.meta)
+            return
+        
+        for key, value in other.meta.items():
+            if key in self.meta:
+                if key == "rv_order":
+                    self.meta[key] += value
+            else:
+                self.meta[key] = value
+
+
     def __iand__(self, other):
         if isinstance(other, bool):
             if not other:
@@ -15903,6 +17573,8 @@ class Region(IBaseObj):
             self.exprs_eq += [x.copy() for x in other.exprs_eq]
             self.exprs_gei += [x.copy() for x in other.exprs_gei]
             self.exprs_eqi += [x.copy() for x in other.exprs_eqi]
+        
+            self.combine_meta(other)
             return self
         
         co = other.copy()
@@ -15915,6 +17587,8 @@ class Region(IBaseObj):
         self.aux += co.aux
         self.auxi += co.auxi
         
+        self.combine_meta(other)
+
         return self
         
         
@@ -15928,6 +17602,23 @@ class Region(IBaseObj):
         r &= other
         return r
     
+    def attach(self, other, rv_add = None):
+        selfrv = self.allcomprv_noaux()
+        if rv_add is not None:
+            selfrv += rv_add
+        otherrv = other.allcomprv_noaux()
+
+        self &= other
+        
+        right = otherrv - selfrv
+        center = self.var_neighbors(right) - right
+        left = selfrv - center
+        # print(right)
+        # print(center)
+        # print(left)
+        if not left.isempty() and not right.isempty():
+            self &= markov(left, center, right)
+        return self
         
     def __pow__(self, other):
         if other <= 0:
@@ -17187,7 +18878,7 @@ class Region(IBaseObj):
         """
         return self.optimum(expr, vs, -1, reg_outer = reg_outer, **kwargs)
     
-    def init_prog(self, index = None, lptype = None, save_res = False, lp_bounded = None, dual_enabled = None, val_enabled = None, simplified_prog = False):
+    def init_prog(self, index = None, lptype = None, save_res = False, lp_bounded = None, dual_enabled = None, val_enabled = None, simplified_prog = False, discover_exprs = None, discover_init_model = None, discover_method = ""):
         if index is None:
             index = IVarIndex()
             self.record_to(index)
@@ -17236,6 +18927,14 @@ class Region(IBaseObj):
                         continue
                     prog.addExpr_eq0((Expr.I(x, y) * (1.0 + 1.0 / len(x + y)) * 0.1).add_meta("sim", True))
 
+        if discover_exprs is not None:
+            prog.dual_discover_exprs = discover_exprs
+
+        if discover_method == "l1":
+            prog.dual_discover_l1 = True
+
+        if discover_init_model is not None:
+            prog.dual_discover_init_model = discover_init_model
 
         prog.finish(skip_ent_ineq = simplified_prog)
         return prog
@@ -17259,6 +18958,64 @@ class Region(IBaseObj):
         
         return cs.init_prog(index).get_var_exprs()
     
+    
+    def get_linear_dependency(self, vs):
+        """Get the linear dependency between the terms.
+        """
+        ceps = PsiOpts.settings["eps"]
+
+        cs = self.consonly().imp_flipped()
+        index = IVarIndex()
+        cs.record_to(index)
+        for v in vs:
+            v.record_to(index)
+        
+        prog = cs.init_prog(index)
+
+        r = [None] * len(vs)
+        pos = [-1] * len(vs)
+
+        mat = None
+        for i, v in enumerate(vs):
+            a = prog.get_vec(v)
+            a = a[0] + [a[1]]
+            # print(a)
+            if all(abs(b) <= ceps for b in a):
+                r[i] = [0] * len(vs)
+                continue
+
+            if mat is None:
+                pos[i] = 0
+                mat = numpy.array([a])
+            else:
+                y = None
+                # print(mat.transpose())
+                y = numpy.linalg.lstsq(mat.transpose(), a, rcond=None)
+                # print(y)
+                res = y[1]
+                y = y[0]
+                if all(abs(b) <= ceps for b in res):
+                    r[i] = [y[pos[j]] if pos[j] >= 0 else 0 for j in range(len(vs))]
+                else:
+                    pos[i] = mat.shape[0]
+                    mat = numpy.vstack([mat, a])
+
+                # try:
+                #     print(mat)
+                #     # y = numpy.linalg.solve(numpy.vstack([mat.transpose(), [1] * mat.shape[0]]), a + [1])
+                #     y = numpy.linalg.lstsq(mat.transpose(), a)
+                #     # y = numpy.linalg.solve(mat, a)
+                #     print(y)
+                #     print()
+                # except:
+                #     pos[i] = mat.shape[0]
+                #     mat = numpy.vstack([mat, a])
+                # else:
+                #     r[i] = [y[pos[j]] if pos[j] >= 0 else 0 for j in range(len(vs))]
+        
+        return r
+        
+
     def get_prog_region(self, toreal = None, toreal_only = False):
         cs = self.consonly().imp_flipped()
         index = IVarIndex()
@@ -17393,6 +19150,14 @@ class Region(IBaseObj):
         return True
         
     def implies_saved(self, other, index, progs):
+        if index is None:
+            if len(progs):
+                index = progs[0].index
+            else:
+                index = IVarIndex()
+                self.record_to(index)
+                other.record_to(index)
+
         self.imp_flip()
         r = self.implies_impflipped_saved(other, index, progs)
         self.imp_flip()
@@ -19426,32 +21191,32 @@ class Region(IBaseObj):
         return None
 
 
-    def check_getaux_gen(self, hint_pair = None, hint_aux = None):
+    def check_getaux_gen(self, hint_pair = None, hint_aux = None, hint_aux_avoid = None):
         """Generator that yields all auxiliary search results."""
         truth = PsiOpts.settings["truth"]
         if truth is not None:
             with PsiOpts(truth = None):
-                for rr in (truth >> self).check_getaux_gen(hint_pair, hint_aux):
+                for rr in (truth >> self).check_getaux_gen(hint_pair, hint_aux, hint_aux_avoid):
                     yield rr
                 return
         
         indreg = self.get_indreg_checked()
         if indreg is not None:
             with PsiOpts(indreg_enabled = False):
-                for rr in (indreg >> self).check_getaux_gen(hint_pair, hint_aux):
+                for rr in (indreg >> self).check_getaux_gen(hint_pair, hint_aux, hint_aux_avoid):
                     yield rr
                 return
 
         if PsiOpts.settings["maxent_lex_enabled"] and self.maxent_present():
             with PsiOpts(maxent_lex_enabled = False):
                 for cs in self.maxent_lex_self_gen():
-                    for rr in cs.check_getaux_gen(hint_pair, hint_aux):
+                    for rr in cs.check_getaux_gen(hint_pair, hint_aux, hint_aux_avoid):
                         yield rr
                 return
 
         if self.isregtermpresent():
             cs = RegionOp.inter([self])
-            for rr in cs.check_getaux_gen(hint_pair, hint_aux):
+            for rr in cs.check_getaux_gen(hint_pair, hint_aux, hint_aux_avoid):
                 yield rr
             return
         
@@ -19468,7 +21233,9 @@ class Region(IBaseObj):
         
         sfrl_level = PsiOpts.settings["sfrl_level"]
         
-        hint_aux_avoid = self.get_aux_avoid_list()
+        if hint_aux_avoid is None:
+            hint_aux_avoid = []
+        hint_aux_avoid = hint_aux_avoid + self.get_aux_avoid_list()
         
         for rr in cs.check_getaux_inplace_gen(hint_pair = hint_pair, hint_aux = hint_aux, hint_aux_avoid = hint_aux_avoid):
             PsiOpts.settings["proof_enabled"] = write_pf_enabled
@@ -19484,6 +21251,11 @@ class Region(IBaseObj):
             
         PsiOpts.settings["proof_enabled"] = write_pf_enabled
     
+
+    def aux_gen(self, hint_pair = None, hint_aux = None, hint_aux_avoid = None):
+        """Generator that yields all auxiliary search results."""
+        return self.check_getaux_gen(hint_pair, hint_aux, hint_aux_avoid)
+        
         
     def check(self):
         """Return whether implication is true"""
@@ -19559,6 +21331,39 @@ class Region(IBaseObj):
                 return False
         return True
         
+
+    def evalcheck_vec(self, f):
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            with PsiOpts(truth = None):
+                return (truth >> self).evalcheck_vec(f)
+
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).evalcheck_vec(f)
+        
+        ceps = PsiOpts.settings["eps_check"]
+
+        qi = 1
+        q = 1
+        for x in self.exprs_gei:
+            t = f(x) >= -ceps
+            qi = qi * t
+        for x in self.exprs_eqi:
+            t = abs(f(x)) <= ceps
+            qi = qi * t
+        for x in self.exprs_ge:
+            t = f(x) >= -ceps
+            q = q * t
+        for x in self.exprs_eq:
+            t = abs(f(x)) <= ceps
+            q = q * t
+        
+        return 1 - (qi * (1 - q))
+
+
+
     def eval_max_violate(self, f):
         truth = PsiOpts.settings["truth"]
         if truth is not None:
@@ -19671,6 +21476,99 @@ class Region(IBaseObj):
         
         return None
     
+    def add_real_to(self, P, rel_gap = 0.15):
+        reals = self.allcomprealvar_exprlist()
+        if len(reals) == 0:
+            return
+
+        for real in reals:
+            P[real] = 0.0 #"var"
+        
+        exprs_ge_real = [x for x in self.exprs_ge if not x.type_only(TermType.REAL).iszero()]
+        exprs_eq_real = [x for x in self.exprs_eq if not x.type_only(TermType.REAL).iszero()]
+
+        for it in range(2):
+            for real in reals:
+                cinf = 1e20
+                lb = -cinf
+                ub = cinf
+                for x in exprs_ge_real:
+                    c = x.get_coeff(real)
+                    if c == 0:
+                        continue
+                    v = float(P[x - real * c])
+                    if c > 0:
+                        lb = max(lb, -v / c)
+                    else:
+                        ub = min(ub, -v / c)
+
+                for x in exprs_eq_real:
+                    c = x.get_coeff(real)
+                    if c == 0:
+                        continue
+                    v = float(P[x - real * c])
+                    lb = max(lb, -v / c)
+                    ub = min(ub, -v / c)
+                
+                if lb != -cinf and ub != cinf:
+                    P[real] = (lb + ub) * 0.5
+                elif lb != -cinf:
+                    P[real] = lb * (1.0 + rel_gap * (1 if lb > 0 else -1))
+                elif ub != -cinf:
+                    P[real] = ub * (1.0 - rel_gap * (1 if ub > 0 else -1))
+                    
+
+
+    def example_bsc(self, addrv = None, bnet = None, crossover = 0.1, rel_gap = 0.15):
+        P = ConcModel()
+        if bnet is None:
+            bnet = self.get_bayesnet().tsorted()
+        else:
+            bnet = bnet.tsorted()
+        va = bnet.index.comprv + self.allcomprv()
+        if addrv is not None:
+            va += addrv
+        va0 = Comp.empty()
+        for a in va:
+            cpa = va0
+            if bnet.index.comprv.ispresent(a):
+                cpa = bnet.get_parents(a)
+            shape_in = tuple(P.get_card(t) for t in cpa)
+            in_max = sum(x - 1 for x in shape_in)
+            p = ConcDist(shape = (shape_in, 2))
+            for xs in itertools.product(*[range(x) for x in shape_in]):
+                c = sum(xs) * (1.0 - 2 * crossover) / in_max + crossover if in_max else 0.5
+                # c = (sum(xs) + crossover) / (in_max + crossover * 2)
+                p[xs + (0,)] = 1.0 - c
+                p[xs + (1,)] = c
+            
+            P[a | cpa] = p
+            va0 += a
+
+        self.add_real_to(P, rel_gap = rel_gap)
+        return P
+
+        # r_real = Region.universe()
+        # r_real.exprs_ge = exprs_ge_real
+        # r_real.exprs_eq = exprs_eq_real
+
+        # # def leaky(x):
+        # #     if x < 0:
+        # #         return x
+        # #     return x * rel_gap
+
+        # # print(exprs_ge_real)
+        # # print(reals)
+        # bd_gap = 0.001
+        # obj = lambda P: sum(1.0 / (max(P[a].get_x() + bd_gap, 0.0) + bd_gap) for a in exprs_ge_real) + sum(P[a].get_x() ** 2 for a in reals) * rel_gap
+        # P.minimize(obj, [P[a] for a in reals], r_real)
+        # print(obj(P))
+        # # P.maximize(lambda P: sum(P[a] for a in exprs_ge_real) , 
+        # #     [P[a] for a in reals], r_real)
+        
+        # return P
+
+
     def implies(self, other, quick = False, bnet = None, **kwargs):
         """Whether self implies other"""
         if kwargs:
@@ -21301,7 +23199,46 @@ class Region(IBaseObj):
             r = r.simplified()
         return r
 
-    def aux_reduced(self, new_aux = None, maxsize = 3, skip_simplify = False, aux_pairs = None, aux_force = None, score_fcn = None):
+
+    def aux_set(self, aux, skip_simplify = False, **kwargs):
+        """
+        Obtain a region with the prescribed choices of auxiliaries. May enlarge the region.
+
+        Parameters
+        ----------
+        aux : list of Comp
+            The choices of the new auxiliaries.
+
+        Returns
+        -------
+        Region
+            The new region.
+
+        """
+
+        new_aux_sum = Comp.empty()
+        aux2 = []
+        t_new_aux = rv_seq("A", 1, len(aux) + 1)
+        for i, a in enumerate(aux):
+            if isinstance(a, tuple):
+                aux2.append(a)
+                new_aux_sum += a[0]
+            else:
+                aux2.append((t_new_aux[i], a))
+                new_aux_sum += t_new_aux[i]
+
+
+        discover_list = list(self.allcomprv() - self.aux) + list(self.allcomprealvar_exprlist())
+
+        t = self.discover(discover_list + aux2, **kwargs)
+
+        if not skip_simplify:
+            t = t.exists(new_aux_sum.inter(t.allcomprv())).simplified()
+        
+        return t
+        
+
+    def aux_reduced(self, new_aux = None, maxsize = 3, skip_simplify = False, aux_pairs = None, aux_force = None, score_fcn = None, **kwargs):
         """
         Reduce the number of auxiliaries. May enlarge the region.
 
@@ -21425,7 +23362,7 @@ class Region(IBaseObj):
 
                 new_pts_outer = []
                 # t = self.discover(discover_list + list(zip(new_aux, cauxs)), init_pts_outer = pts_outer, pts_outer = new_pts_outer)
-                t = self.discover(discover_list + list(zip(new_aux, cauxs)))
+                t = self.discover(discover_list + list(zip(new_aux, cauxs)), **kwargs)
                 # r.append(t)
                 if PsiOpts.is_timer_ended():
                     break
@@ -22249,6 +24186,17 @@ class Region(IBaseObj):
         
         return r
     
+    def allcomprv_sorted(self):
+        r = self.allcomprv()
+        order = None
+        if self.meta is not None:
+            order = self.meta.get("rv_order", None)
+        if order is not None:
+            order = iutil.ensure_comp(order)
+        if order is not None:
+            r = order.inter(r) + r
+        return r
+
     
     def get_bayesnet(self, vs = None, roots = None, semigraphoid_iter = None, get_list = False, skip_simplify = False):
         """Return a Bayesian network containing the conditional independence
@@ -22268,10 +24216,11 @@ class Region(IBaseObj):
             if semigraphoid_iter > 0:
                 icexpr += self.completed_semigraphoid_ic(max_iter = semigraphoid_iter)
             
+        add_var = self.allcomprv_sorted().inter(icexpr.allcomprv())
         if get_list:
-            return BayesNet.from_ic_list(icexpr, roots = roots)
+            return BayesNet.from_ic_list(icexpr, roots = roots, add_var = add_var)
         else:
-            return BayesNet.from_ic(icexpr, roots = roots).tsorted()
+            return BayesNet.from_ic(icexpr, roots = roots, add_var = add_var).tsorted()
     
     def graph(self, vs = None, **kwargs):
         """Return the Bayesian network among the random variables as a 
@@ -22322,17 +24271,21 @@ class Region(IBaseObj):
         
         cmodel = None
         for a in args:
-            if isinstance(a, ConcModel) or isinstance(a, LinearProg):
+            if isinstance(a, (ConcModel, LinearProg, SharedRVModel)):
                 cmodel = a
         
+        comprv = Comp.empty()
         for a in args:
             if isinstance(a, Comp):
                 a.record_to(index)
+                comprv += a
                 
         self.get_bayesnet().allcomp().record_to(index)
         if cmodel is not None:
             if isinstance(cmodel, ConcModel):
                 cmodel.get_bayesnet().allcomp().record_to(index)
+            if isinstance(cmodel, SharedRVModel):
+                cmodel.index_rv.comprv.record_to(index)
         
         for a in args:
             if isinstance(a, Expr) or isinstance(a, Region):
@@ -22342,15 +24295,16 @@ class Region(IBaseObj):
         if cmodel is not None:
             if isinstance(cmodel, ConcModel):
                 cs = cs & cmodel.get_bayesnet().get_region()
-        cs = cs.imp_flipped()
+        # cs = cs.imp_flipped()
         
         cs.record_to(index)
-        comprv = index.comprv
+        if comprv.isempty():
+            comprv = index.comprv
         
         r = CellTable(comprv)
         progs = []
         # progs.append(self.init_prog(index, lptype = LinearProgType.H))
-        progs.append(cs.init_prog(index))
+        # progs.append(cs.init_prog(index))
         
         creg = Region.universe()
         
@@ -22358,8 +24312,16 @@ class Region(IBaseObj):
             # ch = H(comprv.from_mask(mask) | comprv.from_mask(((1 << len(comprv)) - 1) ^ mask))
             ch = I(alland(comprv[i] for i in range(len(comprv)) if mask & (1 << i)) 
                    | comprv.from_mask(((1 << len(comprv)) - 1) ^ mask))
-            ispos = ch.isnonneg() or cs.implies_ineq_prog(index, progs, ch, ">=")
-            isneg = cs.implies_ineq_prog(index, progs, -ch, ">=")
+                   
+            # ispos = ch.isnonneg() or cs.implies_ineq_prog(index, progs, ch, ">=")
+            # isneg = cs.implies_ineq_prog(index, progs, -ch, ">=")
+            
+            # ispos = ch.isnonneg() or cs.implies_saved(ch >= 0, index, progs)
+            # isneg = cs.implies_saved(ch <= 0, index, progs)
+            
+            ispos = ch.isnonneg() or cs.implies(ch >= 0)
+            isneg = cs.implies(ch <= 0)
+
             # print(str(ch) + "  " + str(ispos) + "  " + str(isneg))
             if ispos and isneg:
                 r.set_attr(mask, "enabled", False)
@@ -22400,6 +24362,8 @@ class Region(IBaseObj):
             elif isinstance(a, Region):
                 exprlist = [(b, ">=") for b in a.exprs_ge] + [(b, "==") for b in a.exprs_eq]
             for b, sn in exprlist:
+                if not comprv.super_of(b.allcomprv()):
+                    continue
                 if sn == ">=":
                     r.add_expr(b >= 0, None if cmodel is None else cmodel[b >= 0])
                 elif sn == "==":
@@ -22442,6 +24406,180 @@ class Region(IBaseObj):
         style = "venn,blend," + style
         return self.table(*args, style = style, **kwargs)
     
+
+    def sphere(self, entries = None, lib = None, ndiv = 480, plot = True, use_latex = None, **kwargs):
+        """Plot the cone as a sphere.
+        """
+
+        lib = PsiOpts.get_plotlib(lib)
+
+        if entries is None:
+            entries = list(self.reals)
+            if len(entries) > 3:
+                entries = entries[:3]
+        
+        entries2 = []
+        for t in entries:
+            if isinstance(t, tuple):
+                entries2.append(t)
+            elif isinstance(t, Expr):
+                entries2.append((t, t))
+        
+        entries = entries2
+
+        if len(entries) > 3:
+            raise ValueError("Cannot plot more than 3 dimensions.")
+        if len(entries) < 3:
+            raise ValueError("Requires at least 3 dimensions.")
+        
+        
+        if use_latex is None:
+            use_latex = PsiOpts.settings["venn_latex"]
+        
+        cs = self
+        csindex = IVarIndex()
+        cs.record_to(csindex)
+        entriesindex = IVarIndex()
+        for a, b in entries:
+            b.record_to(entriesindex)
+        
+        if len(csindex.comprv) or len(entriesindex.comprv) or not entriesindex.compreal.super_of(csindex.compreal):
+            tmpreals = real_array("#TMP", len(entries))
+            cs = cs.discover([(t, b) for t, (a, b) in zip(tmpreals, entries)])
+            entries = [(a, t) for t, (a, b) in zip(tmpreals, entries)]
+
+        u, v = numpy.meshgrid(numpy.linspace(0, numpy.pi, ndiv // 2 + 1), numpy.linspace(0, 2*numpy.pi, ndiv + 1))
+
+        x = numpy.sin(u) * numpy.cos(v)
+        y = numpy.sin(u) * numpy.sin(v)
+        z = numpy.cos(u)
+
+        model = SharedRVModel()
+        # for t in entries:
+        #     model[t] = 0.0
+        model[entries[0][1]] = x
+        model[entries[1][1]] = y
+        model[entries[2][1]] = z
+
+        isin = cs.evalcheck_vec(model)
+
+        col_back = [0.85, 0.85, 0.85]
+        col_front = [0, 0, 1]
+        col_line = [1, 0, 0]
+        col_line2 = [1, 0.6, 0.3]
+
+        # def col(x, y, z):
+        #     model[entries[0]] = x
+        #     model[entries[1]] = y
+        #     model[entries[2]] = z
+        #     if cs.evalcheck(model):
+        #         return col_front
+        #     else:
+        #         return col_back
+
+        # def isin(x, y, z):
+        #     model[entries[0]] = x
+        #     model[entries[1]] = y
+        #     model[entries[2]] = z
+        #     return int(cs.evalcheck(model))
+
+
+        if lib == "matplotlib":
+            from mpl_toolkits.mplot3d import Axes3D
+
+            cols = numpy.zeros(x.shape + (3,))
+            for i in range(x.shape[0]):
+                for j in range(x.shape[1]):
+                    if isin[i, j]:
+                        cols[i, j, :] = col_front
+                    else:
+                        cols[i, j, :] = col_back
+
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection = "3d")
+
+            ax.plot_surface(x, y, z, linewidth = 0, antialiased = False,
+                                facecolors = cols, shade = False, rstride = 1, cstride = 1)
+            # ax.plot_wireframe(x, y, z, linewidth = 1, antialiased = True)
+
+            ax.set_xlim(-1, 1)
+            ax.set_ylim(-1, 1)
+            ax.set_zlim(-1, 1)
+            ax.set_box_aspect([1,1,1])
+            ax.set_xlabel(str(entries[0][0]))
+            ax.set_ylabel(str(entries[1][0]))
+            ax.set_zlabel(str(entries[2][0]))
+            ax.set_proj_type("ortho")
+
+            if plot:
+                plt.show()
+            else:
+                return ax
+
+        if lib == "plotly":
+            def col2str(c):
+                return "rgb(" + ",".join(str(round(x * 255)) for x in c) + ")"
+
+            cols = isin
+            colscale = [[0, col2str(col_back)], [1, col2str(col_front)]]
+
+            def greatcircle(d, col):
+                rad = 1 + 1e-5
+                ndiv2 = 600
+                angs = numpy.linspace(0, 2*numpy.pi, ndiv2 + 1)
+                d = numpy.array(d)
+                d = d / numpy.linalg.norm(d)
+                a = None
+                for i in range(3):
+                    a1 = numpy.cross(d, [int(j==i) for j in range(3)])
+                    if a is None or numpy.linalg.norm(a1) > numpy.linalg.norm(a):
+                        a = a1
+                a = a / numpy.linalg.norm(a)
+                b = numpy.cross(d, a)
+                b = b / numpy.linalg.norm(b)
+
+                return plotly.graph_objects.Scatter3d(
+                    x = (numpy.cos(angs)*a[0] + numpy.sin(angs)*b[0]) * rad,
+                    y = (numpy.cos(angs)*a[1] + numpy.sin(angs)*b[1]) * rad,
+                    z = (numpy.cos(angs)*a[2] + numpy.sin(angs)*b[2]) * rad,
+                    mode = "lines",
+                    line = dict(color = col2str(col))
+                )
+
+            fig = plotly.graph_objects.Figure(data=[
+                plotly.graph_objects.Surface(x=x, y=y, z=z, surfacecolor=cols, colorscale=colscale, showscale=False,
+                lighting=plotly.graph_objects.surface.Lighting(ambient=1, diffuse=0),
+                contours = dict(x = dict(highlight = False), y = dict(highlight = False), z = dict(highlight = False))),
+                greatcircle([1, 0, 0], col_line),
+                greatcircle([0, 1, 0], col_line),
+                greatcircle([0, 0, 1], col_line),
+                greatcircle([1, 1, 0], col_line2),
+                greatcircle([1, -1, 0], col_line2),
+                greatcircle([0, 1, 1], col_line2),
+                greatcircle([0, 1, -1], col_line2),
+                greatcircle([1, 0, 1], col_line2),
+                greatcircle([-1, 0, 1], col_line2)
+            ])
+
+            fig.layout.scene.camera.projection.type = "orthographic"
+            fig.update_layout(scene = dict(
+                # xaxis_title = str(entries[0][0]),
+                # yaxis_title = str(entries[1][0]),
+                # zaxis_title = str(entries[2][0])
+                xaxis = dict(title = str(entries[0][0]), showspikes = False),
+                yaxis = dict(title = str(entries[1][0]), showspikes = False),
+                zaxis = dict(title = str(entries[2][0]), showspikes = False)
+            ), showlegend = False)
+
+            # fig.update_xaxes(showspikes = False)
+            # fig.update_yaxes(showspikes = False)
+            # fig.update_zaxes(showspikes = False)
+
+            if plot:
+                fig.show()
+            else:
+                return fig
+
     
     def eliminate_term_eq(self, w):
         
@@ -22931,7 +25069,7 @@ class Region(IBaseObj):
             w = list(w)
         if isinstance(w, Region):
             w = [w]
-        compreal = self.allcompreal()
+        compreal = self.allcomprealvar()
         
         r = self.copy()
         for a in w:
@@ -23488,6 +25626,14 @@ class Region(IBaseObj):
     def union_list(self, distribute = True):
         return [self.copy()]
 
+
+    def order(self, entries):
+        """Discover the partial ordering of the entries. Returns a PartialOrder object."""
+        r = PartialOrder(self)
+        for x in entries:
+            r.add(x)
+        return r
+
     class SearchEntry:
         def __init__(self, x, x_reg = None, cmin = -1, cmax = 1):
             self.x = x
@@ -23499,7 +25645,7 @@ class Region(IBaseObj):
             self.cmax = cmax
     
     
-    def discover(self, entries, method = "hull_auto", minsize = 1, maxsize = 2, skip_simplify = False, reg_init = None, skipto_ex = None, toreal_prefix = None, balanced = False, init_pts_outer = None, pts_outer = None):
+    def discover(self, entries, method = "hull_auto", minsize = 1, maxsize = 2, skip_simplify = False, reg_init = None, skipto_ex = None, toreal_prefix = None, balanced = False, init_pts_outer = None, pts_outer = None, entries_final = None, dual_bound_values = "shared_rv", dual_bound_numiter = 1):
         """Automatically discover inequalities between entries. 
         Parameters:
             entries   : List of variables of interest.
@@ -23507,20 +25653,25 @@ class Region(IBaseObj):
             maxsize   : Maximum number of terms in bound.
             skip_simplify : Set to True to skip final simplification.
         """
+
+        if method == "dual":
+            method = "hull_cone_dual"
+        if method == "dual_l1":
+            method = "hull_cone_dual_l1"
         
         ceps = PsiOpts.settings["eps"]
         truth = PsiOpts.settings["truth"]
         if truth is not None:
             with PsiOpts(truth = None):
                 return (self & truth).discover(entries, method, minsize, maxsize, skip_simplify, reg_init, skipto_ex,
-                 toreal_prefix, balanced, init_pts_outer, pts_outer)
+                 toreal_prefix, balanced, init_pts_outer, pts_outer, entries_final, dual_bound_values, dual_bound_numiter)
             
 
         indreg = self.get_indreg_checked(reg_add = entries)
         if indreg is not None:
             with PsiOpts(indreg_enabled = False):
                 return (self & indreg).discover(entries, method, minsize, maxsize, skip_simplify, reg_init, skipto_ex,
-                 toreal_prefix, balanced, init_pts_outer, pts_outer)
+                 toreal_prefix, balanced, init_pts_outer, pts_outer, entries_final, dual_bound_values, dual_bound_numiter)
 
         verbose = PsiOpts.settings.get("verbose_discover", False)
         verbose_detail = PsiOpts.settings.get("verbose_discover_detail", False)
@@ -23552,6 +25703,9 @@ class Region(IBaseObj):
         index_r = IVarIndex()
         isaffine = any(cs.affine_present() for cs in css)
         
+        if isinstance(entries, dict):
+            entries = list(entries.items())
+
         if isinstance(entries, Expr):
             # entries = entries.allcomp()
             entries = [entries]
@@ -23670,7 +25824,7 @@ class Region(IBaseObj):
             else:
                 method = "hull_cone"
                 
-        if (method == "hull" or method == "hull_cone") and not plain:
+        if (method == "hull" or method == "hull_cone" or method == "hull_cone_dual" or method == "hull_cone_dual_l1") and not plain:
             method = "guess"
             
         #print(index_r.comprv)
@@ -23679,7 +25833,7 @@ class Region(IBaseObj):
         if method == "semigraphoid" or method == "ic" or method == "ci":
             method = "semigraphoid"
         
-        perform_semigraphoid = method == "semigraphoid" or method == "hull" or method == "hull_cone"
+        perform_semigraphoid = method == "semigraphoid" or method == "hull" or method == "hull_cone" or method == "hull_cone_dual" or method == "hull_cone_dual_l1"
         if len(css) > 1:
             perform_semigraphoid = False
 
@@ -23700,7 +25854,7 @@ class Region(IBaseObj):
         vis = set()
         
         terms = []
-        if method == "hull" or method == "hull_cone":
+        if method == "hull" or method == "hull_cone" or method == "hull_cone_dual" or method == "hull_cone_dual_l1":
             if sg is None or sg.isuniverse():
                 terms = list(itertools.chain(varreal, ent_vector(*varrv)))
             else:
@@ -23720,6 +25874,11 @@ class Region(IBaseObj):
 
         if verbose:
             print("discover nterms = " + str(len(terms)))
+
+        if verbose_terms:
+            for t in terms:
+                print(t)
+            print()
 
         lastres = [False]
         
@@ -23743,10 +25902,143 @@ class Region(IBaseObj):
                 exsum += tex
             return exsum
         
+        if entries_final is not None:
+            entries_final += [(a, expr_tr(a)) for a in terms]
         
         #print(method)
         
-        if method == "hull" or method == "hull_cone":
+        if method == "hull_cone_dual" or method == "hull_cone_dual_l1":
+            progs = []
+            dual_discover_l1 = (method == "hull_cone_dual_l1")
+
+            for cs in css:
+                cs2 = cs.copy()
+                # for i, a in enumerate(terms):
+                #     cs2.iand_norename((a == 0).add_meta("dual_discover", i))
+                P = dual_bound_values
+                if isinstance(dual_bound_values, str):
+                    if dual_bound_values == "example_bsc":
+                        P = cs2.example_bsc(addrv = index_self.comprv)
+                    elif dual_bound_values == "shared_rv":
+                        P = SharedRVModel(cs2, addrv = index_self.comprv)
+                        cs2.add_real_to(P)
+                    
+                with PsiOpts(lp_dual_form = True, lp_dual_form_discover = True):
+                    prog = cs2.imp_flipped().init_prog(index = index_self, lp_bounded = False, 
+                        discover_exprs = [expr_tr(a) for a in terms], discover_init_model = P, discover_method = "l1" if dual_discover_l1 else "")
+                    progs.append(prog)
+
+            m = len(terms)
+            def toexpr(x):
+                r = Expr.zero()
+                for i in range(m):
+                    if abs(x[i]) > ceps:
+                        r += terms[i] * x[i]
+                return r
+
+            def cprog(x):
+                ropt = None
+                rr = None
+
+                for prog in progs:
+                    # print(x)
+                    # print(prog.vdiscover)
+
+                    n = prog.dual_form_ncons
+                    c = [0.0] * n
+                    if dual_discover_l1:
+                        for i in range(m):
+                            c[prog.vdiscover[i * 2]] += x[i]
+                            c[prog.vdiscover[i * 2 + 1]] -= x[i]
+                    else:
+                        for i in range(m):
+                            c[prog.vdiscover[i]] += x[i]
+                    
+
+                    ret = (None, None)
+                    disabled = set()
+                    prog.vdiscover_disabled = set()
+                    disable_candidates = {None}
+                    
+                    for it in range(dual_bound_numiter):
+                        for cd in disable_candidates:
+                            if cd is not None:
+                                prog.vdiscover_disabled = disabled.union({cd})
+                            else:
+                                prog.vdiscover_disabled = set(disabled)
+                            prog.apply_discover_bounds()
+
+                            # print(prog.solver_param["model"].ExportModelAsLpFormat(False).replace('\\', '').replace(',_', ','))
+
+                            opt, v = prog.call_prog(c)
+                            if opt is None:
+                                continue
+                            ret = (opt, v)
+                            disabled.add(cd)
+                            disable_candidates = prog.active_discover_bounds(v)
+                            if verbose_detail:
+                                def tostr(i):
+                                    if i == -1:
+                                        return "SUM"
+                                    else:
+                                        return str(terms[i])
+                                if cd is not None:
+                                    print("DISABLE: " + tostr(cd))
+                                if disable_candidates:
+                                    print("DISABLE CANDIDATES: " + ", ".join([tostr(i) for i in disable_candidates]))
+                            break
+                        else:
+                            break
+
+                        if len(disable_candidates) <= 1:
+                            break
+
+                    opt, v = ret
+
+                    # print(c)
+                    # opt, v = prog.call_prog(c)
+
+                    # print(v)
+                    # print(prog.dual_form_ncons)
+                    # print(prog.dual_form)
+                    # print()
+
+                    if opt is None:
+                        return (None, None)
+                    r = [0.0] * m
+                    if dual_discover_l1:
+                        for i in range(m):
+                            r[i] = v[prog.vdiscover[i * 2]] - v[prog.vdiscover[i * 2 + 1]]
+                    else:
+                        for i in range(m):
+                            r[i] = v[prog.vdiscover[i]]
+                    
+                    return (opt, r)
+            
+            rt = LinearProg.proj_hull(cprog, m, toexpr = toexpr, iscone = True, is_dual_discover = True)
+
+            if rt is None:
+                return None
+
+            inf_thres = progs[0].lp_ubound / 5.0
+            for x in rt:
+                if abs(x[0]) > inf_thres:
+                    continue
+                expr = Expr.zero()
+                for i in range(len(terms)):
+                    if abs(x[i + 1]) > ceps:
+                        expr += terms[i] * x[i + 1]
+                r.iand_norename(expr >= -x[0])
+            
+            if not (sg is None or sg.isuniverse()):
+                r &= sg
+
+            if not skip_simplify:
+                r.simplify()
+            return r
+            
+        
+        elif method == "hull" or method == "hull_cone":
             # prog = cs.imp_flipped().init_prog(index = index_self, lp_bounded = True)
             # A = SparseMat(0)
             # for a in terms:
@@ -23913,6 +26205,53 @@ class Region(IBaseObj):
         return self.discover(list(self.rvs) + list(self.reals) + list(entries), **kwargs)
         
 
+    def extreme_rays(self, *args, **kwargs):
+        """Find the extreme rays of a list of real variables.
+        """
+        ceps = PsiOpts.settings["eps"]
+        pts_outer = []
+        self.discover(*args, pts_outer = pts_outer, **kwargs)
+        r = []
+        for p in pts_outer:
+            if sum(abs(x) for x in p) <= ceps:
+                continue
+            m = max(abs(x) for x in p)
+            r.append([x / m for x in p])
+            
+        return r
+
+    def dual_cone(self, entries = None, partition = None, sgn = 1, skip_simplify = False, *args, **kwargs):
+        """Find the dual cone of a list of real variables.
+        """
+        ceps = PsiOpts.settings["eps"]
+        if entries is None:
+            entries = list(self.reals)
+        entries_final = []
+        rays = self.extreme_rays(entries, skip_simplify = skip_simplify, entries_final = entries_final)
+        r = Region.universe()
+        
+        if partition is None:
+            partition = [None]
+        partition = [None if y is None else set(str(x) for x in y) for y in partition]
+
+        for ray in rays:
+            for part in partition:
+                expr = Expr.zero()
+                for x, (a, b) in zip(ray, entries_final):
+                    if part is not None and str(a) not in part:
+                        continue
+                    if abs(x) > ceps:
+                        expr += a * x
+                r &= expr * sgn >= 0
+
+        if not skip_simplify:
+            r.simplify()
+        return r
+    
+    def polar_cone(self, entries = None, partition = None, sgn = 1, skip_simplify = False, *args, **kwargs):
+        """Find the polar cone of a list of real variables.
+        """
+        return self.dual_cone(entries, partition, -sgn, skip_simplify, *args, **kwargs)
 
     @staticmethod
     def markov_tostring(cm, style = 0, tosort = False):
@@ -23934,7 +26273,7 @@ class Region(IBaseObj):
                 return "markov(" + ", ".join(tlist) + ")"
 
 
-    def tostring(self, style = 0, tosort = False, lhsvar = "real", inden = 0, add_bracket = False,
+    def tostring(self, style = 0, tosort = False, lhsvar = None, inden = 0, add_bracket = False,
                  small = False, skip_outer_exists = False):
         """Convert to string. 
         Parameters:
@@ -23942,6 +26281,10 @@ class Region(IBaseObj):
                       STR_STYLE_STANDARD : I(X,Y;Z|W)
                       STR_STYLE_PSITIP : I(X+Y&Z|W)
         """
+
+
+        if lhsvar is None:
+            lhsvar = PsiOpts.settings["lhsvar"]
 
         style = iutil.convert_str_style(style)
         r = ""
@@ -24023,7 +26366,7 @@ class Region(IBaseObj):
                 if style & PsiOpts.STR_STYLE_LATEX:
                     r += "\\begin{array}{l}\n"
                     if not small:
-                        r += "\displaystyle"
+                        r += r"\displaystyle"
                     r += " "
                     inden_inner = 0
                     inden_inner1 = 0
@@ -24037,7 +26380,7 @@ class Region(IBaseObj):
                 if style & PsiOpts.STR_STYLE_PSITIP:
                     r += nlstr + spacestr * inden_inner + ">> "
                 elif style & PsiOpts.STR_STYLE_LATEX:
-                    r += (nlstr + ("\displaystyle " if not small else " ") + spacestr * inden_inner
+                    r += (nlstr + (r"\displaystyle " if not small else " ") + spacestr * inden_inner
                         + PsiOpts.settings["latex_matimplies"] + " " + spacestr + " ")
                 else:
                     r += nlstr + spacestr * inden_inner + "=> "
@@ -24260,8 +26603,8 @@ class Region(IBaseObj):
         
     def __str__(self):
         lhsvar = None
-        if PsiOpts.settings.get("str_lhsreal", False):
-            lhsvar = "real"
+        # if PsiOpts.settings.get("str_lhsreal", False):
+        #     lhsvar = "real"
         return self.tostring(PsiOpts.settings["str_style"], 
                              tosort = PsiOpts.settings["str_tosort"], lhsvar = lhsvar)
     
@@ -24272,8 +26615,8 @@ class Region(IBaseObj):
                 return str(True)
         
         lhsvar = None
-        if PsiOpts.settings.get("str_lhsreal", False):
-            lhsvar = "real"
+        # if PsiOpts.settings.get("str_lhsreal", False):
+        #     lhsvar = "real"
             
         if PsiOpts.settings.get("repr_simplify", False):
             return self.simplified_quick().tostring(style, 
@@ -26687,7 +29030,7 @@ class RegionOp(Region):
         cs = self.copy()
         return cs.check_getaux_inplace(hint_pair = hint_pair, hint_aux = hint_aux)
         
-    def check_getaux_gen(self, hint_pair = None, hint_aux = None):
+    def check_getaux_gen(self, hint_pair = None, hint_aux = None, hint_aux_avoid = None):
         """Return whether implication is true, with auxiliary search result."""
         rr = self.check_getaux(hint_pair = hint_pair, hint_aux = hint_aux)
         if rr is not None:
@@ -26738,6 +29081,33 @@ class RegionOp(Region):
                 return isunion
         return not isunion
     
+    
+    def evalcheck_vec(self, f):
+        truth = PsiOpts.settings["truth"]
+        if truth is not None:
+            with PsiOpts(truth = None):
+                return (truth >> self).evalcheck_vec(f)
+        
+        indreg = self.get_indreg_checked()
+        if indreg is not None:
+            with PsiOpts(indreg_enabled = False):
+                return (indreg >> self).evalcheck_vec(f)
+
+        ceps = PsiOpts.settings["eps_check"]
+        
+        isunion = (self.get_type() == RegionType.UNION)
+        r = 1
+        for x, c in self.regs:
+            t = x.evalcheck_vec(f)
+            if not isunion ^ c:
+                t = 1 - t
+            r = r * t
+        
+        if isunion:
+            r = 1 - r
+        return r
+
+
     def eval_max_violate(self, f):
         truth = PsiOpts.settings["truth"]
         if truth is not None:
@@ -27224,6 +29594,17 @@ class RegionOp(Region):
         """
         
         style = iutil.convert_str_style(style)
+
+        cregs = self.regs
+        ctype = self.get_type()
+
+        if ctype == RegionType.UNION:
+            cregs0 = [(x, True) for x, c in cregs if not c]
+            cregs1 = [(x, True) for x, c in cregs if c]
+            if len(cregs0) == 1 and len(cregs1) == 1:
+                cregs = cregs0 + cregs1
+                ctype = -1000
+
         
         if isinstance(lhsvar, str) and lhsvar == "real":
             lhsvar = self.allcomprealvar()
@@ -27231,7 +29612,7 @@ class RegionOp(Region):
 
         curadd_bracket = True
         if style & PsiOpts.STR_STYLE_LATEX:
-            if len(self.regs) == 1:
+            if len(cregs) == 1:
                 curadd_bracket = add_bracket
 
         r = ""
@@ -27247,20 +29628,27 @@ class RegionOp(Region):
                 nlstr = "\\\\\n"
             spacestr = "\\;"
             
-        if self.get_type() == RegionType.UNION:
+        if ctype == RegionType.UNION:
             if style & PsiOpts.STR_STYLE_PSITIP:
                 interstr = "|"
             elif style & PsiOpts.STR_STYLE_LATEX:
                 interstr = PsiOpts.settings["latex_or"]
             else:
                 interstr = "OR"
-        if self.get_type() == RegionType.INTER:
+        if ctype == RegionType.INTER:
             if style & PsiOpts.STR_STYLE_PSITIP:
                 interstr = "&"
             elif style & PsiOpts.STR_STYLE_LATEX:
                 interstr = PsiOpts.settings["latex_and"]
             else:
                 interstr = "AND"
+        if ctype == -1000:
+            if style & PsiOpts.STR_STYLE_PSITIP:
+                interstr = ">>"
+            elif style & PsiOpts.STR_STYLE_LATEX:
+                interstr = PsiOpts.settings["latex_matimplies"]
+            else:
+                interstr = "IMPLIES"
         
         if self.isuniverse(sgn = True, canon = True):
             if style & PsiOpts.STR_STYLE_PSITIP:
@@ -27319,9 +29707,9 @@ class RegionOp(Region):
         rlist = [spacestr * inden_inner1 + ("" if c else " " + notstr) + 
                 x.tostring(style = style, tosort = tosort, lhsvar = lhsvar, inden = inden_inner1, 
                            add_bracket = True, small = small).lstrip() 
-                for x, c in self.regs]
+                for x, c in cregs]
         if tosort:
-            rlist = zip(rlist, [any(x.ispresent(t) for t in lhsvar) for x, c in self.regs])
+            rlist = zip(rlist, [any(x.ispresent(t) for t in lhsvar) for x, c in cregs])
             rlist = sorted(rlist, key=lambda a: (not a[1], len(a[0]), a[0]))
             rlist = [x for x, t in rlist]
             
@@ -27593,6 +29981,49 @@ class IBaseArray(IBaseObj):
                 self.append(a)
 
 
+    def series(self, vdir):
+        """Get past or future sequence.
+        Parameters:
+            vdir  : Direction, 1: future non-strict, 2: future strict,
+                    -1: past non-strict, -2: past strict
+        """
+        if vdir == 1:
+            return type(self)([sum(self.x[i:], type(self).entry_cls_zero()) for i in range(len(self.x))])
+        elif vdir == 2:
+            return type(self)([sum(self.x[i+1:], type(self).entry_cls_zero()) for i in range(len(self.x))])
+        elif vdir == -1:
+            return type(self)([sum(self.x[:i+1], type(self).entry_cls_zero()) for i in range(len(self.x))])
+        elif vdir == -2:
+            return type(self)([sum(self.x[:i], type(self).entry_cls_zero()) for i in range(len(self.x))])
+        return self.copy()
+        
+    def past_ns(self):
+        return self.series(-1)
+        
+    def past(self):
+        return self.series(-2)
+    
+    def future_ns(self):
+        return self.series(1)
+    
+    def future(self):
+        return self.series(2)
+    
+    @property
+    def PN(self):
+        return self.series(-1)
+        
+    @property
+    def P(self):
+        return self.series(-2)
+    
+    @property
+    def FN(self):
+        return self.series(1)
+    
+    @property
+    def F(self):
+        return self.series(2)
 
     def subsets(self, ndim = 1, minsize = 0, maxsize = 100000, size = None, reverse = False):
         """Subsets of this array along the first ndim (default = 1) dimensions, as a generator
@@ -27996,7 +30427,7 @@ class IBaseArray(IBaseObj):
     #     self.meta.pop(key, None)
     #     return self
 
-    def tostring(self, style = 0, tosort = False):
+    def tostring(self, style = 0, tosort = False, *args, **kwargs):
         """Convert to string
         Parameters:
             style   : Style of string conversion
@@ -28110,7 +30541,7 @@ class IBaseArray(IBaseObj):
                         elif is_subs:
                             r += " "
                         else:
-                            r += " \;\; "
+                            r += r" \;\; "
                         if interstr != "":
                             r += interstr + " "
                     else:
@@ -28187,33 +30618,33 @@ class CompArray(IBaseArray):
     
     
     
-    def series(self, vdir):
-        """Get past or future sequence.
-        Parameters:
-            vdir  : Direction, 1: future non-strict, 2: future strict,
-                    -1: past non-strict, -2: past strict
-        """
-        if vdir == 1:
-            return CompArray([sum(self.x[i:], Comp.empty()) for i in range(len(self.x))])
-        elif vdir == 2:
-            return CompArray([sum(self.x[i+1:], Comp.empty()) for i in range(len(self.x))])
-        elif vdir == -1:
-            return CompArray([sum(self.x[:i+1], Comp.empty()) for i in range(len(self.x))])
-        elif vdir == -2:
-            return CompArray([sum(self.x[:i], Comp.empty()) for i in range(len(self.x))])
-        return self.copy()
+    # def series(self, vdir):
+    #     """Get past or future sequence.
+    #     Parameters:
+    #         vdir  : Direction, 1: future non-strict, 2: future strict,
+    #                 -1: past non-strict, -2: past strict
+    #     """
+    #     if vdir == 1:
+    #         return CompArray([sum(self.x[i:], Comp.empty()) for i in range(len(self.x))])
+    #     elif vdir == 2:
+    #         return CompArray([sum(self.x[i+1:], Comp.empty()) for i in range(len(self.x))])
+    #     elif vdir == -1:
+    #         return CompArray([sum(self.x[:i+1], Comp.empty()) for i in range(len(self.x))])
+    #     elif vdir == -2:
+    #         return CompArray([sum(self.x[:i], Comp.empty()) for i in range(len(self.x))])
+    #     return self.copy()
         
-    def past_ns(self):
-        return self.series(-1)
+    # def past_ns(self):
+    #     return self.series(-1)
         
-    def past(self):
-        return self.series(-2)
+    # def past(self):
+    #     return self.series(-2)
     
-    def future_ns(self):
-        return self.series(1)
+    # def future_ns(self):
+    #     return self.series(1)
     
-    def future(self):
-        return self.series(2)
+    # def future(self):
+    #     return self.series(2)
     
     
     @property
@@ -28246,15 +30677,19 @@ class CompArray(IBaseArray):
     
     @staticmethod
     def series_sym(x, sufp = "P", suff = "F"):
+        """Series symbols (X, X_P, X_F), representing present, past and future.
+        """
         if isinstance(x, str):
             x = Comp.rv(x)
         r = CompArray.empty()
         r.append(x)
         rename_char = PsiOpts.settings["rename_char"]
         if sufp is not None:
-            r.append(Comp.rv(iutil.set_suffix_num(x.get_name(), sufp, rename_char, replace_mode = "append")))
+            # r.append(Comp.rv(iutil.set_suffix_num(x.get_name(), sufp, rename_char, replace_mode = "append")))
+            r.append(x.name_operation(("append_sub", sufp)))
         if suff is not None:
-            r.append(Comp.rv(iutil.set_suffix_num(x.get_name(), suff, rename_char, replace_mode = "append")))
+            # r.append(Comp.rv(iutil.set_suffix_num(x.get_name(), suff, rename_char, replace_mode = "append")))
+            r.append(x.name_operation(("append_sub", suff)))
         return r
     
     
@@ -28318,7 +30753,7 @@ class CheckResult(CompArray):
         self.add_meta("subs", True)
 
     
-    def tostring(self, style = 0, *args, **kwargs):
+    def tostring(self, style = 0, tosort = False, *args, **kwargs):
         
         style = iutil.convert_str_style(style)
 
@@ -28356,7 +30791,7 @@ class CheckResult(CompArray):
         addproof = self.proof is not None
 
         if not addproof and len(self) > 0:
-            r += CompArray.tostring(self, style = style, *args, **kwargs)
+            r += CompArray.tostring(self, style = style, tosort = tosort, *args, **kwargs)
             r += nlstr
 
         if self.model is not None:
@@ -28413,34 +30848,34 @@ class ExprArray(IBaseArray):
     
     
     
-    def series(self, vdir):
-        """Get past or future sequence.
-        Parameters:
-            vdir  : Direction, 1: future non-strict, 2: future strict,
-                    -1: past non-strict, -2: past strict
-        """
-        if vdir == 1:
-            return ExprArray([sum(self.x[i:], Expr.zero()) for i in range(len(self.x))])
-        elif vdir == 2:
-            return ExprArray([sum(self.x[i+1:], Expr.zero()) for i in range(len(self.x))])
-        elif vdir == -1:
-            return ExprArray([sum(self.x[:i+1], Expr.zero()) for i in range(len(self.x))])
-        elif vdir == -2:
-            return ExprArray([sum(self.x[:i], Expr.zero()) for i in range(len(self.x))])
-        return self.copy()
+    # def series(self, vdir):
+    #     """Get past or future sequence.
+    #     Parameters:
+    #         vdir  : Direction, 1: future non-strict, 2: future strict,
+    #                 -1: past non-strict, -2: past strict
+    #     """
+    #     if vdir == 1:
+    #         return ExprArray([sum(self.x[i:], Expr.zero()) for i in range(len(self.x))])
+    #     elif vdir == 2:
+    #         return ExprArray([sum(self.x[i+1:], Expr.zero()) for i in range(len(self.x))])
+    #     elif vdir == -1:
+    #         return ExprArray([sum(self.x[:i+1], Expr.zero()) for i in range(len(self.x))])
+    #     elif vdir == -2:
+    #         return ExprArray([sum(self.x[:i], Expr.zero()) for i in range(len(self.x))])
+    #     return self.copy()
         
         
-    def past_ns(self):
-        return self.series(-1)
+    # def past_ns(self):
+    #     return self.series(-1)
         
-    def past(self):
-        return self.series(-2)
+    # def past(self):
+    #     return self.series(-2)
     
-    def future_ns(self):
-        return self.series(1)
+    # def future_ns(self):
+    #     return self.series(1)
     
-    def future(self):
-        return self.series(2)
+    # def future(self):
+    #     return self.series(2)
     
     def isconst(self):
         return all(a.get_const() is not None for a in self.x)
@@ -28534,6 +30969,8 @@ class ExprArray(IBaseArray):
             for xs in itertools.product(*[range(t) for t in shape])],
             shape = shape)
         
+    def __invert__(self):
+        return self == 0
     
     # def tostring(self, style = 0, tosort = False):
     #     """Convert to string
@@ -28958,7 +31395,7 @@ class ivenn:
         
     
     def patch(n, inc, **kwargs):
-        return matplotlib.patches.Polygon(ivenn.intersect(n, inc), True, **kwargs)
+        return matplotlib.patches.Polygon(ivenn.intersect(n, inc), closed=True, **kwargs)
 
 class CellTable:
     def __init__(self, x):
@@ -28993,43 +31430,25 @@ class CellTable:
         maskh = mask >> nv
         return (iutil.gray_to_bin(maskh), iutil.gray_to_bin(iutil.bit_reverse(maskv, nv)))
         
-        # nh = (n + 1) // 2
-        # maskh = mask & ((1 << nh) - 1)
-        # maskv = mask >> nh
-        # return (iutil.gray_to_bin(iutil.bit_reverse(maskh, nh)), iutil.gray_to_bin(maskv))
         
-    def get_x_poss(self, xi):
+    def get_x_poss(self, xit):
         n = len(self.x)
         nv = n // 2
         cn = nv
         ax = 1
-        if xi >= nv:
-            xi -= nv
+        if xit >= nv:
+            xit -= nv
             ax = 0
             cn = n - nv
         else:
-            xi = nv - 1 - xi
+            xit = nv - 1 - xit
         
         r = []
         for mask in range(1, 1 << cn):
-            if iutil.bin_to_gray(mask) & (1 << xi):
+            if iutil.bin_to_gray(mask) & (1 << xit):
                 r.append(mask)
         return (ax, r)
-        # nh = (n + 1) // 2
-        # cn = nh
-        # ax = 0
-        # if xi >= nh:
-        #     xi -= nh
-        #     ax = 1
-        #     cn = n - nh
-        # else:
-        #     xi = nh - 1 - xi
         
-        # r = []
-        # for mask in range(1, 1 << cn):
-        #     if iutil.bin_to_gray(mask) & (1 << xi):
-        #         r.append(mask)
-        # return (ax, r)
 
     @staticmethod
     def get_color(x):
@@ -29114,7 +31533,15 @@ class CellTable:
         return r
     
 
-    def plot(self, style = "hsplit", legend = True, use_latex = True, figsize = None, color = None, cval_color = None):
+    def plot(self, style = "hsplit", legend = True, use_latex = True, figsize = None, color = None, cval_color = None, lib = "matplotlib"):
+        
+        lib = PsiOpts.get_plotlib(lib)
+
+        use_mathregular = False
+        if isinstance(use_latex, str) and use_latex == "mathregular":
+            use_mathregular = True
+            use_latex = True
+
         label_interval = 0.32
         label_width = 0.29
         fontsize = self.fontsize
@@ -29126,6 +31553,9 @@ class CellTable:
         if figsize is None:
             figsize = [10, 8]
 
+
+        style = PsiOpts.settings.get("venn_style", "") + "," + style
+
         if color is None:
             color = []
         elif isinstance(color, str):
@@ -29135,7 +31565,7 @@ class CellTable:
         # print(color_list)
         
         rcParams_orig = None
-        if use_latex:
+        if use_latex and not use_mathregular:
             rcParams_orig = plt.rcParams.copy()
             plt.rcParams.update({"text.usetex": True,
                     "font.family": "sans-serif",
@@ -29175,6 +31605,7 @@ class CellTable:
         hatch_all = True
         color_shift = 0
         numdp = 4
+        legend_loc = "right"
         cval_color_enabled = True
         
         cval_ignore = False
@@ -29208,6 +31639,18 @@ class CellTable:
                 legend = True
             elif cstyle == "nolegend":
                 legend = False
+            elif cstyle == "legend_left":
+                legend = True
+                legend_loc = "left"
+            elif cstyle == "legend_right":
+                legend = True
+                legend_loc = "right"
+            elif cstyle == "legend_top":
+                legend = True
+                legend_loc = "top"
+            elif cstyle == "legend_bottom":
+                legend = True
+                legend_loc = "bottom"
             elif cstyle == "val_outline":
                 val_outline = True
             elif cstyle == "val_nooutline":
@@ -29313,11 +31756,14 @@ class CellTable:
         axslen = [0, 0]
         
         xstr = []
-        for xi in range(n):
+        for xit in range(n):
             if use_latex:
-                xstr.append("$" + self.x[xi].latex() + "$")
+                if use_mathregular:
+                    xstr.append(r"$\mathregular{" + self.x[xit].latex() + r"}$")
+                else:
+                    xstr.append("$" + self.x[xit].latex() + "$")
             else:
-                xstr.append(str(self.x[xi]))
+                xstr.append(str(self.x[xit]))
             
         
         polys = [None] * (1 << n)
@@ -29326,17 +31772,17 @@ class CellTable:
         if is_venn:
             polys, textps = ivenn.calc_ellipses(n)
             poly_els = [ivenn.intersect(n, [i == j for j in range(n)]) for i in range(n)]
-            for xi in range(n):
-                ax.text(textps[xi][0], textps[xi][1], xstr[xi], 
+            for xit in range(n):
+                ax.text(textps[xit][0], textps[xit][1], xstr[xit], 
                         horizontalalignment="center", verticalalignment="center", fontsize = fontsize)
                 
             
         if not is_venn:
-            for xi in range(n):
-                cax, clist = self.get_x_poss(xi)
+            for xit in range(n):
+                cax, clist = self.get_x_poss(xit)
                 axslen[cax] += 1
-            for xi in range(n):
-                cax, clist = self.get_x_poss(xi)
+            for xit in range(n):
+                cax, clist = self.get_x_poss(xit)
                 avgpos = [0.0, 0.0]
                 caxlen = axlen[cax]
                 if cax:
@@ -29362,7 +31808,7 @@ class CellTable:
                 
                 avgpos[0] /= len(clist)
                 avgpos[1] /= len(clist)
-                ax.text(avgpos[0], avgpos[1], xstr[xi], 
+                ax.text(avgpos[0], avgpos[1], xstr[xit], 
                         horizontalalignment="center", verticalalignment="center", fontsize = fontsize)
                 
                 axlen[cax] += 1
@@ -29426,7 +31872,7 @@ class CellTable:
                         }
                     if is_venn:
                         ax.add_patch(matplotlib.patches.Polygon(
-                            polys[mask][0], True, **params))
+                            polys[mask][0], closed=True, **params))
                     else:
                         ax.add_patch(matplotlib.patches.Rectangle(
                             pos, size[0], size[1], **params))
@@ -29438,7 +31884,7 @@ class CellTable:
                         }
                     if is_venn and is_venn_overlap:
                         ax.add_patch(matplotlib.patches.Polygon(
-                            polys[mask][0], True, **params))
+                            polys[mask][0], closed=True, **params))
                 
                 if cpass == 2:
                     params = {
@@ -29449,11 +31895,11 @@ class CellTable:
                         }
                     if is_venn:
                         # ax.add_patch(matplotlib.patches.Polygon(
-                        #     polys[mask][0], True, **params))
+                        #     polys[mask][0], closed=True, **params))
                         for i in range(n):
                             if mask & (1 << i):
                                 ax.add_patch(matplotlib.patches.Polygon(
-                                    poly_els[i], True, **params))
+                                    poly_els[i], closed=True, **params))
                                 break
                     else:
                         ax.add_patch(matplotlib.patches.Rectangle(
@@ -29565,7 +32011,7 @@ class CellTable:
                                     # print(mask)
                                     # print(polys[mask])
                                     ax.add_patch(matplotlib.patches.Polygon(
-                                        polys[mask][0], True, **params))
+                                        polys[mask][0], closed=True, **params))
                                 else:
                                     ax.add_patch(matplotlib.patches.Rectangle(
                                         (pos[0] + rect_x * size[0], pos[1]), 
@@ -29627,7 +32073,10 @@ class CellTable:
                 if cexpr is not None:
                     with PsiOpts(str_lhsreal = False):
                         if use_latex:
-                            clabel = "$" + cexpr.latex(skip_simplify = True) + "$"
+                            if use_mathregular:
+                                clabel = r"$\mathregular{" + cexpr.latex(skip_simplify = True) + r"}$"
+                            else:
+                                clabel = "$" + cexpr.latex(skip_simplify = True) + "$"
                         else:
                             clabel = str(cexpr)
                     # if isinstance(cexpr, Region):
@@ -29649,8 +32098,21 @@ class CellTable:
                 # legends.append(matplotlib.lines.Line2D([0], [0], color=ccolor, lw=4, label=clabel))
                 legends.append(matplotlib.patches.Patch(facecolor=ccolor, label=clabel))
                 
-            ax.legend(handles = legends, fontsize = fontsize, bbox_to_anchor=(0.5, -0.03), 
-                      loc="upper center", frameon=False)
+            bbox_buffer = 0.03
+            bbox_to_anchor = (0.5, -bbox_buffer)
+            loc = "upper center"
+            if legend_loc == "top":
+                bbox_to_anchor = (0.5, 1.0 + bbox_buffer)
+                loc = "lower center"
+            elif legend_loc == "right":
+                bbox_to_anchor = (1.0 + bbox_buffer, 0.5)
+                loc = "center left"
+            elif legend_loc == "left":
+                bbox_to_anchor = (-bbox_buffer, 0.5)
+                loc = "center right"
+
+            ax.legend(handles = legends, fontsize = fontsize, bbox_to_anchor=bbox_to_anchor, 
+                      loc=loc, frameon=False)
                 
         if is_venn:
             ax.set_aspect("equal")
@@ -29659,10 +32121,15 @@ class CellTable:
         plt.axis("off")
         plt.xlim([xlim[0] - 0.011, xlim[1] + 0.011])
         plt.ylim([ylim[0] - 0.011, ylim[1] + 0.011])
-        plt.show()
-        fig.tight_layout()
+
+
+        if lib == "plotly":
+            plotly.offline.plot_mpl(fig)
+        else:
+            plt.show()
+            fig.tight_layout()
         
-        if use_latex:
+        if use_latex and not use_mathregular:
             plt.rcParams = rcParams_orig.copy()
 
 class ProofObj(IBaseObj):
@@ -29701,6 +32168,29 @@ class ProofObj(IBaseObj):
         # return ProofObj([(x.copy(), [], c)])
         return ProofObj(iutil.copy(x), c)
     
+    @staticmethod
+    def from_chain(x):
+        
+        ineqchain = []
+        i = 0
+        while i < len(x):
+            ceqnstr = ""
+            if i > 0:
+                ceqnstr = x[i]
+                i += 1
+            if i >= len(x):
+                break
+            csum = x[i]
+            i += 1
+            cclaim = []
+            if i < len(x) and not isinstance(x[i], str):
+                cclaim = x[i]
+                i += 1
+            ineqchain.append([csum, ceqnstr, cclaim])
+
+        return ProofObj.from_region(ineqchain, c = "Steps: ")
+
+
     def get_case(self):
         if "case" in self.meta:
             return self.meta["case"]
@@ -30061,6 +32551,7 @@ class CodingModel(IBaseObj):
 
         self.aux_importance = []
         self.aux_dummy = Comp.empty()
+        self.aux_nondummy = Comp.empty()
 
         self.created_rv = Comp.empty()
         
@@ -30080,6 +32571,7 @@ class CodingModel(IBaseObj):
         r.use_union = self.use_union
         r.aux_importance = iutil.copy(self.aux_importance)
         r.aux_dummy = iutil.copy(self.aux_dummy)
+        r.aux_nondummy = iutil.copy(self.aux_nondummy)
         r.created_rv = iutil.copy(self.created_rv)
         return r
     
@@ -30161,14 +32653,23 @@ class CodingModel(IBaseObj):
         
     def add_node(self, a, b, **kwargs):
         self.add_edge(a, b, coded = True, **kwargs)
+
+    def add_source(self, a):
+        for i in range(1, len(a)):
+            self.add_edge(a[:i], a[i])
             
-    def set_rate(self, a, rate):
+    def set_rate(self, a, rate, dummy = False):
         if isinstance(rate, (int, float)):
             const_rate = rate
             rate = Expr.real("#TMPRATE" + str(a))
             self.sublist_const.append((rate, Expr.const(const_rate)))
+            
         self.sublist_rate.append((a, rate))
+        if not dummy:
+            self.aux_nondummy += a
         
+    def set_dummy(self, a):
+        self.set_rate(a, 0, dummy = True)
 
     def get_aux(self):
         r = Comp.empty()
@@ -30312,6 +32813,20 @@ class CodingModel(IBaseObj):
             x += node.rv_ndec_force
         return self.get_rv_ratervs(x)
     
+    def is_balanced(self):
+        rvout = Comp.empty()
+        rvin = Comp.empty()
+        for node in self.nodes:
+            for a in node.rv_out:
+                if self.is_rate(a):
+                    continue
+                rvout += rv(self.get_rv_sub(a))
+            for a in self.bnet.get_parents(node.rv_out):
+                if self.is_rate(a):
+                    continue
+                rvin += rv(self.get_rv_sub(a))
+                
+        return rvout.inter(rvin).isempty()
     
     def get_node_descendants(self, node):
         x = Comp.empty()
@@ -30563,7 +33078,7 @@ class CodingModel(IBaseObj):
                     
                     cname = self.name_avoid(cname)
                     a = Comp.rv(cname)
-                    if self.is_rate_zero(c):
+                    if self.is_rate_zero(c) and not self.aux_nondummy.ispresent(c):
                         self.aux_dummy += a
 
                     for i, node in enumerate(nodes):
@@ -30862,7 +33377,7 @@ class CodingModel(IBaseObj):
                 cname = self.name_avoid(cname)
                 crv = Comp.rv(cname)
                 
-                self.set_rate(crv, 0)
+                self.set_dummy(crv)
                 self.add_node(p, crv)
                 for cc2 in cc:
                     self.bnet.add_edge(crv, cc2)
@@ -30928,7 +33443,7 @@ class CodingModel(IBaseObj):
                 crv = Comp.rv(cname)
                 # crate = Expr.real("MRATE_" + str(p) + "_" + str(mask))
                 # self.set_rate(crv, crate)
-                self.set_rate(crv, 0)
+                self.set_dummy(crv)
                 for pb in p:
                     self.bnet.add_edge(crv, pb)
                 # self.add_edge(crv, p, children_edge = False)
@@ -30955,7 +33470,7 @@ class CodingModel(IBaseObj):
                 cname = str(sum(g, Comp.empty())) + "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@" + sum(g, Comp.empty()).tostring(style = "latex")
                 cname = self.name_avoid(cname)
                 crv = Comp.rv(cname)
-                self.set_rate(crv, 0)
+                self.set_dummy(crv)
                 for pb in p:
                     self.bnet.add_edge(crv, pb)
 
@@ -31032,6 +33547,9 @@ class CodingModel(IBaseObj):
 
         verbose = PsiOpts.settings.get("verbose_codingmodel", False)
 
+        if verbose:
+            print("============== Get Inner ==============")
+
         self.presolve()
         
         if self.bnet.tsorted() is None:
@@ -31058,6 +33576,12 @@ class CodingModel(IBaseObj):
                 if cndec_mode is None:
                     cndec_mode = ndec_mode
                     
+                if verbose:
+                    print("============== NDec ==============")
+                    print("Mode      : " + cndec_mode)
+                    print("NDec try  : " + str(node.aux_ndec_try))
+                    print("NDec force: " + str(node.aux_ndec_force))
+
                 if cndec_mode == "all":
                     # print("NODE  " + str(node.rv_out) + "  " + str(node.aux_ndec_force))
 
@@ -31107,7 +33631,7 @@ class CodingModel(IBaseObj):
                     r = r.simplified_quick()
 
                     if verbose:
-                        print("============== Simplified ==============")
+                        print("============== NDec Simplified ==============")
                         print(r)
 
                     return r
@@ -31123,6 +33647,12 @@ class CodingModel(IBaseObj):
             cname = cindex.name_avoid(cname)
             aux_rates.append(Expr.real(cname))
             aux_rates[-1].record_to(cindex)
+            
+        
+        if verbose:
+            print("============== Rates ==============")
+            for a, ar in zip(aux, aux_rates):
+                print(str(a) + ": " + str(ar))
             
         cbnet = self.bnet.copy()
         
@@ -31224,14 +33754,21 @@ class CodingModel(IBaseObj):
             
 
         # Check dummy duplicates
+        if verbose:
+            print("============== Check Dummy ==============")
         for a in aux:
             if not self.is_aux_dummy(a):
                 continue
             a_parents = self.get_parents_noaux(a, cbnet)
             a_rvout = self.get_node_rv_out_from_aux_dec(a)
+            if verbose:
+                print(str(a) + ": " + str(a_parents) + " -> " + str(a_rvout))
+
             if a_rvout.isempty():
                 return None
             for b in aux - a:
+                # if not self.is_aux_dummy(b):
+                #     continue
                 if a_parents == self.get_parents_noaux(b, cbnet):
                     b_rvout = self.get_node_rv_out_from_aux_dec(b)
                     if a_rvout == b_rvout:
@@ -31239,6 +33776,9 @@ class CodingModel(IBaseObj):
                     if not self.is_aux_dummy(b) and b_rvout.super_of(a_rvout):
                         return None
         
+        if verbose:
+            print("============== Check Dummy End ==============")
+
         if convexify is not False:
             r.condition(convexify)
             for node in self.nodes:
@@ -31583,7 +34123,7 @@ class CodingModel(IBaseObj):
             
             
         
-    def nfold(self, n = 2, natural_eqprob = True, all_eqprob = True):
+    def nfold(self, n = 2, natural_eqprob = True, all_eqprob = True, ret_concmodel = None, first_noindex = True):
         """
         Return the n-letter setting.
 
@@ -31613,7 +34153,8 @@ class CodingModel(IBaseObj):
                 t = x.copy()
             else:
                 t = rv_array(x.get_name(), n)
-                t[0] = x.copy()
+                if first_noindex:
+                    t[0] = x.copy()
                 if natural_eqprob or all_eqprob:
                     toeqprob += x
                     
@@ -31695,9 +34236,39 @@ class CodingModel(IBaseObj):
                 cnode.rv_out = v.copy()
                 r.nodes.append(cnode)
                 
+
+        if ret_concmodel is not None:
+            cmodel = r.bnet.example_bsc()
+            convexify = Comp.index("Q_o").set_card(n)
+            cmodel[convexify] = ConcDist.uniform(n)
+
+            for x in self.bnet.allcomp():
+                p = self.bnet.get_parents(x)
+                
+                t = None
+                if self.is_rate(x):
+                    t = x.copy()
+                else:
+                    t = rv_array(x.get_name(), n)
+                    t[0] = x.copy()
+                    if natural_eqprob or all_eqprob:
+                        toeqprob += x
+                        
+                t = reg_out_map[x.get_name()]
+
+                if isinstance(t, CompArray):
+                    s = CompArray.series_sym(x)
+                    cmodel.set_series(s, convexify, t)
+                    # cmodel[s["P"] | convexify + x.get_sum()] = lambda a: 
+
+            ret_concmodel.append(cmodel)
+
         return r
         
-
+    def nfold_concmodel(self, n = 2, **kwargs):
+        r = []
+        t = self.nfold(n, first_noindex = False, ret_concmodel = r, **kwargs)
+        return r[0]
 
 
     def convexify_needed(self):
@@ -31707,7 +34278,8 @@ class CodingModel(IBaseObj):
                   add_csiszar_sum = True, leaf_remove = True, node_fcn = True,
                   node_fcn_force = False, skip_simplify = True, convexify_test = False,
                   is_proof = False, include_nondecode_series = False, include_last_future = False,
-                  remove_created = True, full = False):
+                  remove_created = True, full = False, balanced = None, dual_bound_values = None, 
+                  latent_iid = False, **kwargs):
         """Get an outer bound of the capacity region.
         """
 
@@ -31737,7 +34309,15 @@ class CodingModel(IBaseObj):
         if convexify is not False:
             if convexify is True:
                 convexify = Comp.index("Q_o")
-                
+            
+        if latent_iid is not False:
+            if latent_iid is True:
+                latent_iid = Comp.index("B_o")
+        
+        latent_iid_rv = Comp.empty()
+        if latent_iid is not False and isinstance(latent_iid, Comp):
+            latent_iid_rv += latent_iid
+
         # auxs = self.get_aux()
         # reg_out_aux = auxs.copy()
         reg_out_aux = Comp.empty()
@@ -31787,6 +34367,9 @@ class CodingModel(IBaseObj):
             if not removed:
                 to_csiszar.append(t)
         
+        if len(latent_iid_rv):
+            bnet_out += latent_iid_rv
+
         for (a, b) in self.bnet.edges():
             # if not self.get_rv_sub(b).ispresent(b):
             #     continue
@@ -31804,15 +34387,15 @@ class CodingModel(IBaseObj):
                     for t1 in range(clen):
                         for t2 in range(t1, clen):
                             if convexify is False:
-                                bnet_out += (am[ttr[t1]] + bm[ttr[t1]], bm[ttr[t2]])
+                                bnet_out += (am[ttr[t1]] + bm[ttr[t1]] + latent_iid_rv, bm[ttr[t2]])
                             else:
-                                bnet_out += (am[ttr[t1]], bm[ttr[t2]])
+                                bnet_out += (am[ttr[t1]] + latent_iid_rv, bm[ttr[t2]])
                 else:
                     if convexify is False:
-                        bnet_out += (am.swapped_id(0, 1).allcomp(), bm.swapped_id(0, 1).allcomp())
+                        bnet_out += (am.swapped_id(0, 1).allcomp() + latent_iid_rv, bm.swapped_id(0, 1).allcomp())
                     else:
                         for tbm in bm.swapped_id(0, 1).allcomp():
-                            bnet_out += (am.swapped_id(0, 1).allcomp(), tbm)
+                            bnet_out += (am.swapped_id(0, 1).allcomp() + latent_iid_rv, tbm)
                     
         for b in self.bnet.allcomp():
             bm = reg_out_map[b.get_name()]
@@ -31979,6 +34562,19 @@ class CodingModel(IBaseObj):
                     r.substitute(a2, b2)
                 
 
+        # If all sequences are i.i.d. conditional on codebook
+        # if latent_iid is not False and convexify is not False:
+        #     seqlist = [Comp.empty(), Comp.empty(), Comp.empty()]
+        #     for a in self.bnet.index.comprv:
+        #         am = map_getlist(a)
+        #         if isinstance(am, CompArray):
+        #             for i, t in enumerate(am):
+        #                 seqlist[i] += t
+            
+        #     if not seqlist[0].isempty():
+        #         r &= (Expr.I(seqlist[0], convexify) == 0)
+        #         r &= indep(seqlist[0], seqlist[1], seqlist[2]).conditioned(convexify)
+
                 
         # Source-channel data processing
         if (convexify_test or (not oneshot and convexify is not False)) and all(node.rv_in_scausal.isempty() for node in self.nodes):
@@ -32077,11 +34673,11 @@ class CodingModel(IBaseObj):
                                 r &= (Expr.Ic(a3, voutm0, voutm2 + cmsg) >= Expr.Ic(a3, voutm0, voutm2)
                                         ).add_meta("pf_note", ["indep. of msgs ", a3, ", ", cmsg])
 
-                        r &= (Expr.Ic(a3, voutm0, voutm1) >= rate
+                        r &= (Expr.Ic(a3, voutm0, voutm1 + latent_iid_rv) >= rate
                             ).add_meta("pf_note", ["decode ", a3]).add_meta("dual_weight", 0.1)
                         
                         if future_also and voutm2 is not None:
-                            r &= (Expr.Ic(a3, voutm0, voutm2) >= rate
+                            r &= (Expr.Ic(a3, voutm0, voutm2 + latent_iid_rv) >= rate
                                 ).add_meta("pf_note", ["decode ", a3]).add_meta("dual_weight", 0.15)
 
         
@@ -32126,7 +34722,7 @@ class CodingModel(IBaseObj):
                                     ).add_meta("pf_note", ["indep. of msgs ", am, ", ", cmsg])
                         
                         if nat_msg_rate:
-                            r &= (Expr.Ic(am, voutm0, voutm1) >= v1
+                            r &= (Expr.Ic(am, voutm0, voutm1 + latent_iid_rv) >= v1
                                 ).add_meta("pf_note", ["rate of ", am])
 
                         r &= v1 >= 0
@@ -32154,16 +34750,16 @@ class CodingModel(IBaseObj):
                             # print()
 
                             for cmsg in igen.subset(msgs - am):
-                                r &= (Expr.Ic(am, voutm0, voutm1 + tv + cmsg) <= v1
+                                r &= (Expr.Ic(am, voutm0, voutm1 + tv + cmsg + latent_iid_rv) <= v1
                                     ).add_meta("pf_note", ["rate of ", am])
                                 if coded_combination and tva is not None:
-                                    r &= (Expr.Ic(am, voutm0 + tva[0], voutm1 + tva[1] + cmsg) <= v1
+                                    r &= (Expr.Ic(am, voutm0 + tva[0], voutm1 + tva[1] + cmsg + latent_iid_rv) <= v1
                                         ).add_meta("pf_note", ["rate of ", am]).add_meta("dual_weight", 0.5)
                                 if future_also and voutm2 is not None:
-                                    r &= (Expr.Ic(am, voutm0, voutm2 + tv + cmsg) <= v1
+                                    r &= (Expr.Ic(am, voutm0, voutm2 + tv + cmsg + latent_iid_rv) <= v1
                                         ).add_meta("pf_note", ["rate of ", am])
                                     if coded_combination and tva is not None:
-                                        r &= (Expr.Ic(am, voutm0 + tva[0], voutm2 + tva[2] + cmsg) <= v1
+                                        r &= (Expr.Ic(am, voutm0 + tva[0], voutm2 + tva[2] + cmsg + latent_iid_rv) <= v1
                                             ).add_meta("pf_note", ["rate of ", am]).add_meta("dual_weight", 0.5)
                     
                     # r &= Expr.Ic(am, voutm0, voutm1) == v1
@@ -32218,7 +34814,7 @@ class CodingModel(IBaseObj):
         reg_out_aux = reg_out_aux.inter(r.allcomprv())
         r = r.exists(reg_out_aux)
 
-        if aux is not None:
+        if aux is not None and isinstance(aux, int):
             aux_pairs = []
             aux_force = msgs
             if convexify is not False:
@@ -32303,7 +34899,33 @@ class CodingModel(IBaseObj):
 
                 return (r, -1 if hassingleconvexify else 0)
 
-            r = r.aux_reduced(aux, aux_pairs = aux_pairs, aux_force = aux_force, score_fcn = score_fcn)
+            if balanced is None:
+                balanced = self.is_balanced()
+
+            if isinstance(dual_bound_values, str) and dual_bound_values == "2fold":
+                dual_bound_values = self.nfold_concmodel()
+                r.add_real_to(dual_bound_values)
+
+            r = r.aux_reduced(aux, aux_pairs = aux_pairs, aux_force = aux_force, score_fcn = score_fcn, 
+                balanced = balanced, dual_bound_values = dual_bound_values, **kwargs)
+
+        elif aux is not None and isinstance(aux, (list, Comp, str)):
+            aux2 = []
+            for a in aux if isinstance(aux, list) else [aux]:
+                if isinstance(a, tuple):
+                    aux2.append((a[0], rv(r.find(a[1]))))
+                else:
+                    aux2.append(rv(r.find(a)))
+
+            if balanced is None:
+                balanced = self.is_balanced()
+
+            if isinstance(dual_bound_values, str) and dual_bound_values == "2fold":
+                dual_bound_values = self.nfold_concmodel()
+                r.add_real_to(dual_bound_values)
+
+            r = r.aux_set(aux2, balanced = balanced, dual_bound_values = dual_bound_values, **kwargs)
+
 
         if not skip_simplify:
             return r.simplified()
@@ -32419,7 +35041,22 @@ class CodingModel(IBaseObj):
         groups = self.node_groups()
         return groups
         
-    def graph(self, lr = True, enc_node = True, ortho = False, **kwargs):
+    def channel_groups(self):
+        r = []
+        for a in self.bnet.allcomp():
+            if self.find_node_rv_out(a) is not None:
+                continue
+            pa = self.bnet.get_parents(a)
+            for gin, gout in r:
+                if pa == gin + gout:
+                    gout += a
+                    break
+            else:
+                r.append((pa, a))
+        return r
+
+
+    def graph(self, lr = True, enc_node = True, channel_box = True, rv_on_edge = False, seq_op = ("append_super", "n"), recovered_op = ("append", "'"), ortho = False, **kwargs):
         """Return the graphviz digraph of the network that can be displayed in the console.
         """
         if graphviz is None:
@@ -32435,42 +35072,125 @@ class CodingModel(IBaseObj):
         for key, value in kwargs.items():
             r.graph_attr[key] = str(value)
 
+        node_shape = PsiOpts.settings.get("codingmodel_node_shape", "rect")
+        node_fillcolor = PsiOpts.settings.get("codingmodel_node_fillcolor", "white")
+        channel_shape = PsiOpts.settings.get("codingmodel_channel_shape", "rect")
+        channel_fillcolor = PsiOpts.settings.get("codingmodel_channel_fillcolor", "white")
+
         groups = self.node_groups()
+        channel_groups = []
+        if channel_box:
+            channel_groups = self.channel_groups()
         
         rvs = self.bnet.allcomp()
+
+        edges = []
         
-        for a in self.bnet.allcomp():
-            shape = "plaintext" #"oval"
-            node = self.find_node_rv_out(a)
-            label = str(self.get_rv_sub(a))
-            if node is not None and not enc_node:
-                shape = "rect"
-            
-            if shape == "plaintext":
-                r.node(a.get_name(), label, shape = shape, margin = "0")
-            else:
-                r.node(a.get_name(), label, shape = shape)
         
         if enc_node:
             for i, (b, a, node) in enumerate(groups):
                 cname = "enc_" + str(a) + "_" + str(b)
                 label = str(i + 1)
                 if node.label is not None:
-                    label = node.label
-                r.node(cname, label, shape = "rect")
+                    label = iutil.latex_to_text(node.label, style="graphviz")
+                r.node(cname, label, shape = node_shape, style = "filled", fillcolor = node_fillcolor)
                 for ai in a:
-                    r.edge(ai.get_name(), cname)
+                    edges.append((ai.get_name(), cname, "", None))
+                    # r.edge(ai.get_name(), cname)
                 for bi in b:
-                    r.edge(cname, bi.get_name())
+                    edges.append((cname, bi.get_name(), "", None))
+                    # r.edge(cname, bi.get_name())
                 
                 for ai in node.rv_in_scausal:
-                    r.edge(ai.get_name(), cname, style = "dashed")
+                    edges.append((ai.get_name(), cname, "", "dashed"))
+                    # r.edge(ai.get_name(), cname, style = "dashed")
 
                 rvs -= b
+        
+        if channel_box:
+            for i, (a, b) in enumerate(channel_groups):
+                if a.isempty() and len(b) <= 1:
+                    continue
+                cname = "ch_" + str(a) + "_" + str(b)
+                if a.isempty():
+                    label = prob_symbol(b).graphviz_text()
+                    # label = "P(" + b.graphviz_text() + ")"
+                else:
+                    label = prob_symbol(b|a).graphviz_text()
+                    # label = "P(" + b.graphviz_text() + "|" + a.graphviz_text() + ")"
+                r.node(cname, label, shape = channel_shape, style = "filled", fillcolor = channel_fillcolor)
+                for ai in a:
+                    edges.append((ai.get_name(), cname, "", None))
+                    # r.edge(ai.get_name(), cname)
+                for bi in b:
+                    edges.append((cname, bi.get_name(), "", None))
+                    # r.edge(cname, bi.get_name())
                 
+                rvs -= b
+
         for (a, b) in self.bnet.edges():
             if b in rvs:
-                r.edge(a.get_name(), b.get_name())
+                edges.append((a.get_name(), b.get_name(), "", None))
+                # r.edge(a.get_name(), b.get_name())
+        
+        for a in self.bnet.allcomp():
+            shape = "plaintext" #"oval"
+            node = self.find_node_rv_out(a)
+            asub = self.get_rv_sub(a)
+            if recovered_op is not None and asub != a:
+                asub = asub.name_operation(recovered_op)
+            if seq_op is not None and not self.is_rate(a):
+                asub = asub.name_operation(seq_op)
+            label = asub.graphviz_text()
+            if node is not None and not enc_node:
+                shape = node_shape
+            
+            if rv_on_edge:
+                inedges = [(x, y, t, s) for x, y, t, s in edges if y == a.get_name()]
+                outedges = [(x, y, t, s) for x, y, t, s in edges if x == a.get_name()]
+                if len(inedges) == 1 and len(outedges) == 1:
+                    edges = [(x, y, t, s) for x, y, t, s in edges if x != a.get_name() and y != a.get_name()]
+                    edges.append((inedges[0][0], outedges[0][1], label, outedges[0][3]))
+                else:
+                    if len(inedges) + len(outedges) > 1:
+                        r.node(a.get_name(), "", shape="circle", width="0.05", height="0.05", style="filled", fillcolor="black")
+                    else:
+                        r.node(a.get_name(), "", shape="none", width="0", height="0")
+                    for i in range(len(edges)):
+                        if edges[i][1] == a.get_name():
+                            edges[i] = (edges[i][0], edges[i][1], label, "no_arrowhead" if len(outedges) else edges[i][3])
+                        elif edges[i][0] == a.get_name() and len(inedges) == 0:
+                            edges[i] = (edges[i][0], edges[i][1], label, edges[i][3])
+            else:
+                
+                if shape == "plaintext":
+                    # r.node(a.get_name(), label, shape = shape, margin = "0", color = "none", width = "0", height = "0")
+                    # r.node(a.get_name(), label, shape = shape, color = "none", width = "0", height = "0")
+                    r.node(a.get_name(), label, shape = shape, color = "none", width = "0")
+                else:
+                    r.node(a.get_name(), label, shape = shape)
+
+        for x, y, t, s in edges:
+            edge_kwargs = {}
+            if t != "":
+                edge_kwargs["label"] = t
+            if s is not None:
+                if s == "no_arrowhead":
+                    edge_kwargs["arrowhead"] = "none"
+                else:
+                    edge_kwargs["style"] = s
+            r.edge(x, y, **edge_kwargs)
+            
+            # if s is None:
+            #     if t == "":
+            #         r.edge(x, y)
+            #     else:
+            #         r.edge(x, y, label=t)
+            # else:
+            #     if t == "":
+            #         r.edge(x, y, style=s)
+            #     else:
+            #         r.edge(x, y, label=t, style=s)
             
         return r
         
@@ -33281,7 +36001,7 @@ def parse_sanitize(s, grammar = False):
     for i in range(5):
         s = s.replace(r"," + " " * i + r"exists", "comma_exists")
         s = s.replace(r"," + " " * i + r"forall", "comma_forall")
-        s = s.replace(r"{\perp" + " " * i + r"\perp}", c + "\perp" + c)
+        s = s.replace(r"{\perp" + " " * i + r"\perp}", c + r"\perp" + c)
         
     s = s.replace("\\", c + "BACKSLASH_")
     return s           
@@ -33345,8 +36065,8 @@ class RegionTree(lark_Transformer):
             | ("!=" | "\neq") -> rel_ne
             | "<" -> rel_lt
             | ">" -> rel_gt
-            | ("<=" | "\le") -> rel_le
-            | (">=" | "\ge") -> rel_ge
+            | ("<=" | "\le" | "\leq") -> rel_le
+            | (">=" | "\ge" | "\geq") -> rel_ge
         ?expr: expr_product
             | expr "+" expr_product   -> add
             | expr "-" expr_product   -> sub
@@ -33612,7 +36332,7 @@ def anyor(a):
             r |= x
     return r
     
-def rv(*args, latex = None, index = False, split = True, alg = None, **kwargs):
+def rv(*args, latex = None, index = False, split = True, alg = None, color = None, **kwargs):
     """Random variable"""
 
     if len(args) == 0:
@@ -33629,9 +36349,21 @@ def rv(*args, latex = None, index = False, split = True, alg = None, **kwargs):
     if latex is not None:
         args = [x + "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@" + y for x, y in zip(args, latex)]
 
+
+    if isinstance(color, str):
+        if split:
+            color = iutil.split_comma(color)
+        else:
+            color = [color]
+
     r = Comp.empty()
-    for a in args:
+    for i, a in enumerate(args):
         t = iutil.ensure_comp(a)
+        if color is not None and len(color) > 0:
+            col = color[i % len(color)]
+            if col is not None and col != "":
+                t.add_markers([("color", col)])
+
         if t is not None:
             r += t
         # if isinstance(a, str):
@@ -33673,7 +36405,7 @@ def rv_series(name, future = True, sufp = "P", suff = "F"):
         suff = None
     return CompArray.series_sym(name, sufp = sufp, suff = suff)
     
-def real(*args, latex = None, split = True):
+def real(*args, latex = None, split = True, color = None):
     """Real variable"""
     if split:
         args = [x for b in args for x in iutil.split_comma(b)]
@@ -33686,14 +36418,27 @@ def real(*args, latex = None, split = True):
 
     if latex is not None:
         args = [x + "@@" + str(PsiOpts.STR_STYLE_LATEX) + "@@" + y for x, y in zip(args, latex)]
+
+    if isinstance(color, str):
+        if split:
+            color = iutil.split_comma(color)
+        else:
+            color = [color]
         
     is_one = len(args) == 1
     r = []
-    for a in args:
+    for i, a in enumerate(args):
         if isinstance(a, str):
-            r.append(Expr.real(a))
+            t = Expr.real(a)
+            if color is not None and len(color) > 0:
+                col = color[i % len(color)]
+                if col is not None and col != "":
+                    t.terms[0][0].x[0].add_markers([("color", col)])
+            r.append(t)
+
         elif iutil.isnumeric(a):
             r.append(Expr.const(a))
+
         elif isinstance(a, IBaseObj):
             for b in a.allcomprealvar_exprlist():
                 r.append(b.copy())
@@ -33722,7 +36467,7 @@ def expr(*args):
         t = iutil.ensure_expr(a, strict = False)
         if t is not None:
             if r is None:
-                r = t
+                r = t.copy()
             else:
                 r += t
     return r
@@ -33733,14 +36478,31 @@ def region(*args):
     if len(args) == 0:
         return Region.universe()
     r = None
+    bn = None
     for a in args:
-        t = iutil.ensure_region(a)
-        if t is not None:
-            if r is None:
-                r = t
-            else:
-                r &= t
-    return r
+        if isinstance(a, (Comp, Term)) or (isinstance(a, tuple) and all(isinstance(x, Comp) for x in a)):
+            if bn is None:
+                bn = BayesNet()
+            bn += a
+        else:
+            t = iutil.ensure_region(a)
+            if t is not None:
+                if r is None:
+                    r = t.copy()
+                else:
+                    r &= t
+    
+    if r is None:
+        if bn is None:
+            return None
+        else:
+            return bn.get_region()
+    else:
+        if bn is None:
+            return r
+        else:
+            return bn.get_region() & r
+
 
 def rv_empty():
     """Empty random variable"""
@@ -33823,6 +36585,11 @@ def Ic(x, y, z):
 @fcn_list_to_list
 def indep(*args):
     """Return Region where the arguments are independent."""
+
+    if any(isinstance(a, Term) for a in args):
+        term = Term.from_symbols(args, prefer_multi=True)
+        return indep(*(term.x)).conditioned(term.z)
+
     args = [iutil.ensure_comp(t) for t in args]
     r = Region.universe()
     for i in range(1, len(args)):
@@ -33838,6 +36605,11 @@ def indep_across(*args):
 @fcn_list_to_list
 def equiv(*args):
     """Return Region where the arguments contain the same information."""
+
+    if any(isinstance(a, Term) for a in args):
+        term = Term.from_symbols(args, prefer_multi=True)
+        return equiv(*(term.x)).conditioned(term.z)
+
     args = iutil.type_coerce(args)
     if len(args) <= 1:
         return Region.universe()
@@ -33854,6 +36626,11 @@ def equiv(*args):
 @fcn_list_to_list
 def markov(*args):
     """Return Region where the arguments form a Markov chain."""
+
+    if any(isinstance(a, Term) for a in args):
+        term = Term.from_symbols(args, prefer_multi=True)
+        return markov(*(term.x)).conditioned(term.z)
+
     args = [iutil.ensure_comp(t) for t in args]
     r = Region.universe()
     for i in range(2, len(args)):
@@ -33977,6 +36754,35 @@ def stardep(*args):
     for a in args:
         r &= H(SU | a) == 0
     return (r & indep(*args).conditioned(SU)).exists(SU)
+
+
+def interactive_discussions(parties, messages, is_fcn=False):
+    """Interactive discussions between parties.
+    Calling interactive_discussions([X, Y, Z], [M1, M2, M3, M4]) corresponds to the situation
+    where party 1, 2, 3 have X, Y, Z resp., party 1 broadcasts M1 (based on X), party 2 broadcasts M2 (based on Y, M1),
+    party 3 broadcasts M3, and party 1 broadcasts M4.
+    """
+    
+    n = len(parties)
+    m = len(messages)
+    X = rv_seq("#TMP_PARTY", n)
+    M = rv_seq("#TMP_MESSAGE", m)
+
+    bn = BayesNet()
+    bn += X
+    for i in range(m):
+        bn += (X[i % n] + M[:i], M[i])
+        if is_fcn:
+            bn.set_fcn(M[i])
+    
+    r = bn.get_region()
+    for i in range(m):
+        r.substitute(M[i], messages[i])
+    for i in range(n):
+        r.substitute(X[i], parties[i])
+    
+    return r
+
 
 @fcn_list_to_list
 def cardbd(x, n):
@@ -34311,7 +37117,7 @@ def exists_linear(n, p = 2, maxsize = None):
             if cname != "":
                 cname += "(+)"
             if cname_latex != "":
-                cname_latex += "\oplus "
+                cname_latex += r"\oplus "
                 # cname_latex += "+_{" + str(p) + "}"
             if a != 1:
                 cname += str(a)
@@ -34530,6 +37336,17 @@ def prob_markov_constraints(Xs, U, p):
     
     cons = (Xt | Xs[0]).pmf() == p / p0
     return (P, vars, cons)
+
+
+@fcn_list_to_list
+def prob_symbol(*args, cname=None):
+    """The probability symbol. Only used for display.
+    """
+    x = Term.from_symbols(args, prefer_multi=False)
+    if cname is None:
+        cname = "P"
+    R = real(iutil.fcn_name_maker(cname, x, pname = "P", cropi = True))
+    return R
 
 @fcn_list_to_list
 def gacs_korner(*args, mi = None):
@@ -35048,6 +37865,36 @@ def ingleton_bound(*args):
     # return r.simplified()
     return r
 
+
+def ci_ingleton():
+    """ Conditional Ingleton inequalities
+    Milan Studeny, "Conditional independence structures over four discrete random variables
+    revisited: conditional Ingleton inequalities," IEEE Trans Info. Theory, 2021.
+    """
+    
+    disjoint_id = iutil.get_count()
+    A = Comp.rv("A")
+    B = Comp.rv("B")
+    C = Comp.rv("C")
+    D = Comp.rv("D")
+    A.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    B.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    C.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    D.add_markers([("disjoint", disjoint_id), ("nonempty", 1)])
+    
+    ing = ingleton_ineq(C,D,A,B)
+    conds = [~I(A&B) & ~I(A&B|C), 
+             ~I(A&B|C) & ~I(B&D|C), 
+             ~I(A&C|D) & ~I(A&D|C), 
+             ~I(A&C|D) & ~I(C&D|A), 
+             ~I(A&C|D) & ~I(B&C|D)]
+    
+    r = RegionOp.inter([])
+    for c in conds:
+        r &= (c >> ing).forall(A+B+C+D)
+    return r
+
+
 def dfz_linear_ineq(A, B, C, D, E):
     """Linear rank inequalities in:
     Dougherty, Randall, Chris Freiling, and Kenneth Zeger. "Linear rank inequalities 
@@ -35412,6 +38259,10 @@ def varent(*args):
     return Expr.fromterm(Term(R.terms[0][0].x, Comp.empty(), reg, 0, fcncall, [x]))
 
 
+def series_sym(x, sufp = "P", suff = "F"):
+    """Series symbols (X, X_P, X_F), representing present, past and future.
+    """
+    return CompArray.series_sym(x, sufp = sufp, suff = suff)
 
 
 
